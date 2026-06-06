@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OperationInAI 智能运维系统</title>
+    <link rel="stylesheet" href="./src/styles/base.css" />
+    <link rel="stylesheet" href="./src/styles/layout.css" />
+    <link rel="stylesheet" href="./src/styles/components.css" />
+  </head>
+  <body>
+    <canvas id="signalCanvas" aria-hidden="true"></canvas>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#overview" aria-label="OperationInAI">
+          <img src="./src/assets/logo.svg" alt="" />
+          <span>
+            <strong>OperationInAI</strong>
+            <small>智能运维中枢</small>
+          </span>
+        </a>
+
+        <nav class="nav-list" aria-label="主导航">
+          <button class="nav-item active" data-panel="overview">
+            <span class="icon" data-icon="radar"></span>
+            <span>态势总览</span>
+          </button>
+          <button class="nav-item" data-panel="cleaning">
+            <span class="icon" data-icon="pipeline"></span>
+            <span>数据清洗</span>
+          </button>
+          <button class="nav-item" data-panel="display">
+            <span class="icon" data-icon="chart"></span>
+            <span>数据展示</span>
+          </button>
+          <button class="nav-item" data-panel="analysis">
+            <span class="icon" data-icon="brain"></span>
+            <span>智能分析</span>
+          </button>
+          <button class="nav-item" data-panel="search">
+            <span class="icon" data-icon="search"></span>
+            <span>智能搜索</span>
+          </button>
+        </nav>
+
+        <div class="side-status">
+          <span class="pulse-dot"></span>
+          <div>
+            <strong>任务编排器在线</strong>
+            <small>12 个采集任务待执行</small>
+          </div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">AIOps Command Deck</p>
+            <h1 id="panelTitle">态势总览</h1>
+          </div>
+          <div class="top-actions">
+            <label class="global-search">
+              <span class="icon" data-icon="search"></span>
+              <input id="globalSearch" type="search" placeholder="搜索业务、数据源、字段或知识库" />
+            </label>
+            <button class="icon-button" id="themePulse" title="刷新运行态势" aria-label="刷新运行态势">
+              <span class="icon" data-icon="refresh"></span>
+            </button>
+          </div>
+        </header>
+
+        <section class="panel active" id="overview" aria-labelledby="panelTitle">
+          <div class="metric-grid" id="metricGrid"></div>
+          <div class="dashboard-grid">
+            <article class="surface operations-map">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Live Pipeline</p>
+                  <h2>业务数据流</h2>
+                </div>
+                <button class="small-button" data-panel-link="cleaning">
+                  <span class="icon" data-icon="bolt"></span>
+                  配置采集
+                </button>
+              </div>
+              <div class="flow-board" id="flowBoard"></div>
+            </article>
+
+            <article class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Risk Radar</p>
+                  <h2>智能风险雷达</h2>
+                </div>
+                <span class="status-pill danger">3 项高风险</span>
+              </div>
+              <div class="radar-wrap">
+                <canvas id="riskRadar" width="420" height="320" aria-label="风险雷达图"></canvas>
+              </div>
+            </article>
+
+            <article class="surface wide">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Recent Signals</p>
+                  <h2>最新运维信号</h2>
+                </div>
+                <button class="small-button" data-panel-link="analysis">
+                  <span class="icon" data-icon="brain"></span>
+                  发起分析
+                </button>
+              </div>
+              <div class="signal-list" id="signalList"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel" id="cleaning" aria-labelledby="panelTitle">
+          <div class="module-grid">
+            <article class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Source Hub</p>
+                  <h2>数据源配置</h2>
+                </div>
+                <button class="small-button primary" id="addSourceBtn">
+                  <span class="icon" data-icon="plus"></span>
+                  新增源
+                </button>
+              </div>
+              <div class="source-stack" id="sourceStack"></div>
+            </article>
+
+            <article class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Auth Strategy</p>
+                  <h2>认证与刷新</h2>
+                </div>
+                <span class="status-pill ok">Cookie 自动刷新</span>
+              </div>
+              <form class="config-form">
+                <label>
+                  <span>认证方式</span>
+                  <select>
+                    <option>账号密码登录刷新 Cookie</option>
+                    <option>Bearer Token</option>
+                    <option>固定 Header</option>
+                    <option>无认证</option>
+                  </select>
+                </label>
+                <label>
+                  <span>登录接口</span>
+                  <input value="https://ops.example.com/api/login" />
+                </label>
+                <label>
+                  <span>刷新周期</span>
+                  <input value="45 分钟" />
+                </label>
+                <label>
+                  <span>响应数据路径</span>
+                  <input value="data.items" />
+                </label>
+              </form>
+            </article>
+
+            <article class="surface wide">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Field Mapping</p>
+                  <h2>源字段到目标字段映射</h2>
+                </div>
+                <button class="small-button" id="runSyncBtn">
+                  <span class="icon" data-icon="play"></span>
+                  执行同步
+                </button>
+              </div>
+              <div class="mapping-table" id="mappingTable"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel" id="display" aria-labelledby="panelTitle">
+          <article class="surface">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Business View</p>
+                <h2>业务数据展示配置</h2>
+              </div>
+              <div class="segmented" id="viewMode">
+                <button class="active" data-view="table">全量</button>
+                <button data-view="top">TOP</button>
+                <button data-view="chart">图表</button>
+              </div>
+            </div>
+            <div class="filter-row">
+              <label>
+                <span>业务模型</span>
+                <select id="businessSelect"></select>
+              </label>
+              <label>
+                <span>时间字段</span>
+                <select>
+                  <option>event_time</option>
+                  <option>created_at</option>
+                  <option>updated_at</option>
+                </select>
+              </label>
+              <label>
+                <span>时间范围</span>
+                <input type="text" value="最近 24 小时" />
+              </label>
+              <label>
+                <span>排序</span>
+                <select>
+                  <option>风险等级降序</option>
+                  <option>发生时间倒序</option>
+                  <option>影响范围降序</option>
+                </select>
+              </label>
+            </div>
+            <div class="business-content">
+              <div class="data-table" id="businessTable"></div>
+              <div class="chart-panel">
+                <canvas id="trendChart" width="760" height="340" aria-label="业务趋势图"></canvas>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section class="panel" id="analysis" aria-labelledby="panelTitle">
+          <div class="analysis-layout">
+            <article class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">LLM Config</p>
+                  <h2>模型与提示词</h2>
+                </div>
+                <span class="status-pill ok">已启用</span>
+              </div>
+              <form class="config-form">
+                <label>
+                  <span>模型供应商</span>
+                  <select>
+                    <option>OpenAI Compatible</option>
+                    <option>Azure OpenAI</option>
+                    <option>DeepSeek</option>
+                    <option>本地模型</option>
+                  </select>
+                </label>
+                <label>
+                  <span>分析字段</span>
+                  <input value="severity, service, owner, duration, event_time" />
+                </label>
+                <label>
+                  <span>输出格式</span>
+                  <select>
+                    <option>结论 / 风险 / 证据 / 改进措施</option>
+                    <option>Markdown 运维报告</option>
+                    <option>JSON 结构化结果</option>
+                  </select>
+                </label>
+                <label class="full">
+                  <span>提示词模板</span>
+                  <textarea rows="7">你是资深 SRE，请基于输入的运维数据摘要，识别异常趋势、潜在风险、根因假设，并给出可执行的改进措施。回答必须引用关键字段作为证据。</textarea>
+                </label>
+              </form>
+            </article>
+
+            <article class="surface analysis-result">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">AI Insight</p>
+                  <h2>分析结果预览</h2>
+                </div>
+                <button class="small-button primary" id="generateAnalysisBtn">
+                  <span class="icon" data-icon="spark"></span>
+                  生成分析
+                </button>
+              </div>
+              <div id="analysisOutput"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel" id="search" aria-labelledby="panelTitle">
+          <div class="search-layout">
+            <article class="surface knowledge-panel">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Knowledge Sources</p>
+                  <h2>知识源</h2>
+                </div>
+                <button class="small-button primary">
+                  <span class="icon" data-icon="plus"></span>
+                  添加
+                </button>
+              </div>
+              <div class="knowledge-list" id="knowledgeList"></div>
+            </article>
+
+            <article class="surface ask-panel">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Hybrid Search</p>
+                  <h2>智能搜索问答</h2>
+                </div>
+                <span class="status-pill">向量 + 关键词</span>
+              </div>
+              <div class="ask-box">
+                <input id="questionInput" value="最近告警集中在哪些服务，应该优先处理什么？" />
+                <button class="icon-button primary" id="askBtn" title="搜索回答" aria-label="搜索回答">
+                  <span class="icon" data-icon="send"></span>
+                </button>
+              </div>
+              <div class="answer-card" id="answerCard"></div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./src/scripts/data.js"></script>
+    <script src="./src/scripts/app.js"></script>
+  </body>
+</html>

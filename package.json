@@ -1,0 +1,10 @@
+{
+  "name": "operation-in-ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node ./tools/dev-server.mjs",
+    "check": "node --check ./src/scripts/app.js && node --check ./src/scripts/data.js && node --check ./tools/dev-server.mjs"
+  }
+}
