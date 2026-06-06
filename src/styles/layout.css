@@ -153,6 +153,32 @@
   gap: 14px;
 }
 
+.cleaning-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.cleaning-section-title {
+  min-height: 42px;
+  padding: 0 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.support-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  gap: 14px;
+}
+
+.flow-result-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+  gap: 14px;
+}
+
 .wide {
   grid-column: 1 / -1;
 }
@@ -187,6 +213,8 @@
   .metric-grid,
   .dashboard-grid,
   .module-grid,
+  .support-grid,
+  .flow-result-grid,
   .analysis-layout,
   .search-layout {
     grid-template-columns: 1fr;

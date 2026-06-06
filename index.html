@@ -63,6 +63,7 @@
               <span class="icon" data-icon="search"></span>
               <input id="globalSearch" type="search" placeholder="搜索业务、数据源、字段或知识库" />
             </label>
+            <span class="status-pill" id="apiStatus">连接中</span>
             <button class="icon-button" id="themePulse" title="刷新运行态势" aria-label="刷新运行态势">
               <span class="icon" data-icon="refresh"></span>
             </button>
@@ -116,67 +117,254 @@
         </section>
 
         <section class="panel" id="cleaning" aria-labelledby="panelTitle">
-          <div class="module-grid">
-            <article class="surface">
+          <div class="segmented module-tabs" id="cleaningMode">
+            <button class="active" data-cleaning-tab="business">业务配置</button>
+            <button data-cleaning-tab="source">数据源配置</button>
+            <button data-cleaning-tab="support">支持配置库</button>
+          </div>
+          <div class="cleaning-stack">
+            <article class="surface wide business-workbench cleaning-block" data-cleaning-section="business">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Business Workspace</p>
+                  <h2>业务配置与业务流编排</h2>
+                </div>
+                <button class="small-button primary" id="createFlowBtn">
+                  <span class="icon" data-icon="plus"></span>
+                  创建业务流
+                </button>
+                <button class="small-button" id="runFlowBtn">
+                  <span class="icon" data-icon="play"></span>
+                  执行业务流
+                </button>
+              </div>
+              <div class="config-form flow-config">
+                <label>
+                  <span>业务流名称</span>
+                  <input id="flowNameInput" value="新业务聚合流" />
+                </label>
+                <label>
+                  <span>输出业务模块</span>
+                  <input id="flowBusinessInput" value="新业务模块" />
+                </label>
+                <label>
+                  <span>时间字段</span>
+                  <input id="flowTimeFieldInput" value="event_time" />
+                </label>
+                <label>
+                  <span>输出方式</span>
+                  <select id="flowOutputModeSelect">
+                    <option value="upsert-business">写入/更新业务模块</option>
+                    <option value="file">输出文件</option>
+                    <option value="api">输出 API</option>
+                  </select>
+                </label>
+                <label class="full">
+                  <span>选择数据源（可多选）</span>
+                  <select id="flowSourceSelect" multiple size="4"></select>
+                </label>
+                <label class="full">
+                  <span>选择清洗规则（可多选）</span>
+                  <select id="flowRuleSelect" multiple size="4"></select>
+                </label>
+              </div>
+              <div class="flow-result-grid">
+                <div class="mapping-table" id="flowTable"></div>
+                <div class="answer-card compact" id="flowOutput"></div>
+              </div>
+            </article>
+
+            <div class="cleaning-section-title cleaning-block" data-cleaning-section="source">
+              <div>
+                <p class="eyebrow">Source Workspace</p>
+                <h2>数据源配置与出参字段映射</h2>
+              </div>
+              <span class="status-pill">数据源绑定认证，映射绑定数据源</span>
+            </div>
+
+            <div class="module-grid source-workbench cleaning-block" data-cleaning-section="source">
+              <article class="surface">
               <div class="section-head">
                 <div>
                   <p class="eyebrow">Source Hub</p>
-                  <h2>数据源配置</h2>
+                  <h2>数据源列表</h2>
+                </div>
+                <span class="status-pill">点击选择</span>
+              </div>
+              <div class="module-status" id="sourceActionStatus">选择左侧数据源编辑，或填写表单后点击新增源。</div>
+              <div class="source-stack" id="sourceStack"></div>
+            </article>
+
+              <article class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Source Config</p>
+                  <h2>编辑数据源</h2>
                 </div>
                 <button class="small-button primary" id="addSourceBtn">
                   <span class="icon" data-icon="plus"></span>
                   新增源
                 </button>
-              </div>
-              <div class="source-stack" id="sourceStack"></div>
-            </article>
-
-            <article class="surface">
-              <div class="section-head">
-                <div>
-                  <p class="eyebrow">Auth Strategy</p>
-                  <h2>认证与刷新</h2>
-                </div>
-                <span class="status-pill ok">Cookie 自动刷新</span>
+                <button class="small-button" id="saveSourceBtn">
+                  保存
+                </button>
+                <button class="small-button" id="testSourceBtn">
+                  测试联通
+                </button>
+                <button class="small-button danger" id="deleteSourceBtn">
+                  删除
+                </button>
               </div>
               <form class="config-form">
                 <label>
-                  <span>认证方式</span>
-                  <select>
-                    <option>账号密码登录刷新 Cookie</option>
-                    <option>Bearer Token</option>
-                    <option>固定 Header</option>
-                    <option>无认证</option>
+                  <span>数据源名称</span>
+                  <input id="sourceNameInput" value="新增 API 数据源" />
+                </label>
+                <label>
+                  <span>数据源地址/表名/文件</span>
+                  <input id="sourceTypeInput" value="GET /api/custom/list" />
+                </label>
+                <label>
+                  <span>数据源类型</span>
+                  <select id="sourceKindSelect">
+                    <option value="api">API</option>
+                    <option value="database">数据库</option>
+                    <option value="file">本地文件</option>
                   </select>
                 </label>
                 <label>
-                  <span>登录接口</span>
-                  <input value="https://ops.example.com/api/login" />
-                </label>
-                <label>
-                  <span>刷新周期</span>
-                  <input value="45 分钟" />
+                  <span>认证名称</span>
+                  <select id="sourceAuthConfigSelect"></select>
                 </label>
                 <label>
                   <span>响应数据路径</span>
-                  <input value="data.items" />
+                  <input id="responsePathInput" value="data.items" />
+                </label>
+                <label>
+                  <span>请求方法</span>
+                  <select id="apiMethodSelect">
+                    <option>GET</option>
+                    <option>POST</option>
+                    <option>PUT</option>
+                    <option>DELETE</option>
+                  </select>
+                </label>
+                <label>
+                  <span>分页字段</span>
+                  <input id="paginationInput" value="page=1&pageSize=100" />
+                </label>
+                <label class="full">
+                  <span>Query 入参 JSON</span>
+                  <textarea id="queryParamsInput" rows="3">{ "startTime": "{{start_time}}", "endTime": "{{end_time}}" }</textarea>
+                </label>
+                <label class="full">
+                  <span>Header 入参 JSON</span>
+                  <textarea id="headerParamsInput" rows="3">{ "X-System": "OperationInAI" }</textarea>
+                </label>
+                <label class="full">
+                  <span>Body 入参 JSON</span>
+                  <textarea id="bodyParamsInput" rows="4">{ "severity": ["P0", "P1"], "includeRecovered": false }</textarea>
                 </label>
               </form>
+              <div class="test-result" id="sourceTestResult">
+                <div class="module-status">配置入参后点击“测试联通”，这里会显示返回状态、响应字段和响应体。</div>
+              </div>
             </article>
+            </div>
 
-            <article class="surface wide">
+            <article class="surface wide mapping-workbench cleaning-block" data-cleaning-section="source">
               <div class="section-head">
                 <div>
                   <p class="eyebrow">Field Mapping</p>
-                  <h2>源字段到目标字段映射</h2>
+                  <h2>当前数据源出参映射</h2>
                 </div>
                 <button class="small-button" id="runSyncBtn">
                   <span class="icon" data-icon="play"></span>
                   执行同步
                 </button>
               </div>
+              <div class="filter-row compact">
+                <label>
+                  <span>当前数据源</span>
+                  <select id="mappingSourceSelect"></select>
+                </label>
+                <label>
+                  <span>响应数据路径</span>
+                  <input id="mappingResponsePathInput" value="data.items" />
+                </label>
+                <label>
+                  <span>记录保留</span>
+                  <select id="responseKeepModeSelect">
+                    <option value="all">全部保留</option>
+                    <option value="filter">按条件过滤</option>
+                  </select>
+                </label>
+                <label>
+                  <span>过滤条件</span>
+                  <input id="responseFilterInput" value="" placeholder="level == P0 或 duration &gt; 300" />
+                </label>
+              </div>
+              <div class="inline-editor mapping-editor">
+                <select id="responseFieldSelect" aria-label="响应字段">
+                  <option value="">选择测试响应字段</option>
+                </select>
+                <input id="mapSourceInput" value="raw.status" aria-label="源字段" />
+                <input id="mapTargetInput" value="status" aria-label="目标字段" />
+                <select id="mapTypeSelect" aria-label="字段类型">
+                  <option>字符串</option>
+                  <option>枚举</option>
+                  <option>时间</option>
+                  <option>数字</option>
+                </select>
+                <input id="mapDefaultInput" value="" aria-label="默认值" placeholder="默认值" />
+                <input id="mapRuleInput" value="去空格 + 枚举归一" aria-label="清洗规则" />
+                <button class="small-button" id="addMappingBtn">
+                  <span class="icon" data-icon="plus"></span>
+                  添加映射
+                </button>
+              </div>
               <div class="mapping-table" id="mappingTable"></div>
+              <div class="sync-log" id="syncLog"></div>
             </article>
+
+            <details class="support-details cleaning-block" data-cleaning-section="support" open>
+              <summary>
+                <span>
+                  <strong>支撑配置库</strong>
+                  <small>认证与规则服务于数据源和业务流</small>
+                </span>
+                <span class="status-pill">高级配置</span>
+              </summary>
+              <div class="support-grid">
+              <article class="surface support-card">
+                <div class="section-head">
+                  <div>
+                    <p class="eyebrow">Auth Library</p>
+                    <h2>自定义认证配置</h2>
+                  </div>
+                  <button class="small-button primary" id="addAuthBtn">
+                    <span class="icon" data-icon="plus"></span>
+                    新增认证
+                  </button>
+                </div>
+                <div class="auth-config-list" id="authConfigList"></div>
+              </article>
+
+              <article class="surface support-card">
+                <div class="section-head">
+                  <div>
+                    <p class="eyebrow">Cleaning Rules</p>
+                    <h2>清洗规则库</h2>
+                  </div>
+                  <button class="small-button primary" id="addRuleBtn">
+                    <span class="icon" data-icon="plus"></span>
+                    新增规则
+                  </button>
+                </div>
+                <div class="mapping-table" id="ruleTable"></div>
+              </article>
+              </div>
+            </details>
           </div>
         </section>
 
@@ -200,7 +388,7 @@
               </label>
               <label>
                 <span>时间字段</span>
-                <select>
+                <select id="timeFieldSelect">
                   <option>event_time</option>
                   <option>created_at</option>
                   <option>updated_at</option>
@@ -208,15 +396,19 @@
               </label>
               <label>
                 <span>时间范围</span>
-                <input type="text" value="最近 24 小时" />
+                <input id="timeRangeInput" type="text" value="最近 24 小时" />
               </label>
               <label>
                 <span>排序</span>
-                <select>
-                  <option>风险等级降序</option>
-                  <option>发生时间倒序</option>
-                  <option>影响范围降序</option>
+                <select id="sortSelect">
+                  <option value="risk">风险等级降序</option>
+                  <option value="time">发生时间倒序</option>
+                  <option value="impact">影响范围降序</option>
                 </select>
+              </label>
+              <label>
+                <span>字段搜索</span>
+                <input id="tableSearchInput" type="search" placeholder="输入服务、等级、事件" />
               </label>
             </div>
             <div class="business-content">
@@ -241,7 +433,7 @@
               <form class="config-form">
                 <label>
                   <span>模型供应商</span>
-                  <select>
+                  <select id="modelProviderSelect">
                     <option>OpenAI Compatible</option>
                     <option>Azure OpenAI</option>
                     <option>DeepSeek</option>
@@ -250,11 +442,11 @@
                 </label>
                 <label>
                   <span>分析字段</span>
-                  <input value="severity, service, owner, duration, event_time" />
+                  <input id="analysisFieldsInput" value="severity, service, owner, duration, event_time" />
                 </label>
                 <label>
                   <span>输出格式</span>
-                  <select>
+                  <select id="analysisFormatSelect">
                     <option>结论 / 风险 / 证据 / 改进措施</option>
                     <option>Markdown 运维报告</option>
                     <option>JSON 结构化结果</option>
@@ -262,7 +454,7 @@
                 </label>
                 <label class="full">
                   <span>提示词模板</span>
-                  <textarea rows="7">你是资深 SRE，请基于输入的运维数据摘要，识别异常趋势、潜在风险、根因假设，并给出可执行的改进措施。回答必须引用关键字段作为证据。</textarea>
+                  <textarea id="promptTemplateInput" rows="7">你是资深 SRE，请基于输入的运维数据摘要，识别异常趋势、潜在风险、根因假设，并给出可执行的改进措施。回答必须引用关键字段作为证据。</textarea>
                 </label>
               </form>
             </article>
@@ -291,7 +483,15 @@
                   <p class="eyebrow">Knowledge Sources</p>
                   <h2>知识源</h2>
                 </div>
-                <button class="small-button primary">
+                <button class="small-button primary" id="focusKnowledgeBtn">
+                  <span class="icon" data-icon="plus"></span>
+                  添加
+                </button>
+              </div>
+              <div class="inline-editor">
+                <input id="knowledgeNameInput" value="新知识源" aria-label="知识源名称" />
+                <input id="knowledgePathInput" value="D:/ops/new-source" aria-label="知识源路径" />
+                <button class="small-button" id="addKnowledgeBtn">
                   <span class="icon" data-icon="plus"></span>
                   添加
                 </button>
@@ -319,6 +519,87 @@
         </section>
       </main>
     </div>
+
+    <dialog class="modal" id="authModal">
+      <form class="modal-panel" method="dialog">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Auth Config</p>
+            <h2 id="authModalTitle">新增认证</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="关闭">
+            <span class="icon" data-icon="refresh"></span>
+          </button>
+        </div>
+        <div class="config-form">
+          <label>
+            <span>认证名称</span>
+            <input id="authNameInput" value="自定义 Cookie 认证" />
+          </label>
+          <label>
+            <span>认证类型</span>
+            <select id="authConfigTypeSelect">
+              <option value="api-cookie">API / Cookie</option>
+              <option value="db-account-password">数据库 / 账号密码</option>
+              <option value="none">通用 / 无认证</option>
+            </select>
+          </label>
+          <label>
+            <span>Cookie 名称</span>
+            <input id="authCookieNameInput" value="OPS_SESSION" />
+          </label>
+          <label class="full">
+            <span>Cookie 值</span>
+            <textarea id="authPasswordInput" rows="4">SESSION=demo_cookie_value</textarea>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="small-button" value="cancel">取消</button>
+          <button class="small-button primary" id="saveAuthBtn" value="default">保存认证</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="ruleModal">
+      <form class="modal-panel" method="dialog">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Cleaning Rule</p>
+            <h2 id="ruleModalTitle">新增规则</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="关闭">
+            <span class="icon" data-icon="refresh"></span>
+          </button>
+        </div>
+        <div class="config-form">
+          <label>
+            <span>规则名称</span>
+            <input id="ruleNameInput" value="服务名标准化" />
+          </label>
+          <label>
+            <span>规则类型</span>
+            <select id="ruleTypeSelect">
+              <option value="mapping">字段映射</option>
+              <option value="normalize">格式标准化</option>
+              <option value="filter">过滤</option>
+              <option value="enrich">关联补齐</option>
+            </select>
+          </label>
+          <label class="full">
+            <span>规则表达式</span>
+            <input id="ruleExpressionInput" value="service_name trim + lower" />
+          </label>
+          <label class="full">
+            <span>规则说明</span>
+            <textarea id="ruleDescInput" rows="3">统一服务名格式并去除空值</textarea>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="small-button" value="cancel">取消</button>
+          <button class="small-button primary" id="saveRuleBtn" value="default">保存规则</button>
+        </div>
+      </form>
+    </dialog>
 
     <script src="./src/scripts/data.js"></script>
     <script src="./src/scripts/app.js"></script>

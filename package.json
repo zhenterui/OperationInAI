@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node ./tools/dev-server.mjs",
-    "check": "node --check ./src/scripts/app.js && node --check ./src/scripts/data.js && node --check ./tools/dev-server.mjs"
+    "dev": "node ./server/index.mjs",
+    "static": "node ./tools/dev-server.mjs",
+    "check": "node --check ./src/scripts/app.js && node --check ./src/scripts/data.js && node --check ./tools/dev-server.mjs && node --check ./server/index.mjs && node --check ./server/core/http.mjs && node --check ./server/core/router.mjs && node --check ./server/data/store.mjs && node --check ./server/services/analysis-service.mjs && node --check ./server/services/config-service.mjs && node --check ./server/services/search-service.mjs && node --check ./server/services/sync-service.mjs && node --check ./tools/api-smoke.mjs && node --check ./tools/port-check.mjs",
+    "api:smoke": "node ./tools/api-smoke.mjs",
+    "port:check": "node ./tools/port-check.mjs"
   }
 }
