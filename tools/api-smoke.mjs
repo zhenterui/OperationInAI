@@ -108,7 +108,23 @@ try {
   });
   const mapping = await request("/api/field-mappings", {
     method: "POST",
-    body: JSON.stringify({ sourceId: updatedSource.data.id, sourceField: "smoke.raw", targetField: "smoke_clean" })
+    body: JSON.stringify({
+      sourceId: updatedSource.data.id,
+      sourceField: "smoke.raw",
+      targetField: "smoke_clean",
+      defaultValue: "unknown",
+      ruleParam: "trim"
+    })
+  });
+  const updatedMapping = await request(`/api/field-mappings/${mapping.data.id}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      sourceId: updatedSource.data.id,
+      sourceField: "smoke.raw.edited",
+      targetField: "smoke_clean_edited",
+      defaultValue: "edited_default",
+      ruleParam: "trim + lower"
+    })
   });
   const rule = await request("/api/cleaning-rules", {
     method: "POST",
@@ -125,12 +141,29 @@ try {
       businessName: "冒烟业务模块",
       dataSourceIds: [updatedSource.data.id, "src_cmdb_pg"],
       ruleIds: [updatedRule.data.id],
+      nodes: [
+        { id: "smoke_context", type: "context", refId: "time-window", name: "冒烟上下文", executionMode: "serial", param: "context.time" },
+        { id: "smoke_source_api", type: "source", refId: updatedSource.data.id, name: "冒烟 API", executionMode: "parallel", param: "api" },
+        { id: "smoke_source_cmdb", type: "source", refId: "src_cmdb_pg", name: "CMDB", executionMode: "parallel", param: "db" },
+        { id: "smoke_rule", type: "rule", refId: updatedRule.data.id, name: "冒烟规则", executionMode: "join", param: "clean" }
+      ],
+      timeField: "event_time"
+    })
+  });
+  const updatedFlow = await request(`/api/business-flows/${flow.data.id}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      name: "冒烟业务流已编辑",
+      businessName: "冒烟业务模块",
+      dataSourceIds: [updatedSource.data.id, "src_cmdb_pg"],
+      ruleIds: [updatedRule.data.id],
+      nodes: flow.data.nodes,
       timeField: "event_time"
     })
   });
   const flowRun = await request("/api/business-flows/run", {
     method: "POST",
-    body: JSON.stringify({ flowId: flow.data.id })
+    body: JSON.stringify({ flowId: updatedFlow.data.id })
   });
   const business = await request("/api/businesses/query", {
     method: "POST",
@@ -151,7 +184,13 @@ try {
   const deletedSource = await request(`/api/data-sources/${updatedSource.data.id}`, {
     method: "DELETE"
   });
+  const deletedMapping = await request(`/api/field-mappings/${updatedMapping.data.id}`, {
+    method: "DELETE"
+  });
   const deletedRule = await request(`/api/cleaning-rules/${updatedRule.data.id}`, {
+    method: "DELETE"
+  });
+  const deletedFlow = await request(`/api/business-flows/${updatedFlow.data.id}`, {
     method: "DELETE"
   });
 
@@ -169,10 +208,15 @@ try {
         requestMethod: updatedSource.data.requestConfig.method,
         testFields: sourceTest.data.fields.length,
         deletedSource: deletedSource.data.name,
-        mapping: mapping.data.targetField,
+        mapping: updatedMapping.data.targetField,
+        mappingDefault: updatedMapping.data.defaultValue,
+        deletedMapping: deletedMapping.data.targetField,
         rule: updatedRule.data.name,
         deletedRule: deletedRule.data.name,
         flow: flowRun.data.business.name,
+        flowName: updatedFlow.data.name,
+        flowParallel: flowRun.data.executionPlan.parallel,
+        deletedFlow: deletedFlow.data.name,
         businessRows: business.data.rows.length,
         knowledge: knowledge.data.name,
         syncStatus: sync.data.status,

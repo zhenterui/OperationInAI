@@ -35,6 +35,14 @@ function toSourcePatch(input = {}) {
       keepMode: input.responseConfig?.keepMode || input.responseKeepMode || "all",
       filterCondition: input.responseConfig?.filterCondition || input.responseFilter || ""
     },
+    parameterConfig: {
+      sourceType: input.parameterConfig?.sourceType || "static",
+      sourceId: input.parameterConfig?.sourceId || "",
+      query: input.parameterConfig?.query || "",
+      mappings: Array.isArray(input.parameterConfig?.mappings) ? input.parameterConfig.mappings : [],
+      iterationMode: input.parameterConfig?.iterationMode || "single",
+      strategy: input.parameterConfig?.strategy || ""
+    },
     loginUrl: input.loginUrl || "",
     refreshCycle: input.refreshCycle || "",
     authConfig: {
@@ -274,6 +282,7 @@ export function testDataSource(input = {}) {
       responsePath,
       keepMode,
       filterCondition,
+      parameterConfig: config.parameterConfig || {},
       queryParams: config.queryParams || config.requestConfig?.queryParams || {},
       headers: config.headers || config.requestConfig?.headers || {},
       body: config.body || config.requestConfig?.body || {},

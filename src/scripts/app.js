@@ -5,6 +5,10 @@ const appState = {
   selectedAuthId: "auth_cookie_ops",
   editingAuthId: "",
   editingRuleId: "",
+  editingMappingId: "",
+  selectedFlowId: "",
+  selectedFlowNodeId: "",
+  flowNodes: [],
   lastSourceTest: null,
   viewMode: "table",
   cleaningTab: "business"
@@ -90,6 +94,20 @@ const authTypeLabels = {
   cookie: "API / Cookie",
   "account-password": "数据库 / 账号密码",
   none: "通用 / 无认证"
+};
+
+const paramSourceTypeTips = {
+  static: "固定入参：直接使用 Query/Header/Body 中配置的值。",
+  database: "数据库查询：先查出记录，再按字段映射逐条或批量调用。",
+  source: "上游数据源：用另一个数据源输出字段驱动当前调用。",
+  flow: "业务流上下文：使用时间窗口、租户、批次号等共享变量。"
+};
+
+const flowNodeTypeLabels = {
+  context: "上下文",
+  source: "数据源",
+  rule: "清洗",
+  output: "输出"
 };
 
 function normalizeAuthType(type) {
@@ -228,6 +246,23 @@ function renderMappingSourceSelect() {
   $("#responseFilterInput").value = source?.responseConfig?.filterCondition || source?.responseFilter || "";
 }
 
+function renderParamSourceSelect(selectedId = "") {
+  $("#paramSourceSelect").innerHTML = [
+    '<option value="">不依赖外部来源</option>',
+    ...(window.opsData.sources || [])
+      .filter((source) => source.id !== appState.selectedSourceId)
+      .map((source) => `<option value="${escapeHtml(source.id)}">${escapeHtml(source.name)} · ${escapeHtml(source.kind)}</option>`)
+  ].join("");
+  setSelectValue("#paramSourceSelect", selectedId);
+}
+
+function updateParamSourceTypeHelp() {
+  const value = $("#paramSourceTypeSelect")?.value || "static";
+  if ($("#paramSourceTypeHelp")) {
+    $("#paramSourceTypeHelp").textContent = paramSourceTypeTips[value] || paramSourceTypeTips.static;
+  }
+}
+
 function renderResponseFieldOptions(fields = appState.lastSourceTest?.fields || []) {
   const uniqueFields = [...new Set(fields.filter(Boolean))];
   $("#responseFieldSelect").innerHTML = [
@@ -329,6 +364,14 @@ function populateSourceForm(source = getSelectedSource()) {
   $("#bodyParamsInput").value = JSON.stringify(source.requestConfig?.body || {}, null, 2);
   setSelectValue("#responseKeepModeSelect", source.responseConfig?.keepMode || source.responseKeepMode || "all");
   $("#responseFilterInput").value = source.responseConfig?.filterCondition || source.responseFilter || "";
+  const parameterConfig = source.parameterConfig || {};
+  renderParamSourceSelect(parameterConfig.sourceId || "");
+  setSelectValue("#paramSourceTypeSelect", parameterConfig.sourceType || "static");
+  updateParamSourceTypeHelp();
+  $("#paramQueryInput").value = parameterConfig.query || "";
+  $("#paramMappingInput").value = JSON.stringify(parameterConfig.mappings || [], null, 2);
+  setSelectValue("#paramIterationModeSelect", parameterConfig.iterationMode || "single");
+  $("#paramStrategyInput").value = parameterConfig.strategy || "concurrency=5; retries=2; continueOnError=true";
   if ($("#mappingSourceSelect").options.length) {
     renderMappingSourceSelect();
   }
@@ -366,6 +409,14 @@ function collectSourceForm() {
     responseConfig: {
       keepMode: $("#responseKeepModeSelect")?.value || "all",
       filterCondition: $("#responseFilterInput")?.value.trim() || ""
+    },
+    parameterConfig: {
+      sourceType: $("#paramSourceTypeSelect").value,
+      sourceId: $("#paramSourceSelect").value,
+      query: $("#paramQueryInput").value.trim(),
+      mappings: parseJsonInput("#paramMappingInput", []),
+      iterationMode: $("#paramIterationModeSelect").value,
+      strategy: $("#paramStrategyInput").value.trim()
     },
     status: authType.includes("none") ? "无认证" : `${authTypeLabels[authType] || authType}：${authName}`
   };
@@ -408,12 +459,44 @@ function getRuleById(id) {
   return (window.opsData.cleaningRules || []).find((rule) => rule.id === id);
 }
 
+function getMappingById(id) {
+  return (window.opsData.fieldMappings || []).find((mapping) => mapping.id === id);
+}
+
+function buildRuleExpression() {
+  const sourceField = $("#ruleSourceFieldInput")?.value.trim() || "field";
+  const targetField = $("#ruleTargetFieldInput")?.value.trim();
+  const action = $("#ruleActionSelect")?.value || "trim";
+  const param = $("#ruleParamInput")?.value.trim();
+  const output = targetField && targetField !== sourceField ? ` -> ${targetField}` : "";
+  return `${sourceField}${output} | ${action}${param ? `(${param})` : ""}`;
+}
+
+function syncRuleExpressionPreview() {
+  if ($("#ruleExpressionInput")) {
+    $("#ruleExpressionInput").value = buildRuleExpression();
+  }
+}
+
+function renderMappingRuleSelect(selectedRuleId = "") {
+  const rules = window.opsData.cleaningRules || [];
+  $("#mapRuleSelect").innerHTML = [
+    '<option value="">不使用规则</option>',
+    ...rules.map((rule) => `<option value="${escapeHtml(rule.id)}">${escapeHtml(rule.name)} · ${escapeHtml(rule.type)}</option>`)
+  ].join("");
+  setSelectValue("#mapRuleSelect", selectedRuleId);
+}
+
 function populateRuleForm(rule) {
   if (!rule) return;
   appState.editingRuleId = rule.id;
   $("#ruleModalTitle").textContent = "编辑规则";
   $("#ruleNameInput").value = rule.name || "";
   setSelectValue("#ruleTypeSelect", rule.type || "mapping");
+  setSelectValue("#ruleActionSelect", rule.config?.action || "trim");
+  $("#ruleSourceFieldInput").value = rule.config?.sourceField || "";
+  $("#ruleTargetFieldInput").value = rule.config?.targetField || "";
+  $("#ruleParamInput").value = rule.config?.param || "";
   $("#ruleExpressionInput").value = rule.expression || "";
   $("#ruleDescInput").value = rule.description || "";
 }
@@ -423,16 +506,27 @@ function resetRuleForm() {
   $("#ruleModalTitle").textContent = "新增规则";
   $("#ruleNameInput").value = "服务名标准化";
   setSelectValue("#ruleTypeSelect", "normalize");
-  $("#ruleExpressionInput").value = "service_name trim + lower";
+  setSelectValue("#ruleActionSelect", "trim");
+  $("#ruleSourceFieldInput").value = "service_name";
+  $("#ruleTargetFieldInput").value = "service_name";
+  $("#ruleParamInput").value = "trim + lower";
+  syncRuleExpressionPreview();
   $("#ruleDescInput").value = "统一服务名格式并去除空值";
 }
 
 function collectRuleForm() {
+  syncRuleExpressionPreview();
   return {
     name: $("#ruleNameInput").value.trim() || "自定义清洗规则",
     type: $("#ruleTypeSelect").value,
     expression: $("#ruleExpressionInput").value.trim() || "trim + normalize",
     description: $("#ruleDescInput").value.trim() || "用户自定义清洗规则",
+    config: {
+      action: $("#ruleActionSelect").value,
+      sourceField: $("#ruleSourceFieldInput").value.trim(),
+      targetField: $("#ruleTargetFieldInput").value.trim(),
+      param: $("#ruleParamInput").value.trim()
+    },
     enabled: true
   };
 }
@@ -455,55 +549,202 @@ function getSelectedValues(select) {
   return [...select.selectedOptions].map((option) => option.value);
 }
 
-function renderFlowControls() {
-  $("#flowSourceSelect").innerHTML = (window.opsData.sources || [])
-    .map((source) => `<option value="${escapeHtml(source.id)}">${escapeHtml(source.name)}</option>`)
-    .join("");
-  $("#flowRuleSelect").innerHTML = (window.opsData.cleaningRules || [])
-    .map((rule) => `<option value="${escapeHtml(rule.id)}">${escapeHtml(rule.name)} · ${escapeHtml(rule.type)}</option>`)
-    .join("");
-  const firstFlow = window.opsData.businessFlows?.[0];
-  if (firstFlow) {
-    $("#flowNameInput").value = firstFlow.name;
-    $("#flowBusinessInput").value = firstFlow.businessName;
-    $("#flowTimeFieldInput").value = firstFlow.timeField;
-    setSelectValue("#flowOutputModeSelect", firstFlow.outputMode);
-    [...$("#flowSourceSelect").options].forEach((option) => {
-      option.selected = firstFlow.dataSourceIds.includes(option.value);
-    });
-    [...$("#flowRuleSelect").options].forEach((option) => {
-      option.selected = firstFlow.ruleIds.includes(option.value);
-    });
+function getFlowRefOptions(type) {
+  if (type === "source") {
+    return (window.opsData.sources || []).map((source) => ({ value: source.id, label: source.name }));
   }
+  if (type === "rule") {
+    return (window.opsData.cleaningRules || []).map((rule) => ({ value: rule.id, label: rule.name }));
+  }
+  if (type === "output") {
+    return [{ value: "business-table", label: $("#flowBusinessTableInput")?.value || "业务表输出" }];
+  }
+  return [
+    { value: "time-window", label: "时间窗口" },
+    { value: "batch-id", label: "运行批次" },
+    { value: "tenant-env", label: "租户/环境" }
+  ];
+}
+
+function renderFlowNodeRefSelect(selector, type, selectedValue = "") {
+  const options = getFlowRefOptions(type);
+  $(selector).innerHTML = options
+    .map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
+    .join("");
+  setSelectValue(selector, selectedValue || options[0]?.value || "");
+}
+
+function getFlowRefLabel(type, refId) {
+  return getFlowRefOptions(type).find((option) => option.value === refId)?.label || refId || "未配置";
+}
+
+function makeFlowNode(type = "source", refId = "") {
+  const resolvedRef = refId || getFlowRefOptions(type)[0]?.value || "";
+  return {
+    id: `node_${Date.now()}_${Math.random().toString(16).slice(2, 7)}`,
+    type,
+    refId: resolvedRef,
+    name: getFlowRefLabel(type, resolvedRef),
+    executionMode: type === "source" ? "parallel" : "serial",
+    param: type === "context" ? "context.start_time / context.end_time" : ""
+  };
+}
+
+function defaultFlowNodesFromFlow(flow = {}) {
+  if (Array.isArray(flow.nodes) && flow.nodes.length) {
+    return flow.nodes.map((node, index) => ({
+      id: node.id || `node_${index}_${Date.now()}`,
+      type: node.type || "source",
+      refId: node.refId || "",
+      name: node.name || getFlowRefLabel(node.type || "source", node.refId),
+      executionMode: node.executionMode || "serial",
+      param: node.param || ""
+    }));
+  }
+  return [
+    { id: "node_context", type: "context", refId: "time-window", name: "业务时间窗口", executionMode: "serial", param: "context.start_time / context.end_time" },
+    ...(flow.dataSourceIds || []).map((id) => ({ id: `node_source_${id}`, type: "source", refId: id, name: getFlowRefLabel("source", id), executionMode: "parallel", param: "" })),
+    ...(flow.ruleIds || []).map((id) => ({ id: `node_rule_${id}`, type: "rule", refId: id, name: getFlowRefLabel("rule", id), executionMode: "join", param: "" })),
+    { id: "node_output", type: "output", refId: "business-table", name: flow.outputConfig?.businessTable || "业务表输出", executionMode: "serial", param: flow.outputConfig?.writeStrategy || "upsert" }
+  ];
+}
+
+function selectFlowNode(nodeId) {
+  appState.selectedFlowNodeId = nodeId || appState.flowNodes[0]?.id || "";
+  const node = appState.flowNodes.find((item) => item.id === appState.selectedFlowNodeId);
+  if (!node) {
+    $("#flowNodeNameInput").value = "";
+    renderFlowNodeRefSelect("#flowNodeRefEditSelect", "source");
+    return;
+  }
+  $("#flowNodeNameInput").value = node.name || "";
+  setSelectValue("#flowNodeTypeEditSelect", node.type || "source");
+  renderFlowNodeRefSelect("#flowNodeRefEditSelect", node.type || "source", node.refId || "");
+  setSelectValue("#flowNodeExecutionSelect", node.executionMode || "serial");
+  $("#flowNodeParamInput").value = node.param || "";
+}
+
+function renderFlowDesigner() {
+  if (!appState.flowNodes.length) {
+    appState.flowNodes = defaultFlowNodesFromFlow({ dataSourceIds: [], ruleIds: [], outputConfig: collectFlowForm().outputConfig });
+  }
+  if (!appState.selectedFlowNodeId || !appState.flowNodes.some((node) => node.id === appState.selectedFlowNodeId)) {
+    appState.selectedFlowNodeId = appState.flowNodes[0]?.id || "";
+  }
+  $("#flowDesigner").innerHTML = appState.flowNodes
+    .map((node, index) => `
+      <div class="flow-node-card ${node.id === appState.selectedFlowNodeId ? "selected" : ""}" data-flow-node-id="${escapeHtml(node.id)}">
+        <div class="flow-node-type">${escapeHtml(flowNodeTypeLabels[node.type] || node.type)} #${index + 1}</div>
+        <strong>${escapeHtml(node.name || getFlowRefLabel(node.type, node.refId))}</strong>
+        <small>${escapeHtml(getFlowRefLabel(node.type, node.refId))}</small>
+        <small>执行：${escapeHtml(node.executionMode === "parallel" ? "并行" : node.executionMode === "join" ? "等待汇聚" : "串行")}</small>
+        <small>${escapeHtml(node.param || "无额外参数")}</small>
+        <div class="flow-node-actions">
+          <button class="small-button" data-flow-node-action="edit" data-flow-node-id="${escapeHtml(node.id)}">编辑</button>
+          <button class="small-button danger" data-flow-node-action="delete" data-flow-node-id="${escapeHtml(node.id)}">删除</button>
+        </div>
+      </div>
+    `)
+    .join("");
+  selectFlowNode(appState.selectedFlowNodeId);
+  renderIcons();
+}
+
+function renderFlowControls() {
+  renderFlowNodeRefSelect("#flowNodeRefSelect", $("#flowNodeTypeSelect")?.value || "source");
+  const flow = getSelectedFlow() || window.opsData.businessFlows?.[0];
+  if (flow) {
+    populateFlowForm(flow);
+  } else {
+    resetFlowForm();
+  }
+  renderFlowDesigner();
+}
+
+function getSelectedFlow() {
+  return (window.opsData.businessFlows || []).find((flow) => flow.id === appState.selectedFlowId);
+}
+
+function populateFlowForm(flow) {
+  if (!flow) return;
+  appState.selectedFlowId = flow.id;
+  $("#flowNameInput").value = flow.name;
+  $("#flowBusinessInput").value = flow.businessName;
+  $("#flowTimeFieldInput").value = flow.timeField;
+  setSelectValue("#flowOutputModeSelect", flow.outputMode);
+  const outputConfig = flow.outputConfig || {};
+  setSelectValue("#flowWriteStrategySelect", outputConfig.writeStrategy || "upsert");
+  $("#flowPrimaryKeyInput").value = outputConfig.primaryKey || "event_id";
+  $("#flowRawTableInput").value = outputConfig.rawTable || `raw_${flow.businessName || "business"}`;
+  $("#flowCleanTableInput").value = outputConfig.cleanTable || `clean_${flow.businessName || "business"}`;
+  $("#flowBusinessTableInput").value = outputConfig.businessTable || `biz_${flow.businessName || "business"}`;
+  setSelectValue("#flowDedupeStrategySelect", outputConfig.dedupeStrategy || "primary-key");
+  appState.flowNodes = defaultFlowNodesFromFlow(flow);
+  appState.selectedFlowNodeId = appState.flowNodes[0]?.id || "";
+}
+
+function resetFlowForm() {
+  appState.selectedFlowId = "";
+  $("#flowNameInput").value = "新业务聚合流";
+  $("#flowBusinessInput").value = "新业务模块";
+  $("#flowTimeFieldInput").value = "event_time";
+  setSelectValue("#flowOutputModeSelect", "upsert-business");
+  setSelectValue("#flowWriteStrategySelect", "upsert");
+  $("#flowPrimaryKeyInput").value = "event_id";
+  $("#flowRawTableInput").value = "raw_new_business";
+  $("#flowCleanTableInput").value = "clean_new_business";
+  $("#flowBusinessTableInput").value = "biz_new_business";
+  setSelectValue("#flowDedupeStrategySelect", "primary-key");
+  appState.flowNodes = defaultFlowNodesFromFlow({ dataSourceIds: [], ruleIds: [], outputConfig: collectFlowForm().outputConfig });
+  appState.selectedFlowNodeId = appState.flowNodes[0]?.id || "";
+  renderFlowDesigner();
 }
 
 function renderFlowTable() {
-  const rows = [["业务流", "输出业务", "数据源", "清洗规则", "状态"], ...(window.opsData.businessFlows || []).map((flow) => [
-    flow.name,
-    flow.businessName,
-    String(flow.dataSourceIds?.length || 0),
-    String(flow.ruleIds?.length || 0),
-    flow.status || "ready"
-  ])];
-  $("#flowTable").innerHTML = rows
-    .map(
-      (row, index) => `
-        <div class="mapping-row ${index === 0 ? "header" : ""}">
-          ${row.map((cell) => `<span>${escapeHtml(cell)}</span>`).join("")}
+  const header = ["业务流", "输出业务", "节点", "执行", "状态", "操作"];
+  $("#flowTable").innerHTML = [
+    `<div class="flow-list-row header">${header.map((cell) => `<span>${escapeHtml(cell)}</span>`).join("")}</div>`,
+    ...(window.opsData.businessFlows || []).map((flow) => {
+      const nodes = flow.nodes || [];
+      const parallel = nodes.filter((node) => node.executionMode === "parallel").length;
+      const selected = flow.id === appState.selectedFlowId ? "selected" : "";
+      return `
+        <div class="flow-list-row ${selected}" data-flow-id="${escapeHtml(flow.id)}">
+          <span>${escapeHtml(flow.name)}</span>
+          <span>${escapeHtml(flow.businessName)}</span>
+          <span>${escapeHtml(String(nodes.length || (flow.dataSourceIds?.length || 0) + (flow.ruleIds?.length || 0)))}</span>
+          <span>${escapeHtml(parallel ? `${parallel} 并行` : "串行")}</span>
+          <span>${escapeHtml(flow.status || "ready")}</span>
+          <span class="row-actions">
+            <button class="small-button" data-flow-action="edit" data-flow-id="${escapeHtml(flow.id)}">编辑</button>
+            <button class="small-button" data-flow-action="run" data-flow-id="${escapeHtml(flow.id)}">运行</button>
+            <button class="small-button danger" data-flow-action="delete" data-flow-id="${escapeHtml(flow.id)}">删除</button>
+          </span>
         </div>
-      `
-    )
-    .join("");
+      `;
+    })
+  ].join("");
 }
 
 function collectFlowForm() {
+  const dataSourceIds = appState.flowNodes.filter((node) => node.type === "source" && node.refId).map((node) => node.refId);
+  const ruleIds = appState.flowNodes.filter((node) => node.type === "rule" && node.refId).map((node) => node.refId);
   return {
     name: $("#flowNameInput").value.trim() || "自定义业务流",
     businessName: $("#flowBusinessInput").value.trim() || "新业务模块",
     timeField: $("#flowTimeFieldInput").value.trim() || "event_time",
     outputMode: $("#flowOutputModeSelect").value,
-    dataSourceIds: getSelectedValues($("#flowSourceSelect")),
-    ruleIds: getSelectedValues($("#flowRuleSelect"))
+    dataSourceIds,
+    ruleIds,
+    nodes: appState.flowNodes,
+    outputConfig: {
+      writeStrategy: $("#flowWriteStrategySelect").value,
+      primaryKey: $("#flowPrimaryKeyInput").value.trim(),
+      rawTable: $("#flowRawTableInput").value.trim(),
+      cleanTable: $("#flowCleanTableInput").value.trim(),
+      businessTable: $("#flowBusinessTableInput").value.trim(),
+      dedupeStrategy: $("#flowDedupeStrategySelect").value
+    }
   };
 }
 
@@ -519,15 +760,104 @@ function renderFlowOutput(result) {
       <li>新增业务数据：${result.row.map((cell) => escapeHtml(cell)).join(" / ")}</li>
       <li>数据源：${result.sources.map((source) => escapeHtml(source.name)).join("、") || "未选择"}</li>
       <li>规则：${result.rules.map((rule) => escapeHtml(rule.name)).join("、") || "未选择"}</li>
+      <li>落库：原始表 ${escapeHtml(result.outputConfig?.rawTable || "-")}，清洗表 ${escapeHtml(result.outputConfig?.cleanTable || "-")}，业务表 ${escapeHtml(result.outputConfig?.businessTable || "-")}</li>
+      <li>写入策略：${escapeHtml(result.outputConfig?.writeStrategy || "-")} / 主键 ${escapeHtml(result.outputConfig?.primaryKey || "-")} / 去重 ${escapeHtml(result.outputConfig?.dedupeStrategy || "-")}</li>
+      <li>执行计划：串行 ${escapeHtml(String(result.executionPlan?.serial || 0))} 个，并行 ${escapeHtml(String(result.executionPlan?.parallel || 0))} 个，汇聚 ${escapeHtml(String(result.executionPlan?.join || 0))} 个</li>
+      <li>入参循环：${escapeHtml(String(result.parameterPlan?.loopCalls || 0))} 次调用，${escapeHtml(result.parameterPlan?.summary || "固定入参")}</li>
     </ul>
   `;
 }
 
+async function deleteBusinessFlow(flowId = appState.selectedFlowId) {
+  const flow = (window.opsData.businessFlows || []).find((item) => item.id === flowId);
+  if (!flow) return;
+  try {
+    await apiRequest(`/api/business-flows/${encodeURIComponent(flowId)}`, { method: "DELETE" });
+  } catch {
+    // Local fallback keeps the designer responsive while the API is unavailable.
+  }
+  window.opsData.businessFlows = (window.opsData.businessFlows || []).filter((item) => item.id !== flowId);
+  appState.selectedFlowId = window.opsData.businessFlows[0]?.id || "";
+  if (appState.selectedFlowId) {
+    populateFlowForm(getSelectedFlow());
+  } else {
+    resetFlowForm();
+  }
+  renderFlowDesigner();
+  renderFlowTable();
+}
+
+async function saveBusinessFlow() {
+  const payload = collectFlowForm();
+  const editingId = appState.selectedFlowId;
+  try {
+    const saved = await apiRequest(editingId ? `/api/business-flows/${encodeURIComponent(editingId)}` : "/api/business-flows", {
+      method: editingId ? "PUT" : "POST",
+      body: JSON.stringify(payload)
+    });
+    if (editingId) {
+      window.opsData.businessFlows = (window.opsData.businessFlows || []).map((flow) => (flow.id === saved.id ? saved : flow));
+    } else {
+      window.opsData.businessFlows.unshift(saved);
+    }
+    appState.selectedFlowId = saved.id;
+    populateFlowForm(saved);
+  } catch {
+    const localFlow = { id: editingId || `local_flow_${Date.now()}`, ...payload, status: "ready" };
+    if (editingId) {
+      window.opsData.businessFlows = (window.opsData.businessFlows || []).map((flow) => (flow.id === editingId ? { ...flow, ...localFlow } : flow));
+    } else {
+      window.opsData.businessFlows.unshift(localFlow);
+    }
+    appState.selectedFlowId = localFlow.id;
+    populateFlowForm(localFlow);
+  }
+  renderFlowDesigner();
+  renderFlowTable();
+  return getSelectedFlow();
+}
+
+async function runSelectedBusinessFlow() {
+  let flow = getSelectedFlow();
+  if (!flow) {
+    flow = await saveBusinessFlow();
+  }
+  try {
+    const result = await apiRequest("/api/business-flows/run", {
+      method: "POST",
+      body: JSON.stringify({ flowId: flow.id })
+    });
+    renderFlowOutput(result);
+    await loadBootstrapData();
+    appState.selectedFlowId = result.flow.id;
+    populateFlowForm(result.flow);
+    renderBusinessSelector();
+    $("#businessSelect").value = result.business.name;
+    renderBusinessRows({ name: result.business.name, rows: result.business.rows });
+    renderFlowTable();
+    await refreshSyncLogs();
+  } catch {
+    const payload = collectFlowForm();
+    renderFlowOutput({
+      flow: { ...flow, ...payload },
+      sources: window.opsData.sources.filter((source) => payload.dataSourceIds.includes(source.id)),
+      rules: window.opsData.cleaningRules.filter((rule) => payload.ruleIds.includes(rule.id)),
+      outputConfig: payload.outputConfig,
+      parameterPlan: { loopCalls: payload.dataSourceIds.length, summary: "本地模拟执行" },
+      business: { name: payload.businessName },
+      row: [`${payload.businessName} 聚合数据`, "P1", "本地模拟", new Date().toISOString().slice(0, 16).replace("T", " "), `${payload.ruleIds.length} 条规则`]
+    });
+  }
+  renderIcons();
+}
+
 function renderMappings() {
   renderMappingSourceSelect();
+  renderMappingRuleSelect();
   const selectedSourceId = appState.selectedSourceId;
   const mappings = (window.opsData.fieldMappings || []).filter((item) => item.sourceId === selectedSourceId);
   const fallbackRows = (window.opsData.mappings || []).map((row) => ({
+    id: "",
     sourceField: row[0],
     targetField: row[1],
     type: row[2],
@@ -535,26 +865,56 @@ function renderMappings() {
     rule: row.length > 5 ? row[4] : row[3],
     output: row.length > 5 ? row[5] : row[4]
   }));
-  const rows = [
-    ["源字段", "目标字段", "类型", "默认值", "清洗规则", "输出目标"],
-    ...(mappings.length ? mappings : fallbackRows).map((item) => [
-      item.sourceField,
-      item.targetField,
-      item.type,
-      item.defaultValue || "-",
-      item.rule,
-      item.output
-    ])
-  ];
-  $("#mappingTable").innerHTML = rows
-    .map(
-      (row, index) => `
-        <div class="mapping-row ${index === 0 ? "header" : ""}">
-          ${row.map((cell) => `<span>${cell}</span>`).join("")}
+  const header = ["源字段", "目标字段", "类型", "默认值", "清洗规则", "输出目标", "操作"];
+  const items = mappings.length ? mappings : fallbackRows;
+  $("#mappingTable").innerHTML = [
+    `<div class="mapping-row header">${header.map((cell) => `<span>${escapeHtml(cell)}</span>`).join("")}</div>`,
+    ...items.map((item) => {
+      const rule = getRuleById(item.ruleId);
+      const ruleText = item.ruleParam
+        ? `${rule?.name || item.rule || "自定义规则"} / ${item.ruleParam}`
+        : rule?.name || item.rule || "-";
+      return `
+        <div class="mapping-row" data-mapping-id="${escapeHtml(item.id || "")}">
+          <span>${escapeHtml(item.sourceField)}</span>
+          <span>${escapeHtml(item.targetField)}</span>
+          <span>${escapeHtml(item.type)}</span>
+          <span>${escapeHtml(item.defaultValue || "-")}</span>
+          <span title="${escapeHtml(rule?.description || item.rule || "")}">${escapeHtml(ruleText)}</span>
+          <span>${escapeHtml(item.output)}</span>
+          <span class="row-actions">
+            <button class="small-button" data-mapping-action="edit" data-mapping-id="${escapeHtml(item.id || "")}" ${item.id ? "" : "disabled"}>编辑</button>
+            <button class="small-button danger" data-mapping-action="delete" data-mapping-id="${escapeHtml(item.id || "")}" ${item.id ? "" : "disabled"}>删除</button>
+          </span>
         </div>
-      `
-    )
-    .join("");
+      `;
+    })
+  ].join("");
+}
+
+function resetMappingForm() {
+  appState.editingMappingId = "";
+  $("#mapSourceInput").value = "raw.status";
+  $("#mapTargetInput").value = "status";
+  setSelectValue("#mapTypeSelect", "字符串");
+  $("#mapDefaultInput").value = "";
+  renderMappingRuleSelect();
+  $("#mapRuleInput").value = "";
+  $("#addMappingBtn").innerHTML = '<span class="icon" data-icon="plus"></span> 添加映射';
+  renderIcons();
+}
+
+function populateMappingForm(mapping) {
+  if (!mapping) return;
+  appState.editingMappingId = mapping.id;
+  $("#mapSourceInput").value = mapping.sourceField || "";
+  $("#mapTargetInput").value = mapping.targetField || "";
+  setSelectValue("#mapTypeSelect", mapping.type || "字符串");
+  $("#mapDefaultInput").value = mapping.defaultValue || "";
+  renderMappingRuleSelect(mapping.ruleId || "");
+  $("#mapRuleInput").value = mapping.ruleParam || mapping.rule || "";
+  $("#addMappingBtn").innerHTML = '<span class="icon" data-icon="plus"></span> 保存映射';
+  renderIcons();
 }
 
 function renderBusinessSelector() {
@@ -914,6 +1274,75 @@ function bindEvents() {
       setCleaningTab(event.target.dataset.cleaningTab);
     });
   }
+  $("#flowNodeTypeSelect").addEventListener("change", () => {
+    renderFlowNodeRefSelect("#flowNodeRefSelect", $("#flowNodeTypeSelect").value);
+  });
+  $("#flowNodeTypeEditSelect").addEventListener("change", () => {
+    renderFlowNodeRefSelect("#flowNodeRefEditSelect", $("#flowNodeTypeEditSelect").value);
+  });
+  $("#flowBusinessTableInput").addEventListener("input", () => {
+    if ($("#flowNodeTypeSelect").value === "output") {
+      renderFlowNodeRefSelect("#flowNodeRefSelect", "output");
+    }
+    if ($("#flowNodeTypeEditSelect").value === "output") {
+      renderFlowNodeRefSelect("#flowNodeRefEditSelect", "output", $("#flowNodeRefEditSelect").value);
+    }
+  });
+  $("#addFlowNodeBtn").addEventListener("click", () => {
+    const node = makeFlowNode($("#flowNodeTypeSelect").value, $("#flowNodeRefSelect").value);
+    appState.flowNodes.push(node);
+    appState.selectedFlowNodeId = node.id;
+    renderFlowDesigner();
+  });
+  $("#flowDesigner").addEventListener("click", (event) => {
+    const nodeCard = event.target.closest("[data-flow-node-id]");
+    if (!nodeCard) return;
+    const action = event.target.dataset.flowNodeAction;
+    const nodeId = nodeCard.dataset.flowNodeId;
+    if (action === "delete") {
+      appState.flowNodes = appState.flowNodes.filter((node) => node.id !== nodeId);
+      appState.selectedFlowNodeId = appState.flowNodes[0]?.id || "";
+      renderFlowDesigner();
+      return;
+    }
+    appState.selectedFlowNodeId = nodeId;
+    renderFlowDesigner();
+  });
+  $("#saveFlowNodeBtn").addEventListener("click", () => {
+    const node = appState.flowNodes.find((item) => item.id === appState.selectedFlowNodeId);
+    if (!node) return;
+    node.type = $("#flowNodeTypeEditSelect").value;
+    node.refId = $("#flowNodeRefEditSelect").value;
+    node.name = $("#flowNodeNameInput").value.trim() || getFlowRefLabel(node.type, node.refId);
+    node.executionMode = $("#flowNodeExecutionSelect").value;
+    node.param = $("#flowNodeParamInput").value.trim();
+    renderFlowDesigner();
+  });
+  $("#deleteFlowNodeBtn").addEventListener("click", () => {
+    if (!appState.selectedFlowNodeId) return;
+    appState.flowNodes = appState.flowNodes.filter((node) => node.id !== appState.selectedFlowNodeId);
+    appState.selectedFlowNodeId = appState.flowNodes[0]?.id || "";
+    renderFlowDesigner();
+  });
+  $("#flowTable").addEventListener("click", async (event) => {
+    const row = event.target.closest("[data-flow-id]");
+    if (!row) return;
+    const flowId = row.dataset.flowId;
+    const flow = (window.opsData.businessFlows || []).find((item) => item.id === flowId);
+    if (!flow) return;
+    const action = event.target.dataset.flowAction || "edit";
+    if (action === "delete") {
+      await deleteBusinessFlow(flowId);
+      return;
+    }
+    appState.selectedFlowId = flowId;
+    populateFlowForm(flow);
+    renderFlowDesigner();
+    renderFlowTable();
+    if (action === "run") {
+      await runSelectedBusinessFlow();
+    }
+  });
   $("#sourceStack").addEventListener("click", (event) => {
     const card = event.target.closest("[data-source-id]");
     if (!card) return;
@@ -937,6 +1366,11 @@ function bindEvents() {
     if ($("#responseFieldSelect").value) {
       $("#mapSourceInput").value = $("#responseFieldSelect").value;
     }
+  });
+  $("#paramSourceTypeSelect").addEventListener("change", updateParamSourceTypeHelp);
+  ["#ruleTypeSelect", "#ruleActionSelect", "#ruleSourceFieldInput", "#ruleTargetFieldInput", "#ruleParamInput"].forEach((selector) => {
+    $(selector)?.addEventListener("input", syncRuleExpressionPreview);
+    $(selector)?.addEventListener("change", syncRuleExpressionPreview);
   });
   $("#sourceTestResult").addEventListener("click", (event) => {
     const field = event.target.dataset.responseField;
@@ -1152,29 +1586,67 @@ function bindEvents() {
     renderMappings();
     renderIcons();
   });
+  $("#mappingTable").addEventListener("click", async (event) => {
+    const action = event.target.dataset.mappingAction;
+    const mappingId = event.target.dataset.mappingId;
+    if (!action || !mappingId) return;
+    const mapping = getMappingById(mappingId);
+    if (!mapping) return;
+    if (action === "edit") {
+      populateMappingForm(mapping);
+      $("#mapSourceInput").focus();
+      return;
+    }
+    if (action === "delete") {
+      try {
+        await apiRequest(`/api/field-mappings/${encodeURIComponent(mappingId)}`, { method: "DELETE" });
+      } catch {
+        // Local fallback keeps the UI responsive while the backend is unavailable.
+      }
+      window.opsData.fieldMappings = (window.opsData.fieldMappings || []).filter((item) => item.id !== mappingId);
+      window.opsData.mappings = (window.opsData.mappings || []).filter((row) => row[0] !== mapping.sourceField || row[1] !== mapping.targetField);
+      if (appState.editingMappingId === mappingId) {
+        resetMappingForm();
+      }
+      renderMappings();
+    }
+  });
   $("#addMappingBtn").addEventListener("click", async () => {
+    const selectedRule = getRuleById($("#mapRuleSelect").value);
     const mapping = {
       sourceField: $("#mapSourceInput").value,
       sourceId: appState.selectedSourceId,
       targetField: $("#mapTargetInput").value,
       type: $("#mapTypeSelect").value,
       defaultValue: $("#mapDefaultInput").value,
-      rule: $("#mapRuleInput").value,
+      ruleId: $("#mapRuleSelect").value,
+      ruleParam: $("#mapRuleInput").value,
+      rule: selectedRule?.expression || $("#mapRuleInput").value || "未配置规则",
       output: "内部业务库"
     };
+    const editingId = appState.editingMappingId;
     try {
-      const saved = await apiRequest("/api/field-mappings", {
-        method: "POST",
+      const saved = await apiRequest(editingId ? `/api/field-mappings/${encodeURIComponent(editingId)}` : "/api/field-mappings", {
+        method: editingId ? "PUT" : "POST",
         body: JSON.stringify(mapping)
       });
       window.opsData.fieldMappings = window.opsData.fieldMappings || [];
-      window.opsData.fieldMappings.push(saved);
-      window.opsData.mappings.push([saved.sourceField, saved.targetField, saved.type, saved.defaultValue || "", saved.rule, saved.output]);
+      if (editingId) {
+        window.opsData.fieldMappings = window.opsData.fieldMappings.map((item) => (item.id === saved.id ? saved : item));
+      } else {
+        window.opsData.fieldMappings.push(saved);
+        window.opsData.mappings.push([saved.sourceField, saved.targetField, saved.type, saved.defaultValue || "", saved.rule, saved.output]);
+      }
     } catch {
       window.opsData.fieldMappings = window.opsData.fieldMappings || [];
-      window.opsData.fieldMappings.push({ id: `local_map_${Date.now()}`, ...mapping });
-      window.opsData.mappings.push([mapping.sourceField, mapping.targetField, mapping.type, mapping.defaultValue || "", mapping.rule, mapping.output]);
+      if (editingId) {
+        window.opsData.fieldMappings = window.opsData.fieldMappings.map((item) => (item.id === editingId ? { ...item, ...mapping } : item));
+      } else {
+        window.opsData.fieldMappings.push({ id: `local_map_${Date.now()}`, ...mapping });
+        window.opsData.mappings.push([mapping.sourceField, mapping.targetField, mapping.type, mapping.defaultValue || "", mapping.rule, mapping.output]);
+      }
     }
+    resetMappingForm();
     renderMappings();
     renderMappingSourceSelect();
   });
@@ -1205,6 +1677,8 @@ function bindEvents() {
     }
     renderRuleTable();
     renderFlowControls();
+    renderMappingRuleSelect();
+    renderMappings();
     closeDialog("#ruleModal");
   });
   $("#ruleTable").addEventListener("click", async (event) => {
@@ -1225,66 +1699,31 @@ function bindEvents() {
         // Local fallback.
       }
       window.opsData.cleaningRules = window.opsData.cleaningRules.filter((item) => item.id !== ruleId);
+      window.opsData.fieldMappings = (window.opsData.fieldMappings || []).map((mapping) =>
+        mapping.ruleId === ruleId ? { ...mapping, ruleId: "", rule: "规则已删除" } : mapping
+      );
       window.opsData.businessFlows = window.opsData.businessFlows.map((flow) => ({
         ...flow,
         ruleIds: flow.ruleIds.filter((id) => id !== ruleId)
       }));
       renderRuleTable();
       renderFlowControls();
+      renderMappingRuleSelect();
+      renderMappings();
       renderFlowTable();
     }
   });
-  $("#createFlowBtn").addEventListener("click", async () => {
-    const payload = collectFlowForm();
-    try {
-      const flow = await apiRequest("/api/business-flows", {
-        method: "POST",
-        body: JSON.stringify(payload)
-      });
-      window.opsData.businessFlows.unshift(flow);
-    } catch {
-      window.opsData.businessFlows.unshift({ id: `local_flow_${Date.now()}`, ...payload, status: "ready" });
-    }
+  $("#newFlowBtn").addEventListener("click", () => {
+    resetFlowForm();
     renderFlowTable();
   });
-  $("#runFlowBtn").addEventListener("click", async () => {
-    let flow = window.opsData.businessFlows?.[0];
-    if (!flow || flow.name !== $("#flowNameInput").value.trim()) {
-      const payload = collectFlowForm();
-      try {
-        flow = await apiRequest("/api/business-flows", {
-          method: "POST",
-          body: JSON.stringify(payload)
-        });
-        window.opsData.businessFlows.unshift(flow);
-      } catch {
-        flow = { id: `local_flow_${Date.now()}`, ...payload, status: "ready" };
-        window.opsData.businessFlows.unshift(flow);
-      }
-    }
-    try {
-      const result = await apiRequest("/api/business-flows/run", {
-        method: "POST",
-        body: JSON.stringify({ flowId: flow.id })
-      });
-      renderFlowOutput(result);
-      await loadBootstrapData();
-      renderBusinessSelector();
-      $("#businessSelect").value = result.business.name;
-      renderBusinessRows({ name: result.business.name, rows: result.business.rows });
-      renderFlowTable();
-      await refreshSyncLogs();
-    } catch {
-      renderFlowOutput({
-        flow,
-        sources: window.opsData.sources.filter((source) => flow.dataSourceIds.includes(source.id)),
-        rules: window.opsData.cleaningRules.filter((rule) => flow.ruleIds.includes(rule.id)),
-        business: { name: flow.businessName },
-        row: [`${flow.businessName} 聚合数据`, "P1", "本地模拟", new Date().toISOString().slice(0, 16).replace("T", " "), `${flow.ruleIds.length} 条规则`]
-      });
-    }
-    renderIcons();
+  $("#createFlowBtn").addEventListener("click", async () => {
+    await saveBusinessFlow();
   });
+  $("#deleteFlowBtn").addEventListener("click", async () => {
+    await deleteBusinessFlow();
+  });
+  $("#runFlowBtn").addEventListener("click", runSelectedBusinessFlow);
   $("#addKnowledgeBtn").addEventListener("click", async () => {
     const payload = {
       name: $("#knowledgeNameInput").value,

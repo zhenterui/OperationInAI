@@ -36,6 +36,17 @@ export const store = {
         keepMode: "filter",
         filterCondition: "level in [P0,P1]"
       },
+      parameterConfig: {
+        sourceType: "database",
+        sourceId: "src_cmdb_pg",
+        query: "select service_id, owner, env from asset_service_relation where env = 'prod'",
+        mappings: [
+          { from: "service_id", to: "body.serviceId" },
+          { from: "owner", to: "query.owner" }
+        ],
+        iterationMode: "per-record",
+        strategy: "concurrency=5; retries=2; continueOnError=true"
+      },
       updatedAt: now()
     },
     {
@@ -60,6 +71,14 @@ export const store = {
         keepMode: "all",
         filterCondition: ""
       },
+      parameterConfig: {
+        sourceType: "static",
+        sourceId: "",
+        query: "",
+        mappings: [],
+        iterationMode: "single",
+        strategy: ""
+      },
       updatedAt: now()
     },
     {
@@ -83,6 +102,14 @@ export const store = {
       responseConfig: {
         keepMode: "filter",
         filterCondition: "result != ok"
+      },
+      parameterConfig: {
+        sourceType: "static",
+        sourceId: "",
+        query: "",
+        mappings: [],
+        iterationMode: "single",
+        strategy: ""
       },
       updatedAt: now()
     }
@@ -165,8 +192,24 @@ export const store = {
       businessName: "告警业务",
       dataSourceIds: ["src_alarm_api", "src_cmdb_pg"],
       ruleIds: ["rule_alarm_normalize", "rule_owner_enrich"],
+      nodes: [
+        { id: "node_context_default", type: "context", refId: "time-window", name: "业务时间窗口", executionMode: "serial", param: "context.start_time / context.end_time" },
+        { id: "node_source_alarm", type: "source", refId: "src_alarm_api", name: "告警中心 API", executionMode: "parallel", param: "按 CMDB 服务逐条调用" },
+        { id: "node_source_cmdb", type: "source", refId: "src_cmdb_pg", name: "CMDB PostgreSQL", executionMode: "parallel", param: "服务负责人补齐" },
+        { id: "node_rule_alarm", type: "rule", refId: "rule_alarm_normalize", name: "告警字段标准化", executionMode: "join", param: "level/time/service" },
+        { id: "node_rule_owner", type: "rule", refId: "rule_owner_enrich", name: "CMDB 负责人补齐", executionMode: "serial", param: "service_id join owner" },
+        { id: "node_output_alarm", type: "output", refId: "business-table", name: "biz_alarm_event", executionMode: "serial", param: "upsert by event_id" }
+      ],
       timeField: "event_time",
       outputMode: "upsert-business",
+      outputConfig: {
+        writeStrategy: "upsert",
+        primaryKey: "event_id",
+        rawTable: "raw_alarm_api",
+        cleanTable: "clean_alarm_event",
+        businessTable: "biz_alarm_event",
+        dedupeStrategy: "primary-key"
+      },
       status: "ready",
       lastRunAt: "",
       updatedAt: now()

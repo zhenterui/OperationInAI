@@ -7,11 +7,15 @@ import {
   createFieldMapping,
   createKnowledgeSource,
   deleteAuthConfig,
+  deleteBusinessFlow,
   deleteCleaningRule,
+  deleteFieldMapping,
   queryBusiness,
   runBusinessFlow,
   updateAuthConfig,
-  updateCleaningRule
+  updateBusinessFlow,
+  updateCleaningRule,
+  updateFieldMapping
 } from "../services/config-service.mjs";
 import { answerQuestion } from "../services/search-service.mjs";
 import { createDataSource, deleteDataSource, listSyncLogs, runSync, testDataSource, updateDataSource } from "../services/sync-service.mjs";
@@ -109,6 +113,40 @@ export async function handleApi(request, response) {
   if (cleaningRuleMatch && request.method === "DELETE") {
     try {
       sendJson(response, 200, { data: deleteCleaningRule(cleaningRuleMatch[1]) });
+    } catch (error) {
+      sendError(response, error.status || 500, "API request failed", error.message);
+    }
+    return true;
+  }
+  const fieldMappingMatch = parsed.pathname.match(/^\/api\/field-mappings\/([^/]+)$/);
+  if (fieldMappingMatch && request.method === "PUT") {
+    try {
+      sendJson(response, 200, { data: updateFieldMapping(fieldMappingMatch[1], await readJson(request)) });
+    } catch (error) {
+      sendError(response, error.status || 500, "API request failed", error.message);
+    }
+    return true;
+  }
+  if (fieldMappingMatch && request.method === "DELETE") {
+    try {
+      sendJson(response, 200, { data: deleteFieldMapping(fieldMappingMatch[1]) });
+    } catch (error) {
+      sendError(response, error.status || 500, "API request failed", error.message);
+    }
+    return true;
+  }
+  const businessFlowMatch = parsed.pathname.match(/^\/api\/business-flows\/([^/]+)$/);
+  if (businessFlowMatch && request.method === "PUT") {
+    try {
+      sendJson(response, 200, { data: updateBusinessFlow(businessFlowMatch[1], await readJson(request)) });
+    } catch (error) {
+      sendError(response, error.status || 500, "API request failed", error.message);
+    }
+    return true;
+  }
+  if (businessFlowMatch && request.method === "DELETE") {
+    try {
+      sendJson(response, 200, { data: deleteBusinessFlow(businessFlowMatch[1]) });
     } catch (error) {
       sendError(response, error.status || 500, "API request failed", error.message);
     }

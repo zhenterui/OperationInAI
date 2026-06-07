@@ -129,16 +129,23 @@
                   <p class="eyebrow">Business Workspace</p>
                   <h2>业务配置与业务流编排</h2>
                 </div>
+                <button class="small-button" id="newFlowBtn">
+                  <span class="icon" data-icon="plus"></span>
+                  新建业务流
+                </button>
                 <button class="small-button primary" id="createFlowBtn">
                   <span class="icon" data-icon="plus"></span>
-                  创建业务流
+                  保存业务流
                 </button>
                 <button class="small-button" id="runFlowBtn">
                   <span class="icon" data-icon="play"></span>
                   执行业务流
                 </button>
+                <button class="small-button danger" id="deleteFlowBtn">
+                  删除业务流
+                </button>
               </div>
-              <div class="config-form flow-config">
+              <div class="flow-summary-grid">
                 <label>
                   <span>业务流名称</span>
                   <input id="flowNameInput" value="新业务聚合流" />
@@ -147,26 +154,123 @@
                   <span>输出业务模块</span>
                   <input id="flowBusinessInput" value="新业务模块" />
                 </label>
-                <label>
-                  <span>时间字段</span>
-                  <input id="flowTimeFieldInput" value="event_time" />
-                </label>
-                <label>
-                  <span>输出方式</span>
-                  <select id="flowOutputModeSelect">
-                    <option value="upsert-business">写入/更新业务模块</option>
-                    <option value="file">输出文件</option>
-                    <option value="api">输出 API</option>
-                  </select>
-                </label>
-                <label class="full">
-                  <span>选择数据源（可多选）</span>
-                  <select id="flowSourceSelect" multiple size="4"></select>
-                </label>
-                <label class="full">
-                  <span>选择清洗规则（可多选）</span>
-                  <select id="flowRuleSelect" multiple size="4"></select>
-                </label>
+              </div>
+              <details class="flow-advanced-config">
+                <summary>
+                  <span>
+                    <strong>输出与落库</strong>
+                    <small>raw / clean / biz</small>
+                  </span>
+                  <span class="status-pill">高级</span>
+                </summary>
+                <div class="config-form flow-config compact">
+                  <label>
+                    <span>时间字段</span>
+                    <input id="flowTimeFieldInput" value="event_time" />
+                  </label>
+                  <label>
+                    <span>输出方式</span>
+                    <select id="flowOutputModeSelect">
+                      <option value="upsert-business">写入/更新业务模块</option>
+                      <option value="file">输出文件</option>
+                      <option value="api">输出 API</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>写入策略</span>
+                    <select id="flowWriteStrategySelect">
+                      <option value="upsert">按主键更新</option>
+                      <option value="append">追加写入</option>
+                      <option value="overwrite">覆盖写入</option>
+                      <option value="preview">仅预览不保存</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>主键字段</span>
+                    <input id="flowPrimaryKeyInput" value="event_id" />
+                  </label>
+                  <label>
+                    <span>原始表名</span>
+                    <input id="flowRawTableInput" value="raw_alarm_api" />
+                  </label>
+                  <label>
+                    <span>清洗表名</span>
+                    <input id="flowCleanTableInput" value="clean_alarm_event" />
+                  </label>
+                  <label>
+                    <span>业务表名</span>
+                    <input id="flowBusinessTableInput" value="biz_alarm_event" />
+                  </label>
+                  <label>
+                    <span>去重策略</span>
+                    <select id="flowDedupeStrategySelect">
+                      <option value="primary-key">按主键去重</option>
+                      <option value="field-combo">按字段组合去重</option>
+                      <option value="none">不去重</option>
+                    </select>
+                  </label>
+                </div>
+              </details>
+              <div class="flow-builder">
+                <div class="flow-toolbar">
+                  <label>
+                    <span>节点类型</span>
+                    <select id="flowNodeTypeSelect">
+                      <option value="context">业务流上下文</option>
+                      <option value="source">数据源</option>
+                      <option value="rule">清洗规则</option>
+                      <option value="output">输出落库</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>节点对象</span>
+                    <select id="flowNodeRefSelect"></select>
+                  </label>
+                  <button class="small-button primary" id="addFlowNodeBtn">
+                    <span class="icon" data-icon="plus"></span>
+                    添加节点
+                  </button>
+                </div>
+                <div class="flow-designer" id="flowDesigner"></div>
+                <div class="flow-inspector" id="flowNodeInspector">
+                  <div>
+                    <p class="eyebrow">Node Inspector</p>
+                    <strong>节点配置</strong>
+                  </div>
+                  <label>
+                    <span>节点名称</span>
+                    <input id="flowNodeNameInput" value="" />
+                  </label>
+                  <label>
+                    <span>节点类型</span>
+                    <select id="flowNodeTypeEditSelect">
+                      <option value="context">业务流上下文</option>
+                      <option value="source">数据源</option>
+                      <option value="rule">清洗规则</option>
+                      <option value="output">输出落库</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>节点对象</span>
+                    <select id="flowNodeRefEditSelect"></select>
+                  </label>
+                  <label>
+                    <span>执行方式</span>
+                    <select id="flowNodeExecutionSelect">
+                      <option value="serial">串行执行</option>
+                      <option value="parallel">并行执行</option>
+                      <option value="join">等待汇聚</option>
+                    </select>
+                  </label>
+                  <label class="full">
+                    <span>节点参数</span>
+                    <input id="flowNodeParamInput" value="" placeholder="如 context.start_time 或 执行说明" />
+                  </label>
+                  <div class="row-actions">
+                    <button class="small-button" id="saveFlowNodeBtn">保存节点</button>
+                    <button class="small-button danger" id="deleteFlowNodeBtn">删除节点</button>
+                  </div>
+                </div>
               </div>
               <div class="flow-result-grid">
                 <div class="mapping-table" id="flowTable"></div>
@@ -265,6 +369,43 @@
                   <span>Body 入参 JSON</span>
                   <textarea id="bodyParamsInput" rows="4">{ "severity": ["P0", "P1"], "includeRecovered": false }</textarea>
                 </label>
+                <label>
+                  <span>入参来源</span>
+                  <select id="paramSourceTypeSelect">
+                    <option value="static" title="直接使用 Query/Header/Body 中配置的固定值。">固定入参</option>
+                    <option value="database" title="先查询数据库记录，再用记录字段作为本次 API 入参。">数据库查询</option>
+                    <option value="source" title="使用另一个数据源的输出字段驱动当前数据源调用。">上游数据源</option>
+                    <option value="flow" title="使用整条业务流共享的时间窗口、租户、批次号等变量。">业务流上下文</option>
+                  </select>
+                  <small class="select-popover" id="paramSourceTypeHelp"></small>
+                </label>
+                <label>
+                  <span>来源数据源</span>
+                  <select id="paramSourceSelect"></select>
+                </label>
+                <label class="full">
+                  <span>来源查询/过滤条件</span>
+                  <textarea id="paramQueryInput" rows="3">select service_id, owner, env from asset_service_relation where env = 'prod'</textarea>
+                </label>
+                <label class="full">
+                  <span>入参字段映射 JSON</span>
+                  <textarea id="paramMappingInput" rows="4">[
+  { "from": "service_id", "to": "body.serviceId" },
+  { "from": "owner", "to": "query.owner" }
+]</textarea>
+                </label>
+                <label>
+                  <span>调用方式</span>
+                  <select id="paramIterationModeSelect">
+                    <option value="single">单次调用</option>
+                    <option value="per-record">按记录逐条调用</option>
+                    <option value="batch">批量调用</option>
+                  </select>
+                </label>
+                <label>
+                  <span>并发/重试</span>
+                  <input id="paramStrategyInput" value="concurrency=5; retries=2; continueOnError=true" />
+                </label>
               </form>
               <div class="test-result" id="sourceTestResult">
                 <div class="module-status">配置入参后点击“测试联通”，这里会显示返回状态、响应字段和响应体。</div>
@@ -317,7 +458,8 @@
                   <option>数字</option>
                 </select>
                 <input id="mapDefaultInput" value="" aria-label="默认值" placeholder="默认值" />
-                <input id="mapRuleInput" value="去空格 + 枚举归一" aria-label="清洗规则" />
+                <select id="mapRuleSelect" aria-label="清洗规则"></select>
+                <input id="mapRuleInput" value="" aria-label="规则参数" placeholder="规则参数/覆盖说明" />
                 <button class="small-button" id="addMappingBtn">
                   <span class="icon" data-icon="plus"></span>
                   添加映射
@@ -585,9 +727,35 @@
               <option value="enrich">关联补齐</option>
             </select>
           </label>
+          <label>
+            <span>规则动作</span>
+            <select id="ruleActionSelect">
+              <option value="trim">去除首尾空格</option>
+              <option value="lower">转小写</option>
+              <option value="upper">转大写</option>
+              <option value="enum">枚举转换</option>
+              <option value="default">空值默认</option>
+              <option value="filter">条件过滤</option>
+              <option value="date">时间格式化</option>
+              <option value="number">数值转换</option>
+              <option value="enrich">关联补齐</option>
+            </select>
+          </label>
+          <label>
+            <span>作用字段</span>
+            <input id="ruleSourceFieldInput" value="service_name" placeholder="如 data.items[].service.name" />
+          </label>
+          <label>
+            <span>输出字段</span>
+            <input id="ruleTargetFieldInput" value="service_name" placeholder="可为空，默认覆盖原字段" />
+          </label>
           <label class="full">
-            <span>规则表达式</span>
-            <input id="ruleExpressionInput" value="service_name trim + lower" />
+            <span>参数配置</span>
+            <input id="ruleParamInput" value="trim + lower" placeholder="如 P0=高,P1=中 或 level == P0" />
+          </label>
+          <label class="full">
+            <span>规则表达式预览</span>
+            <input id="ruleExpressionInput" value="service_name trim + lower" readonly />
           </label>
           <label class="full">
             <span>规则说明</span>
