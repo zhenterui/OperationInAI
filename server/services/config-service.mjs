@@ -164,10 +164,15 @@ export function deleteCleaningRule(id) {
 }
 
 export function createBusinessFlow(input = {}) {
+  const businessName = (input.businessName || "新业务模块").trim();
+  const existing = store.businessFlows.find((item) => (item.businessName || "").trim().toLowerCase() === businessName.toLowerCase());
+  if (existing) {
+    return updateBusinessFlow(existing.id, { ...input, businessName });
+  }
   const flow = {
     id: `flow_${Date.now()}`,
     name: input.name || "自定义业务流",
-    businessName: input.businessName || "新业务模块",
+    businessName,
     dataSourceIds: Array.isArray(input.dataSourceIds) ? input.dataSourceIds : [],
     ruleIds: Array.isArray(input.ruleIds) ? input.ruleIds : [],
     nodes: Array.isArray(input.nodes) ? input.nodes : [],

@@ -214,12 +214,22 @@ try {
       }
     })
   });
+  const duplicateBusinessFlow = await request("/api/business-flows", {
+    method: "POST",
+    body: JSON.stringify({
+      ...flow.data,
+      name: "E2E 同业务唯一流校验",
+      nodes: flow.data.nodes
+    })
+  });
+  assert(duplicateBusinessFlow.data.id === flow.data.id, "same business should keep exactly one business flow");
+  assert(duplicateBusinessFlow.data.name === "E2E 同业务唯一流校验", "same business flow should be updated by duplicate create");
   const updatedFlow = await request(`/api/business-flows/${flow.data.id}`, {
     method: "PUT",
     body: JSON.stringify({
-      ...flow.data,
+      ...duplicateBusinessFlow.data,
       name: "E2E 数据清洗业务流已编辑",
-      nodes: flow.data.nodes.map((node) => (node.id === "e2e_output" ? { ...node, param: "upsert edited" } : node))
+      nodes: duplicateBusinessFlow.data.nodes.map((node) => (node.id === "e2e_output" ? { ...node, param: "upsert edited" } : node))
     })
   });
   const flowRun = await request("/api/business-flows/run", {

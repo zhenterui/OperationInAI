@@ -624,6 +624,48 @@ function selectFlowNode(nodeId) {
   $("#flowNodeParamInput").value = node.param || "";
 }
 
+function getExecutionLabel(mode) {
+  if (mode === "parallel") return "并行分支";
+  if (mode === "join") return "等待汇聚";
+  return "串行主线";
+}
+
+function buildFlowStages(nodes = []) {
+  const stages = [];
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    if (node.executionMode === "parallel") {
+      const branches = [node];
+      while (nodes[index + 1]?.executionMode === "parallel") {
+        index += 1;
+        branches.push(nodes[index]);
+      }
+      stages.push({ type: "parallel", nodes: branches });
+    } else {
+      stages.push({ type: "single", nodes: [node] });
+    }
+  }
+  return stages;
+}
+
+function renderFlowNodeCard(node, index, variant = "") {
+  return `
+    <div class="flow-node-card ${variant} ${node.id === appState.selectedFlowNodeId ? "selected" : ""}" data-flow-node-id="${escapeHtml(node.id)}">
+      <div class="flow-node-topline">
+        <div class="flow-node-type">${escapeHtml(flowNodeTypeLabels[node.type] || node.type)} #${index + 1}</div>
+        <span class="flow-execution-badge ${escapeHtml(node.executionMode || "serial")}">${escapeHtml(getExecutionLabel(node.executionMode))}</span>
+      </div>
+      <strong>${escapeHtml(node.name || getFlowRefLabel(node.type, node.refId))}</strong>
+      <small>${escapeHtml(getFlowRefLabel(node.type, node.refId))}</small>
+      <small>${escapeHtml(node.param || "无额外参数")}</small>
+      <div class="flow-node-actions">
+        <button class="small-button" data-flow-node-action="edit" data-flow-node-id="${escapeHtml(node.id)}">编辑</button>
+        <button class="small-button danger" data-flow-node-action="delete" data-flow-node-id="${escapeHtml(node.id)}">删除</button>
+      </div>
+    </div>
+  `;
+}
+
 function renderFlowDesigner() {
   if (!appState.flowNodes.length) {
     appState.flowNodes = defaultFlowNodesFromFlow({ dataSourceIds: [], ruleIds: [], outputConfig: collectFlowForm().outputConfig });
@@ -631,20 +673,23 @@ function renderFlowDesigner() {
   if (!appState.selectedFlowNodeId || !appState.flowNodes.some((node) => node.id === appState.selectedFlowNodeId)) {
     appState.selectedFlowNodeId = appState.flowNodes[0]?.id || "";
   }
-  $("#flowDesigner").innerHTML = appState.flowNodes
-    .map((node, index) => `
-      <div class="flow-node-card ${node.id === appState.selectedFlowNodeId ? "selected" : ""}" data-flow-node-id="${escapeHtml(node.id)}">
-        <div class="flow-node-type">${escapeHtml(flowNodeTypeLabels[node.type] || node.type)} #${index + 1}</div>
-        <strong>${escapeHtml(node.name || getFlowRefLabel(node.type, node.refId))}</strong>
-        <small>${escapeHtml(getFlowRefLabel(node.type, node.refId))}</small>
-        <small>执行：${escapeHtml(node.executionMode === "parallel" ? "并行" : node.executionMode === "join" ? "等待汇聚" : "串行")}</small>
-        <small>${escapeHtml(node.param || "无额外参数")}</small>
-        <div class="flow-node-actions">
-          <button class="small-button" data-flow-node-action="edit" data-flow-node-id="${escapeHtml(node.id)}">编辑</button>
-          <button class="small-button danger" data-flow-node-action="delete" data-flow-node-id="${escapeHtml(node.id)}">删除</button>
-        </div>
-      </div>
-    `)
+  let nodeIndex = 0;
+  $("#flowDesigner").innerHTML = buildFlowStages(appState.flowNodes)
+    .map((stage) => {
+      if (stage.type === "parallel") {
+        const branchCards = stage.nodes
+          .map((node) => renderFlowNodeCard(node, nodeIndex++, "parallel-branch"))
+          .join("");
+        return `
+          <div class="flow-stage parallel-stage">
+            <div class="flow-branch-label">并行分支</div>
+            <div class="flow-parallel-branches">${branchCards}</div>
+          </div>
+        `;
+      }
+      const node = stage.nodes[0];
+      return `<div class="flow-stage ${escapeHtml(node.executionMode || "serial")}-stage">${renderFlowNodeCard(node, nodeIndex++)}</div>`;
+    })
     .join("");
   selectFlowNode(appState.selectedFlowNodeId);
   renderIcons();
@@ -701,7 +746,7 @@ function resetFlowForm() {
 }
 
 function renderFlowTable() {
-  const header = ["业务流", "输出业务", "节点", "执行", "状态", "操作"];
+  const header = ["业务", "唯一业务流", "节点", "执行", "状态", "操作"];
   $("#flowTable").innerHTML = [
     `<div class="flow-list-row header">${header.map((cell) => `<span>${escapeHtml(cell)}</span>`).join("")}</div>`,
     ...(window.opsData.businessFlows || []).map((flow) => {
@@ -710,8 +755,8 @@ function renderFlowTable() {
       const selected = flow.id === appState.selectedFlowId ? "selected" : "";
       return `
         <div class="flow-list-row ${selected}" data-flow-id="${escapeHtml(flow.id)}">
-          <span>${escapeHtml(flow.name)}</span>
           <span>${escapeHtml(flow.businessName)}</span>
+          <span>${escapeHtml(flow.name)}</span>
           <span>${escapeHtml(String(nodes.length || (flow.dataSourceIds?.length || 0) + (flow.ruleIds?.length || 0)))}</span>
           <span>${escapeHtml(parallel ? `${parallel} 并行` : "串行")}</span>
           <span>${escapeHtml(flow.status || "ready")}</span>
@@ -750,12 +795,12 @@ function collectFlowForm() {
 
 function renderFlowOutput(result) {
   if (!result) {
-    $("#flowOutput").innerHTML = "<h3>业务流输出</h3><p>创建并执行业务流后，会在这里显示组合数据源、规则和最终业务数据。</p>";
+    $("#flowOutput").innerHTML = "<h3>业务执行结果</h3><p>保存并执行业务后，会在这里显示这个业务的唯一业务流、组合数据源、清洗规则和最终业务数据。</p>";
     return;
   }
   $("#flowOutput").innerHTML = `
-    <h3>业务流输出</h3>
-    <p>${escapeHtml(result.flow.name)} 已执行，组合 ${result.sources.length} 个数据源和 ${result.rules.length} 条规则，输出到 ${escapeHtml(result.business.name)}。</p>
+    <h3>业务执行结果</h3>
+    <p>${escapeHtml(result.business.name)} 已执行唯一业务流 ${escapeHtml(result.flow.name)}，组合 ${result.sources.length} 个数据源和 ${result.rules.length} 条规则。</p>
     <ul>
       <li>新增业务数据：${result.row.map((cell) => escapeHtml(cell)).join(" / ")}</li>
       <li>数据源：${result.sources.map((source) => escapeHtml(source.name)).join("、") || "未选择"}</li>
@@ -789,13 +834,17 @@ async function deleteBusinessFlow(flowId = appState.selectedFlowId) {
 
 async function saveBusinessFlow() {
   const payload = collectFlowForm();
-  const editingId = appState.selectedFlowId;
+  const sameBusinessFlow = (window.opsData.businessFlows || []).find((flow) =>
+    flow.id !== appState.selectedFlowId &&
+    (flow.businessName || "").trim().toLowerCase() === payload.businessName.trim().toLowerCase()
+  );
+  const editingId = appState.selectedFlowId || sameBusinessFlow?.id || "";
   try {
     const saved = await apiRequest(editingId ? `/api/business-flows/${encodeURIComponent(editingId)}` : "/api/business-flows", {
       method: editingId ? "PUT" : "POST",
       body: JSON.stringify(payload)
     });
-    if (editingId) {
+    if ((window.opsData.businessFlows || []).some((flow) => flow.id === saved.id)) {
       window.opsData.businessFlows = (window.opsData.businessFlows || []).map((flow) => (flow.id === saved.id ? saved : flow));
     } else {
       window.opsData.businessFlows.unshift(saved);
@@ -804,8 +853,8 @@ async function saveBusinessFlow() {
     populateFlowForm(saved);
   } catch {
     const localFlow = { id: editingId || `local_flow_${Date.now()}`, ...payload, status: "ready" };
-    if (editingId) {
-      window.opsData.businessFlows = (window.opsData.businessFlows || []).map((flow) => (flow.id === editingId ? { ...flow, ...localFlow } : flow));
+    if ((window.opsData.businessFlows || []).some((flow) => flow.id === localFlow.id)) {
+      window.opsData.businessFlows = (window.opsData.businessFlows || []).map((flow) => (flow.id === localFlow.id ? { ...flow, ...localFlow } : flow));
     } else {
       window.opsData.businessFlows.unshift(localFlow);
     }
@@ -818,10 +867,8 @@ async function saveBusinessFlow() {
 }
 
 async function runSelectedBusinessFlow() {
-  let flow = getSelectedFlow();
-  if (!flow) {
-    flow = await saveBusinessFlow();
-  }
+  const flow = await saveBusinessFlow();
+  if (!flow) return;
   try {
     const result = await apiRequest("/api/business-flows/run", {
       method: "POST",

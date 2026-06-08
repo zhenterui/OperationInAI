@@ -17,6 +17,46 @@
   border-color: rgba(48, 232, 199, 0.34);
 }
 
+.business-workbench > .section-head {
+  align-items: flex-start;
+}
+
+.business-profile,
+.business-flow-panel,
+.business-result-panel {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.business-profile {
+  margin-top: 12px;
+}
+
+.business-profile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.business-profile-head h3 {
+  margin: 2px 0 0;
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.business-fields {
+  grid-template-columns: minmax(260px, 1.15fr) minmax(220px, 0.95fr) minmax(160px, 0.65fr) minmax(190px, 0.75fr);
+}
+
+.business-name-field input {
+  min-height: 46px;
+  font-size: 16px;
+  font-weight: 800;
+}
+
 .source-workbench .surface,
 .mapping-workbench {
   border-color: rgba(77, 141, 255, 0.24);
@@ -36,7 +76,6 @@
   display: grid;
   grid-template-columns: minmax(220px, 0.8fr) minmax(260px, 1fr);
   gap: 12px;
-  margin-top: 14px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -107,7 +146,7 @@
 }
 
 .flow-designer {
-  min-height: 220px;
+  min-height: 280px;
   padding: 18px;
   border: 1px solid rgba(48, 232, 199, 0.24);
   border-radius: var(--radius);
@@ -118,14 +157,94 @@
   background-size: 28px 28px;
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 32px;
   overflow: auto;
+}
+
+.flow-stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.flow-stage:not(:last-child)::after {
+  position: absolute;
+  top: 50%;
+  right: -32px;
+  width: 32px;
+  height: 2px;
+  content: "";
+  background: linear-gradient(90deg, var(--accent), rgba(77, 141, 255, 0.86));
+}
+
+.flow-stage:not(:last-child)::before {
+  position: absolute;
+  top: calc(50% - 5px);
+  right: -34px;
+  z-index: 1;
+  width: 10px;
+  height: 10px;
+  content: "";
+  border-top: 2px solid rgba(77, 141, 255, 0.96);
+  border-right: 2px solid rgba(77, 141, 255, 0.96);
+  transform: rotate(45deg);
+}
+
+.parallel-stage {
+  min-width: 300px;
+  padding: 16px 18px;
+  border: 1px dashed rgba(48, 232, 199, 0.35);
+  border-radius: var(--radius);
+  background: rgba(3, 18, 24, 0.44);
+}
+
+.parallel-stage::after {
+  top: 50%;
+}
+
+.flow-branch-label {
+  position: absolute;
+  top: -12px;
+  left: 16px;
+  padding: 3px 8px;
+  border: 1px solid rgba(48, 232, 199, 0.26);
+  border-radius: 999px;
+  color: var(--accent);
+  background: rgba(3, 18, 24, 0.95);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.flow-parallel-branches {
+  position: relative;
+  display: grid;
+  gap: 12px;
+}
+
+.flow-parallel-branches::before,
+.flow-parallel-branches::after {
+  position: absolute;
+  top: 18px;
+  bottom: 18px;
+  width: 2px;
+  content: "";
+  background: linear-gradient(180deg, transparent, rgba(48, 232, 199, 0.78), transparent);
+}
+
+.flow-parallel-branches::before {
+  left: -9px;
+}
+
+.flow-parallel-branches::after {
+  right: -9px;
 }
 
 .flow-node-card {
   position: relative;
   flex: 0 0 188px;
-  min-height: 118px;
+  width: 206px;
+  min-height: 132px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -135,14 +254,10 @@
   cursor: pointer;
 }
 
-.flow-node-card:not(:last-child)::after {
-  position: absolute;
-  top: 50%;
-  right: -19px;
-  width: 19px;
-  height: 2px;
-  content: "";
-  background: linear-gradient(90deg, var(--accent), rgba(77, 141, 255, 0.85));
+.flow-node-card.parallel-branch {
+  width: 230px;
+  min-height: 116px;
+  background: rgba(9, 33, 42, 0.95);
 }
 
 .flow-node-card.selected {
@@ -160,14 +275,41 @@
   color: var(--muted);
 }
 
+.flow-node-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
 .flow-node-type {
   width: max-content;
-  margin-bottom: 10px;
   padding: 4px 8px;
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--accent);
   font-size: 11px;
+}
+
+.flow-execution-badge {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: #dffcf7;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.flow-execution-badge.parallel {
+  color: #dce8ff;
+  background: rgba(77, 141, 255, 0.18);
+}
+
+.flow-execution-badge.join {
+  color: #f1f7ff;
+  background: rgba(255, 195, 92, 0.18);
 }
 
 .flow-node-actions {
@@ -179,7 +321,7 @@
 .flow-list-row {
   min-width: 880px;
   display: grid;
-  grid-template-columns: 1.2fr 1fr 0.55fr 0.7fr 0.7fr 190px;
+  grid-template-columns: 1.15fr 1.1fr 0.55fr 0.72fr 0.68fr 190px;
   align-items: center;
   gap: 10px;
   padding: 12px 14px;
@@ -969,11 +1111,49 @@ textarea {
     flex-direction: column;
   }
 
+  .business-profile-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .business-fields {
+    grid-template-columns: 1fr;
+  }
+
   .flow-board,
   .config-form,
+  .flow-toolbar,
+  .flow-inspector,
   .inline-editor,
   .log-row {
     grid-template-columns: 1fr;
+  }
+
+  .flow-designer {
+    align-items: flex-start;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .flow-stage:not(:last-child)::after {
+    top: auto;
+    right: 50%;
+    bottom: -32px;
+    width: 2px;
+    height: 32px;
+  }
+
+  .flow-stage:not(:last-child)::before {
+    top: auto;
+    right: calc(50% - 5px);
+    bottom: -34px;
+    transform: rotate(135deg);
+  }
+
+  .parallel-stage,
+  .flow-node-card,
+  .flow-node-card.parallel-branch {
+    width: min(100%, 330px);
   }
 
   .metric-card .value {

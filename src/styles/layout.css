@@ -175,8 +175,12 @@
 
 .flow-result-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+  grid-template-columns: minmax(320px, 0.92fr) minmax(0, 1.08fr);
   gap: 14px;
+}
+
+.business-result-grid {
+  align-items: start;
 }
 
 .wide {

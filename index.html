@@ -127,43 +127,42 @@
               <div class="section-head">
                 <div>
                   <p class="eyebrow">Business Workspace</p>
-                  <h2>业务配置与业务流编排</h2>
+                  <h2>业务配置</h2>
                 </div>
                 <button class="small-button" id="newFlowBtn">
                   <span class="icon" data-icon="plus"></span>
-                  新建业务流
+                  新建业务
                 </button>
                 <button class="small-button primary" id="createFlowBtn">
                   <span class="icon" data-icon="plus"></span>
-                  保存业务流
+                  保存业务
                 </button>
                 <button class="small-button" id="runFlowBtn">
                   <span class="icon" data-icon="play"></span>
                   执行业务流
                 </button>
                 <button class="small-button danger" id="deleteFlowBtn">
-                  删除业务流
+                  删除业务
                 </button>
               </div>
-              <div class="flow-summary-grid">
-                <label>
-                  <span>业务流名称</span>
-                  <input id="flowNameInput" value="新业务聚合流" />
-                </label>
-                <label>
-                  <span>输出业务模块</span>
-                  <input id="flowBusinessInput" value="新业务模块" />
-                </label>
-              </div>
-              <details class="flow-advanced-config">
-                <summary>
-                  <span>
-                    <strong>输出与落库</strong>
-                    <small>raw / clean / biz</small>
-                  </span>
-                  <span class="status-pill">高级</span>
-                </summary>
-                <div class="config-form flow-config compact">
+
+              <section class="business-profile">
+                <div class="business-profile-head">
+                  <div>
+                    <p class="eyebrow">Business Profile</p>
+                    <h3>业务档案</h3>
+                  </div>
+                  <span class="status-pill">一个业务仅绑定一个业务流</span>
+                </div>
+                <div class="flow-summary-grid business-fields">
+                  <label class="business-name-field">
+                    <span>业务名称</span>
+                    <input id="flowBusinessInput" value="新业务模块" />
+                  </label>
+                  <label>
+                    <span>业务流名称</span>
+                    <input id="flowNameInput" value="新业务聚合流" />
+                  </label>
                   <label>
                     <span>时间字段</span>
                     <input id="flowTimeFieldInput" value="event_time" />
@@ -176,6 +175,16 @@
                       <option value="api">输出 API</option>
                     </select>
                   </label>
+                </div>
+                <details class="flow-advanced-config">
+                  <summary>
+                    <span>
+                      <strong>输出与落库</strong>
+                      <small>原始表、清洗表、业务表与写入策略</small>
+                    </span>
+                    <span class="status-pill">高级</span>
+                  </summary>
+                  <div class="config-form flow-config compact">
                   <label>
                     <span>写入策略</span>
                     <select id="flowWriteStrategySelect">
@@ -209,9 +218,19 @@
                       <option value="none">不去重</option>
                     </select>
                   </label>
+                  </div>
+                </details>
+              </section>
+
+              <section class="business-flow-panel">
+                <div class="business-profile-head">
+                  <div>
+                    <p class="eyebrow">Flow Designer</p>
+                    <h3>业务流编排</h3>
+                  </div>
+                  <span class="status-pill">节点支持串行 / 并行 / 汇聚</span>
                 </div>
-              </details>
-              <div class="flow-builder">
+                <div class="flow-builder">
                 <div class="flow-toolbar">
                   <label>
                     <span>节点类型</span>
@@ -271,11 +290,22 @@
                     <button class="small-button danger" id="deleteFlowNodeBtn">删除节点</button>
                   </div>
                 </div>
-              </div>
-              <div class="flow-result-grid">
-                <div class="mapping-table" id="flowTable"></div>
-                <div class="answer-card compact" id="flowOutput"></div>
-              </div>
+                </div>
+              </section>
+
+              <section class="business-result-panel">
+                <div class="business-profile-head">
+                  <div>
+                    <p class="eyebrow">Run & Records</p>
+                    <h3>执行验证与业务列表</h3>
+                  </div>
+                  <span class="status-pill">选择业务后编辑其唯一业务流</span>
+                </div>
+                <div class="flow-result-grid business-result-grid">
+                  <div class="answer-card compact" id="flowOutput"></div>
+                  <div class="mapping-table" id="flowTable"></div>
+                </div>
+              </section>
             </article>
 
             <div class="cleaning-section-title cleaning-block" data-cleaning-section="source">
