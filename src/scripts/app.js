@@ -148,8 +148,120 @@ function setCleaningTab(tab) {
   });
 }
 
+function getConfiguredBusinessSummary() {
+  const rawFlows = window.opsData.businessFlows || [];
+  const flowByBusiness = new Map();
+  rawFlows.forEach((flow) => {
+    const key = (flow.businessName || flow.name || flow.id || "").trim().toLowerCase();
+    if (key && !flowByBusiness.has(key)) {
+      flowByBusiness.set(key, flow);
+    }
+  });
+  const flows = [...flowByBusiness.values()];
+  const businesses = window.opsData.businesses || [];
+  const sources = window.opsData.sources || [];
+  const rules = window.opsData.cleaningRules || [];
+  const mappings = window.opsData.fieldMappings || [];
+  const businessNames = new Set([
+    ...businesses.map((item) => item.name).filter(Boolean),
+    ...flows.map((flow) => flow.businessName).filter(Boolean)
+  ]);
+  const flowNodes = flows.flatMap((flow) => flow.nodes || []);
+  const sourceIds = new Set(flowNodes.filter((node) => node.type === "source" && node.refId).map((node) => node.refId));
+  flows.forEach((flow) => (flow.dataSourceIds || []).forEach((id) => sourceIds.add(id)));
+  const ruleIds = new Set(flowNodes.filter((node) => node.type === "rule" && node.refId).map((node) => node.refId));
+  flows.forEach((flow) => (flow.ruleIds || []).forEach((id) => ruleIds.add(id)));
+  const branchKeys = new Set(flowNodes.filter((node) => node.branchFromId).map((node) => `${node.branchFromId}:${node.branchName || node.id}`));
+  const businessRows = businesses.reduce((sum, business) => sum + (business.rows || []).length, 0);
+  const highRiskRows = businesses.reduce(
+    (sum, business) => sum + (business.rows || []).filter((row) => ["P0", "P1", "高", "严重"].includes(String(row[1] || "").toUpperCase())).length,
+    0
+  );
+  const configuredSources = sourceIds.size ? sources.filter((source) => sourceIds.has(source.id)) : sources;
+  const runningSources = configuredSources.filter((source) => source.health !== "pending").length;
+  return {
+    flows,
+    businesses,
+    sources,
+    rules,
+    mappings,
+    businessNames,
+    flowNodes,
+    sourceIds,
+    ruleIds,
+    branchKeys,
+    businessRows,
+    highRiskRows,
+    runningSources,
+    configuredSourceCount: sourceIds.size || sources.length,
+    configuredRuleCount: ruleIds.size || rules.length
+  };
+}
+
+function buildOverviewModel() {
+  const summary = getConfiguredBusinessSummary();
+  const cleaningScore = summary.configuredSourceCount
+    ? Math.round((summary.runningSources / Math.max(summary.sources.length, 1)) * 1000) / 10
+    : 0;
+  const mappingCoverage = summary.configuredSourceCount
+    ? Math.round((summary.mappings.length / Math.max(summary.configuredSourceCount * 2, 1)) * 100)
+    : 0;
+  const pendingFlowCount = summary.flows.filter((flow) => {
+    const business = summary.businesses.find((item) => item.name === flow.businessName);
+    return !(business?.rows || []).length;
+  }).length;
+  const attentionCount = summary.highRiskRows + pendingFlowCount;
+  const metrics = [
+    { label: "配置业务", value: String(summary.businessNames.size), delta: `${summary.flows.length} 条业务流 / ${summary.branchKeys.size} 条分支`, icon: "pipeline" },
+    { label: "接入数据源", value: String(summary.configuredSourceCount), delta: `${summary.runningSources} 个运行中，${summary.mappings.length} 条字段映射`, icon: "database" },
+    { label: "清洗规则", value: String(summary.configuredRuleCount), delta: `映射覆盖度约 ${Math.min(mappingCoverage, 100)}%`, icon: "spark" },
+    { label: "需关注项", value: String(attentionCount), delta: `${summary.businessRows} 条业务记录参与分析`, icon: "radar" }
+  ];
+  const flowCards = summary.flows.length
+    ? summary.flows.map((flow) => {
+        const nodes = flow.nodes || [];
+        const sourceCount = new Set(nodes.filter((node) => node.type === "source").map((node) => node.refId)).size || (flow.dataSourceIds || []).length;
+        const branchCount = new Set(nodes.filter((node) => node.branchFromId).map((node) => `${node.branchFromId}:${node.branchName || node.id}`)).size;
+        const ruleCount = new Set(nodes.filter((node) => node.type === "rule").map((node) => node.refId)).size || (flow.ruleIds || []).length;
+        return {
+          title: flow.businessName || flow.name,
+          desc: `${sourceCount} 数据源 / ${ruleCount} 规则 / ${branchCount} 分支 / ${nodes.length || sourceCount + ruleCount} 节点`,
+          icon: branchCount ? "pipeline" : sourceCount ? "database" : "cloud"
+        };
+      })
+    : window.opsData.flowNodes || [];
+  const signals = summary.flows.length
+    ? summary.flows.slice(0, 5).map((flow) => {
+        const business = summary.businesses.find((item) => item.name === flow.businessName);
+        const rows = business?.rows || [];
+        const riskRows = rows.filter((row) => ["P0", "P1", "高", "严重"].includes(String(row[1] || "").toUpperCase()));
+        const nodes = flow.nodes || [];
+        const branchCount = new Set(nodes.filter((node) => node.branchFromId).map((node) => `${node.branchFromId}:${node.branchName || node.id}`)).size;
+        const pending = rows.length === 0;
+        return {
+          title: `${flow.businessName || flow.name} 自动分析`,
+          desc: pending
+            ? `尚未产生业务数据，建议执行业务流；${branchCount} 条分支，输出 ${flow.outputConfig?.businessTable || "业务表"}`
+            : `${riskRows.length} 条风险记录，${branchCount} 条分支，输出 ${flow.outputConfig?.businessTable || "业务表"}`,
+          icon: riskRows.length || pending ? "radar" : "brain",
+          level: riskRows.length || pending ? "danger" : "ok"
+        };
+      })
+    : window.opsData.signals || [];
+  const radarValues = [
+    Math.min((summary.highRiskRows || 1) / Math.max(summary.businessRows || 1, 1), 1),
+    Math.min(summary.configuredSourceCount / Math.max(summary.sources.length || 1, 1), 1),
+    Math.min(summary.branchKeys.size / Math.max(summary.flows.length * 2 || 1, 1), 1),
+    Math.min(summary.configuredRuleCount / Math.max(summary.rules.length || 1, 1), 1),
+    Math.min(summary.mappings.length / Math.max(summary.configuredSourceCount * 3 || 1, 1), 1),
+    Math.min(cleaningScore / 100, 1)
+  ].map((value) => Math.max(0.18, value));
+  return { metrics, flowCards, signals, radarValues, highRiskCount: attentionCount };
+}
+
 function renderMetrics() {
-  $("#metricGrid").innerHTML = window.opsData.metrics
+  const metrics = buildOverviewModel().metrics;
+  $("#metricGrid").innerHTML = metrics
     .map(
       (metric) => `
         <article class="metric-card">
@@ -166,7 +278,8 @@ function renderMetrics() {
 }
 
 function renderFlow() {
-  $("#flowBoard").innerHTML = window.opsData.flowNodes
+  const flowCards = buildOverviewModel().flowCards;
+  $("#flowBoard").innerHTML = flowCards
     .map(
       (node) => `
         <div class="flow-node">
@@ -935,6 +1048,7 @@ async function deleteBusinessFlow(flowId = appState.selectedFlowId) {
   }
   renderFlowDesigner();
   renderFlowTable();
+  renderOverview();
 }
 
 async function saveBusinessFlow() {
@@ -968,6 +1082,7 @@ async function saveBusinessFlow() {
   }
   renderFlowDesigner();
   renderFlowTable();
+  renderOverview();
   return getSelectedFlow();
 }
 
@@ -989,6 +1104,7 @@ async function runSelectedBusinessFlow() {
     renderBusinessRows({ name: result.business.name, rows: result.business.rows });
     renderFlowTable();
     await refreshSyncLogs();
+    renderOverview();
   } catch {
     const payload = collectFlowForm();
     renderFlowOutput({
@@ -1000,6 +1116,7 @@ async function runSelectedBusinessFlow() {
       business: { name: payload.businessName },
       row: [`${payload.businessName} 聚合数据`, "P1", "本地模拟", new Date().toISOString().slice(0, 16).replace("T", " "), `${payload.ruleIds.length} 条规则`]
     });
+    renderOverview();
   }
   renderIcons();
 }
@@ -1124,8 +1241,8 @@ async function queryAndRenderBusiness() {
   }
 }
 
-function renderSignals() {
-  $("#signalList").innerHTML = window.opsData.signals
+function renderSignalItems(signals) {
+  $("#signalList").innerHTML = signals
     .map(
       (signal) => `
         <div class="signal-item">
@@ -1134,11 +1251,29 @@ function renderSignals() {
             <strong>${signal.title}</strong>
             <small>${signal.desc}</small>
           </div>
-          <span class="status-pill danger">需关注</span>
+          <span class="status-pill ${signal.level === "ok" ? "ok" : "danger"}">${signal.level === "ok" ? "正常" : "需关注"}</span>
         </div>
       `
     )
     .join("");
+}
+
+function renderSignals() {
+  const { signals, highRiskCount } = buildOverviewModel();
+  const riskPill = $("#riskSummaryPill");
+  if (riskPill) {
+    riskPill.textContent = `${highRiskCount} 项需关注`;
+    riskPill.classList.toggle("ok", highRiskCount === 0);
+    riskPill.classList.toggle("danger", highRiskCount > 0);
+  }
+  renderSignalItems(signals);
+}
+
+function renderOverview() {
+  renderMetrics();
+  renderFlow();
+  renderSignals();
+  drawRiskRadar();
 }
 
 function renderKnowledge() {
@@ -1321,8 +1456,8 @@ function drawRiskRadar() {
   const cx = width / 2;
   const cy = height / 2 + 10;
   const radius = Math.min(width, height) * 0.32;
-  const values = [0.78, 0.62, 0.84, 0.46, 0.7, 0.55];
-  const labels = ["告警", "容量", "变更", "链路", "安全", "知识"];
+  const values = buildOverviewModel().radarValues;
+  const labels = ["风险", "来源", "分支", "规则", "映射", "健康"];
   ctx.clearRect(0, 0, width, height);
   ctx.strokeStyle = "rgba(156,238,226,.2)";
   for (let ring = 1; ring <= 4; ring += 1) {
@@ -1686,7 +1821,7 @@ function bindEvents() {
       $("#runSyncBtn").innerHTML = `<span class="icon" data-icon="refresh"></span> ${result.cleanedRows} 行完成`;
       await refreshSyncLogs();
       await loadBootstrapData();
-      renderMetrics();
+      renderOverview();
       renderSources();
     } catch (error) {
       $("#runSyncBtn").innerHTML = `<span class="icon" data-icon="refresh"></span> 同步完成`;
@@ -1719,6 +1854,7 @@ function bindEvents() {
     renderSources();
     renderMappingSourceSelect();
     renderMappings();
+    renderOverview();
     renderIcons();
   });
   $("#saveSourceBtn").addEventListener("click", async () => {
@@ -1740,6 +1876,7 @@ function bindEvents() {
     renderSources();
     renderMappingSourceSelect();
     renderMappings();
+    renderOverview();
     renderIcons();
   });
   $("#testSourceBtn").addEventListener("click", async () => {
@@ -1774,6 +1911,7 @@ function bindEvents() {
     renderSources();
     renderMappingSourceSelect();
     renderMappings();
+    renderOverview();
     renderIcons();
   });
   $("#mappingTable").addEventListener("click", async (event) => {
@@ -1799,6 +1937,7 @@ function bindEvents() {
         resetMappingForm();
       }
       renderMappings();
+      renderOverview();
     }
   });
   $("#addMappingBtn").addEventListener("click", async () => {
@@ -1839,6 +1978,7 @@ function bindEvents() {
     resetMappingForm();
     renderMappings();
     renderMappingSourceSelect();
+    renderOverview();
   });
   $("#addRuleBtn").addEventListener("click", () => {
     resetRuleForm();
@@ -1869,6 +2009,7 @@ function bindEvents() {
     renderFlowControls();
     renderMappingRuleSelect();
     renderMappings();
+    renderOverview();
     closeDialog("#ruleModal");
   });
   $("#ruleTable").addEventListener("click", async (event) => {
@@ -1901,6 +2042,7 @@ function bindEvents() {
       renderMappingRuleSelect();
       renderMappings();
       renderFlowTable();
+      renderOverview();
     }
   });
   $("#newFlowBtn").addEventListener("click", () => {
@@ -1950,13 +2092,13 @@ function bindEvents() {
     const keyword = $("#globalSearch").value.trim().toLowerCase();
     if (!keyword) {
       renderSources();
-      renderSignals();
+      renderOverview();
       renderKnowledge();
       renderIcons();
       return;
     }
     const sourceMatch = window.opsData.sources.filter((item) => `${item.name} ${item.type} ${item.status}`.toLowerCase().includes(keyword));
-    const signalMatch = window.opsData.signals.filter((item) => `${item.title} ${item.desc}`.toLowerCase().includes(keyword));
+    const signalMatch = buildOverviewModel().signals.filter((item) => `${item.title} ${item.desc}`.toLowerCase().includes(keyword));
     const knowledgeMatch = window.opsData.knowledge.filter((item) => `${item.name} ${item.desc}`.toLowerCase().includes(keyword));
     $("#sourceStack").innerHTML = "";
     $("#signalList").innerHTML = "";
@@ -1968,10 +2110,7 @@ function bindEvents() {
       window.opsData.sources = original;
       setPanel("cleaning");
     } else if (signalMatch.length) {
-      const original = window.opsData.signals;
-      window.opsData.signals = signalMatch;
-      renderSignals();
-      window.opsData.signals = original;
+      renderSignalItems(signalMatch);
       setPanel("overview");
     } else if (knowledgeMatch.length) {
       const original = window.opsData.knowledge;
@@ -1994,8 +2133,7 @@ function bindEvents() {
 
 async function boot() {
   await loadBootstrapData();
-  renderMetrics();
-  renderFlow();
+  renderOverview();
   renderAuthConfigs();
   if (!window.opsData.sources.some((source) => source.id === appState.selectedSourceId)) {
     appState.selectedSourceId = window.opsData.sources[0]?.id || "";
@@ -2013,14 +2151,12 @@ async function boot() {
   setCleaningTab(appState.cleaningTab);
   renderBusinessSelector();
   renderBusinessTable();
-  renderSignals();
   renderKnowledge();
   renderSyncLog();
   renderAnalysis();
   renderAnswer();
   renderIcons();
   bindEvents();
-  drawRiskRadar();
   animateBackground();
 }
 
