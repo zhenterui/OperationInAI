@@ -127,7 +127,7 @@
 .flow-toolbar,
 .flow-inspector {
   display: grid;
-  grid-template-columns: 1fr 1fr auto auto;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   align-items: end;
   gap: 10px;
   padding: 12px;
@@ -137,12 +137,29 @@
 }
 
 .flow-inspector {
-  grid-template-columns: minmax(150px, 0.75fr) repeat(4, minmax(140px, 1fr)) auto;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  align-items: end;
+}
+
+.flow-inspector > div:first-child,
+.flow-inspector .row-actions {
+  grid-column: 1 / -1;
+}
+
+.flow-inspector > div:first-child {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 2px;
 }
 
 .flow-inspector .full {
-  min-width: 180px;
+  min-width: 0;
+}
+
+.flow-inspector:not(.branch-mode) .branch-only {
+  display: none;
 }
 
 .flow-designer {
@@ -393,7 +410,7 @@
 }
 
 .flow-list-row {
-  min-width: 880px;
+  min-width: 760px;
   display: grid;
   grid-template-columns: 1.15fr 1.1fr 0.55fr 0.72fr 0.68fr 190px;
   align-items: center;

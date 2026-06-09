@@ -234,11 +234,30 @@ export function deleteBusinessFlow(id) {
 }
 
 export function runBusinessFlow(input = {}) {
-  const flow = store.businessFlows.find((item) => item.id === input.flowId) || store.businessFlows[0];
+  const runtimeFlow = input.flow && typeof input.flow === "object" ? input.flow : null;
+  const storedIndex = store.businessFlows.findIndex((item) => item.id === (runtimeFlow?.id || input.flowId));
+  const storedFlow = storedIndex >= 0 ? store.businessFlows[storedIndex] : store.businessFlows[0];
+  const flow = runtimeFlow
+    ? {
+        ...(storedFlow || {}),
+        ...runtimeFlow,
+        outputConfig: {
+          ...(storedFlow?.outputConfig || {}),
+          ...(runtimeFlow.outputConfig || {})
+        }
+      }
+    : storedFlow;
   if (!flow) {
     const error = new Error("Business flow not found");
     error.status = 404;
     throw error;
+  }
+  if (storedIndex >= 0) {
+    store.businessFlows[storedIndex] = {
+      ...store.businessFlows[storedIndex],
+      ...flow,
+      outputConfig: flow.outputConfig
+    };
   }
   const nodeSourceIds = Array.isArray(flow.nodes) && flow.nodes.length
     ? flow.nodes.filter((node) => node.type === "source").map((node) => node.refId)

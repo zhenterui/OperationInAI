@@ -237,7 +237,15 @@ try {
   });
   const flowRun = await request("/api/business-flows/run", {
     method: "POST",
-    body: JSON.stringify({ flowId: updatedFlow.data.id })
+    body: JSON.stringify({
+      flowId: updatedFlow.data.id,
+      flow: {
+        ...updatedFlow.data,
+        nodes: updatedFlow.data.nodes.map((node) =>
+          node.id === "e2e_source_api" ? { ...node, branchName: "E2E 运行时分支", branchCondition: "runtime severity = P0" } : node
+        )
+      }
+    })
   });
   assert(flowRun.data.business.name === "E2E 清洗业务", "business flow should create target business data");
   assert(flowRun.data.outputConfig.businessTable === "biz_e2e_event", "business table should round-trip");
@@ -245,6 +253,7 @@ try {
   assert(flowRun.data.executionPlan.parallel === 2, "flow graph should support parallel source nodes");
   assert(flowRun.data.executionPlan.branches === 2, "flow graph should support conditional branch lanes");
   assert(flowRun.data.executionPlan.conditionalBranches === 2, "flow graph should keep branch conditions");
+  assert(flowRun.data.executionPlan.summary.includes("E2E 运行时分支"), "run should use latest flow payload from the page");
   assert(flowRun.data.executionPlan.join === 1, "flow graph should support join nodes");
 
   await request(`/api/cleaning-rules/${rule.data.id}`, { method: "DELETE" });

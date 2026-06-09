@@ -642,6 +642,7 @@ function selectFlowNode(nodeId) {
     $("#flowNodeNameInput").value = "";
     renderFlowNodeRefSelect("#flowNodeRefEditSelect", "source");
     renderFlowBranchFromSelect();
+    updateFlowInspectorMode();
     return;
   }
   $("#flowNodeNameInput").value = node.name || "";
@@ -653,6 +654,11 @@ function selectFlowNode(nodeId) {
   $("#flowNodeBranchNameInput").value = node.branchName || "";
   $("#flowNodeBranchConditionInput").value = node.branchCondition || "";
   $("#flowNodeParamInput").value = node.param || "";
+  updateFlowInspectorMode();
+}
+
+function updateFlowInspectorMode() {
+  $("#flowNodeInspector")?.classList.toggle("branch-mode", $("#flowNodeBranchModeSelect")?.value === "branch");
 }
 
 function getExecutionLabel(mode) {
@@ -968,10 +974,11 @@ async function saveBusinessFlow() {
 async function runSelectedBusinessFlow() {
   const flow = await saveBusinessFlow();
   if (!flow) return;
+  const runtimeFlow = { ...flow, ...collectFlowForm(), id: flow.id, status: flow.status || "ready" };
   try {
     const result = await apiRequest("/api/business-flows/run", {
       method: "POST",
-      body: JSON.stringify({ flowId: flow.id })
+      body: JSON.stringify({ flowId: flow.id, flow: runtimeFlow })
     });
     renderFlowOutput(result);
     await loadBootstrapData();
@@ -1426,6 +1433,7 @@ function bindEvents() {
   $("#flowNodeTypeEditSelect").addEventListener("change", () => {
     renderFlowNodeRefSelect("#flowNodeRefEditSelect", $("#flowNodeTypeEditSelect").value);
   });
+  $("#flowNodeBranchModeSelect").addEventListener("change", updateFlowInspectorMode);
   $("#flowBusinessTableInput").addEventListener("input", () => {
     if ($("#flowNodeTypeSelect").value === "output") {
       renderFlowNodeRefSelect("#flowNodeRefSelect", "output");
