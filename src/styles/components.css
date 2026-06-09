@@ -1009,6 +1009,38 @@ select[multiple] option {
   border-radius: 6px;
 }
 
+.analysis-tab {
+  margin-top: 14px;
+}
+
+.model-config-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.model-config-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.model-config-item.selected {
+  border-color: rgba(48, 232, 199, 0.58);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.model-config-item small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
 textarea {
   resize: vertical;
   padding: 11px;

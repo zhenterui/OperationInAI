@@ -52,5 +52,25 @@ window.opsData = {
     { name: "运维 SOP 文档库", desc: "本地路径 D:/ops/sop，324 个文档", icon: "file" },
     { name: "监控平台帮助中心", desc: "URL 抓取，7,820 个内容切片", icon: "cloud" },
     { name: "历史工单知识", desc: "PostgreSQL 同步，最近 18 个月", icon: "database" }
+  ],
+  modelConfigs: [
+    {
+      id: "model_openai_compatible",
+      name: "OpenAI Compatible",
+      vendor: "openai-compatible",
+      model: "gpt-4.1-mini",
+      baseUrl: "https://api.openai.com/v1",
+      apiKeyMasked: "未配置",
+      status: "本地默认"
+    },
+    {
+      id: "model_deepseek",
+      name: "DeepSeek 运维分析",
+      vendor: "deepseek",
+      model: "deepseek-chat",
+      baseUrl: "https://api.deepseek.com/v1",
+      apiKeyMasked: "未配置",
+      status: "本地默认"
+    }
   ]
 };

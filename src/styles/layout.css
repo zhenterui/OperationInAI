@@ -228,7 +228,8 @@
   .support-grid,
   .flow-result-grid,
   .analysis-layout,
-  .search-layout {
+  .search-layout,
+  .model-config-item {
     grid-template-columns: 1fr;
   }
 }

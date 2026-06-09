@@ -6,16 +6,19 @@ import {
   createCleaningRule,
   createFieldMapping,
   createKnowledgeSource,
+  createModelConfig,
   deleteAuthConfig,
   deleteBusinessFlow,
   deleteCleaningRule,
   deleteFieldMapping,
+  deleteModelConfig,
   queryBusiness,
   runBusinessFlow,
   updateAuthConfig,
   updateBusinessFlow,
   updateCleaningRule,
-  updateFieldMapping
+  updateFieldMapping,
+  updateModelConfig
 } from "../services/config-service.mjs";
 import { answerQuestion } from "../services/search-service.mjs";
 import { createDataSource, deleteDataSource, listSyncLogs, runSync, testDataSource, updateDataSource } from "../services/sync-service.mjs";
@@ -43,6 +46,8 @@ route("GET", "/api/field-mappings", () => store.fieldMappings);
 route("POST", "/api/field-mappings", async ({ request }) => createFieldMapping(await readJson(request)));
 route("GET", "/api/cleaning-rules", () => store.cleaningRules);
 route("POST", "/api/cleaning-rules", async ({ request }) => createCleaningRule(await readJson(request)));
+route("GET", "/api/model-configs", () => store.modelConfigs.map((item) => ({ ...item, apiKey: "" })));
+route("POST", "/api/model-configs", async ({ request }) => createModelConfig(await readJson(request)));
 route("GET", "/api/businesses", () => store.businesses);
 route("POST", "/api/businesses/query", async ({ request }) => queryBusiness(await readJson(request)));
 route("GET", "/api/business-flows", () => store.businessFlows);
@@ -130,6 +135,23 @@ export async function handleApi(request, response) {
   if (fieldMappingMatch && request.method === "DELETE") {
     try {
       sendJson(response, 200, { data: deleteFieldMapping(fieldMappingMatch[1]) });
+    } catch (error) {
+      sendError(response, error.status || 500, "API request failed", error.message);
+    }
+    return true;
+  }
+  const modelConfigMatch = parsed.pathname.match(/^\/api\/model-configs\/([^/]+)$/);
+  if (modelConfigMatch && request.method === "PUT") {
+    try {
+      sendJson(response, 200, { data: updateModelConfig(modelConfigMatch[1], await readJson(request)) });
+    } catch (error) {
+      sendError(response, error.status || 500, "API request failed", error.message);
+    }
+    return true;
+  }
+  if (modelConfigMatch && request.method === "DELETE") {
+    try {
+      sendJson(response, 200, { data: deleteModelConfig(modelConfigMatch[1]) });
     } catch (error) {
       sendError(response, error.status || 500, "API request failed", error.message);
     }

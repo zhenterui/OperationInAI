@@ -111,6 +111,64 @@ export function deleteAuthConfig(id) {
   return removed;
 }
 
+function maskApiKey(value = "") {
+  const key = String(value || "").trim();
+  if (!key) return "未配置";
+  if (key.length <= 8) return "已配置";
+  return `${key.slice(0, 4)}****${key.slice(-4)}`;
+}
+
+export function createModelConfig(input = {}) {
+  const config = {
+    id: `model_${Date.now()}`,
+    name: input.name || "自定义模型配置",
+    vendor: input.vendor || "openai-compatible",
+    model: input.model || "gpt-4.1-mini",
+    baseUrl: input.baseUrl || "https://api.openai.com/v1",
+    apiKey: input.apiKey || "",
+    apiKeyMasked: maskApiKey(input.apiKey),
+    status: input.apiKey ? "可用" : "待配置 Key",
+    updatedAt: new Date().toISOString()
+  };
+  store.modelConfigs.unshift(config);
+  return { ...config, apiKey: "" };
+}
+
+export function updateModelConfig(id, input = {}) {
+  const index = store.modelConfigs.findIndex((item) => item.id === id);
+  if (index < 0) {
+    const error = new Error("Model config not found");
+    error.status = 404;
+    throw error;
+  }
+  const existing = store.modelConfigs[index];
+  const apiKey = input.apiKey ? input.apiKey : existing.apiKey || "";
+  const updated = {
+    ...existing,
+    name: input.name || existing.name,
+    vendor: input.vendor || existing.vendor,
+    model: input.model || existing.model,
+    baseUrl: input.baseUrl || existing.baseUrl,
+    apiKey,
+    apiKeyMasked: maskApiKey(apiKey),
+    status: apiKey ? "可用" : "待配置 Key",
+    updatedAt: new Date().toISOString()
+  };
+  store.modelConfigs[index] = updated;
+  return { ...updated, apiKey: "" };
+}
+
+export function deleteModelConfig(id) {
+  const index = store.modelConfigs.findIndex((item) => item.id === id);
+  if (index < 0) {
+    const error = new Error("Model config not found");
+    error.status = 404;
+    throw error;
+  }
+  const [removed] = store.modelConfigs.splice(index, 1);
+  return { ...removed, apiKey: "" };
+}
+
 export function createCleaningRule(input = {}) {
   const rule = {
     id: `rule_${Date.now()}`,
@@ -387,6 +445,11 @@ function impactValue(value) {
   return matched ? Number(matched[0]) : 0;
 }
 
+function parseBusinessTime(value) {
+  const timestamp = Date.parse(String(value || "").replace(" ", "T"));
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
 export function queryBusiness(input = {}) {
   const business = store.businesses.find((item) => item.name === input.businessName) || store.businesses[0];
   let rows = [...business.rows];
@@ -394,6 +457,16 @@ export function queryBusiness(input = {}) {
 
   if (keyword) {
     rows = rows.filter((row) => row.some((cell) => String(cell).toLowerCase().includes(keyword)));
+  }
+
+  const startTime = input.timeStart ? Date.parse(input.timeStart) : 0;
+  const endTime = input.timeEnd ? Date.parse(input.timeEnd) : 0;
+  if (startTime || endTime) {
+    rows = rows.filter((row) => {
+      const rowTime = parseBusinessTime(row[3]);
+      if (!rowTime) return true;
+      return (!startTime || rowTime >= startTime) && (!endTime || rowTime <= endTime);
+    });
   }
 
   if (input.sort === "time") {
@@ -416,7 +489,9 @@ export function queryBusiness(input = {}) {
       sort: input.sort || "risk",
       view: input.view || "table",
       timeField: input.timeField || business.timeField,
-      timeRange: input.timeRange || "最近 24 小时"
+      timeRange: input.timeRange || "最近 24 小时",
+      timeStart: input.timeStart || "",
+      timeEnd: input.timeEnd || ""
     }
   };
 }

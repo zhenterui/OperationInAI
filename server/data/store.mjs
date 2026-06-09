@@ -251,6 +251,30 @@ export const store = {
     { id: "ks_monitor_docs", name: "监控平台帮助中心", desc: "URL 抓取，7,820 个内容切片", icon: "cloud", chunks: 7820 },
     { id: "ks_ticket_history", name: "历史工单知识", desc: "PostgreSQL 同步，最近 18 个月", icon: "database", chunks: 18540 }
   ],
+  modelConfigs: [
+    {
+      id: "model_openai_compatible",
+      name: "OpenAI Compatible",
+      vendor: "openai-compatible",
+      model: "gpt-4.1-mini",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "",
+      apiKeyMasked: "未配置",
+      status: "可选",
+      updatedAt: now()
+    },
+    {
+      id: "model_deepseek",
+      name: "DeepSeek 运维分析",
+      vendor: "deepseek",
+      model: "deepseek-chat",
+      baseUrl: "https://api.deepseek.com/v1",
+      apiKey: "",
+      apiKeyMasked: "未配置",
+      status: "可选",
+      updatedAt: now()
+    }
+  ],
   syncLogs: [],
   analysisResults: []
 };
@@ -274,10 +298,12 @@ export function getBootstrapData() {
       id: item.id,
       name: item.name,
       timeField: item.timeField,
+      fields: item.fields,
       rows: item.rows
     })),
     cleaningRules: store.cleaningRules,
     businessFlows: store.businessFlows,
+    modelConfigs: store.modelConfigs,
     signals: store.signals,
     knowledge: store.knowledge
   };

@@ -590,8 +590,21 @@
                 </select>
               </label>
               <label>
-                <span>时间范围</span>
-                <input id="timeRangeInput" type="text" value="最近 24 小时" />
+                <span>时间预设</span>
+                <select id="timePresetSelect">
+                  <option value="24h">最近 24 小时</option>
+                  <option value="7d">最近 7 天</option>
+                  <option value="30d">最近 30 天</option>
+                  <option value="custom">自定义时间</option>
+                </select>
+              </label>
+              <label>
+                <span>开始时间</span>
+                <input id="timeStartInput" type="datetime-local" />
+              </label>
+              <label>
+                <span>结束时间</span>
+                <input id="timeEndInput" type="datetime-local" />
               </label>
               <label>
                 <span>排序</span>
@@ -616,28 +629,49 @@
         </section>
 
         <section class="panel" id="analysis" aria-labelledby="panelTitle">
-          <div class="analysis-layout">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">AI Analysis</p>
+              <h2>智能分析配置</h2>
+            </div>
+            <div class="segmented" id="analysisMode">
+              <button class="active" data-analysis-tab="config">分析配置</button>
+              <button data-analysis-tab="models">模型配置</button>
+            </div>
+          </div>
+          <div class="analysis-layout analysis-tab" data-analysis-section="config">
             <article class="surface">
               <div class="section-head">
                 <div>
-                  <p class="eyebrow">LLM Config</p>
-                  <h2>模型与提示词</h2>
+                  <p class="eyebrow">Business Fields</p>
+                  <h2>业务与字段组合</h2>
                 </div>
-                <span class="status-pill ok">已启用</span>
+                <span class="status-pill ok">可组合分析</span>
               </div>
               <form class="config-form">
-                <label>
-                  <span>模型供应商</span>
-                  <select id="modelProviderSelect">
-                    <option>OpenAI Compatible</option>
-                    <option>Azure OpenAI</option>
-                    <option>DeepSeek</option>
-                    <option>本地模型</option>
-                  </select>
+                <label class="full">
+                  <span>分析业务</span>
+                  <select id="analysisBusinessSelect" multiple></select>
+                </label>
+                <label class="full">
+                  <span>分析字段</span>
+                  <select id="analysisFieldSelect" multiple></select>
                 </label>
                 <label>
-                  <span>分析字段</span>
-                  <input id="analysisFieldsInput" value="severity, service, owner, duration, event_time" />
+                  <span>组合字段</span>
+                  <input id="analysisFieldComboInput" value="severity + owner + event_time" />
+                </label>
+                <label>
+                  <span>使用模型</span>
+                  <select id="analysisModelSelect"></select>
+                </label>
+                <label>
+                  <span>分析方式</span>
+                  <select id="analysisScopeSelect">
+                    <option value="single">按业务分别分析</option>
+                    <option value="combined">多业务合并分析</option>
+                    <option value="compare">多业务对比分析</option>
+                  </select>
                 </label>
                 <label>
                   <span>输出格式</span>
@@ -666,6 +700,21 @@
                 </button>
               </div>
               <div id="analysisOutput"></div>
+            </article>
+          </div>
+          <div class="analysis-tab hidden" data-analysis-section="models">
+            <article class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Model Library</p>
+                  <h2>模型配置库</h2>
+                </div>
+                <button class="small-button primary" id="addModelConfigBtn">
+                  <span class="icon" data-icon="plus"></span>
+                  新增模型
+                </button>
+              </div>
+              <div class="model-config-list" id="modelConfigList"></div>
             </article>
           </div>
         </section>
@@ -818,6 +867,51 @@
         <div class="modal-actions">
           <button class="small-button" value="cancel">取消</button>
           <button class="small-button primary" id="saveRuleBtn" value="default">保存规则</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="modelConfigModal">
+      <form class="modal-panel" method="dialog">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Model Config</p>
+            <h2 id="modelConfigModalTitle">新增模型配置</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="关闭">
+            <span class="icon" data-icon="refresh"></span>
+          </button>
+        </div>
+        <div class="config-form">
+          <label>
+            <span>配置名称</span>
+            <input id="modelConfigNameInput" value="OpenAI Compatible" />
+          </label>
+          <label>
+            <span>厂商</span>
+            <select id="modelVendorSelect">
+              <option value="openai-compatible">OpenAI Compatible</option>
+              <option value="azure-openai">Azure OpenAI</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="local">本地模型</option>
+            </select>
+          </label>
+          <label>
+            <span>模型名称</span>
+            <input id="modelNameInput" value="gpt-4.1-mini" />
+          </label>
+          <label>
+            <span>接口 URL</span>
+            <input id="modelBaseUrlInput" value="https://api.openai.com/v1" />
+          </label>
+          <label class="full">
+            <span>API Key</span>
+            <input id="modelApiKeyInput" type="password" value="" placeholder="保存时仅展示脱敏状态" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="small-button" value="cancel">取消</button>
+          <button class="small-button primary" id="saveModelConfigBtn" value="default">保存模型</button>
         </div>
       </form>
     </dialog>

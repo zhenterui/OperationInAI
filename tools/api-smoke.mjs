@@ -173,9 +173,35 @@ try {
     method: "POST",
     body: JSON.stringify({ name: "冒烟测试知识源", path: "D:/ops/smoke" })
   });
+  const modelConfig = await request("/api/model-configs", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "冒烟模型配置",
+      vendor: "openai-compatible",
+      model: "smoke-model",
+      baseUrl: "http://localhost:11434/v1",
+      apiKey: "smoke-api-key-123456"
+    })
+  });
+  const updatedModelConfig = await request(`/api/model-configs/${modelConfig.data.id}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      name: "冒烟模型配置已编辑",
+      vendor: "deepseek",
+      model: "smoke-model-edited",
+      baseUrl: "https://api.deepseek.com/v1",
+      apiKey: "smoke-api-key-edited"
+    })
+  });
   const analysis = await request("/api/analysis/run", {
     method: "POST",
-    body: JSON.stringify({ businessName: "告警业务" })
+    body: JSON.stringify({
+      businessNames: ["告警业务", "工单业务"],
+      fields: ["事件名称", "等级", "归属对象", "时间"],
+      comboFields: "等级 + 归属对象 + 时间",
+      scope: "compare",
+      modelConfigId: updatedModelConfig.data.id
+    })
   });
   const search = await request("/api/search/query", {
     method: "POST",
@@ -191,6 +217,9 @@ try {
     method: "DELETE"
   });
   const deletedFlow = await request(`/api/business-flows/${updatedFlow.data.id}`, {
+    method: "DELETE"
+  });
+  const deletedModelConfig = await request(`/api/model-configs/${updatedModelConfig.data.id}`, {
     method: "DELETE"
   });
 
@@ -219,8 +248,13 @@ try {
         deletedFlow: deletedFlow.data.name,
         businessRows: business.data.rows.length,
         knowledge: knowledge.data.name,
+        modelConfig: updatedModelConfig.data.name,
+        modelConfigMasked: updatedModelConfig.data.apiKeyMasked,
+        deletedModelConfig: deletedModelConfig.data.name,
         syncStatus: sync.data.status,
         analysisSections: analysis.data.sections.length,
+        analysisBusinesses: analysis.data.businessNames.length,
+        analysisModel: analysis.data.model,
         searchSources: search.data.sources.length
       },
       null,

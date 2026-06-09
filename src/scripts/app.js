@@ -11,7 +11,9 @@ const appState = {
   flowNodes: [],
   lastSourceTest: null,
   viewMode: "table",
-  cleaningTab: "business"
+  cleaningTab: "business",
+  analysisTab: "config",
+  editingModelConfigId: ""
 };
 
 const icons = {
@@ -85,6 +87,17 @@ function normalizeOpsData() {
   window.opsData.businesses = window.opsData.businesses || [];
   window.opsData.cleaningRules = window.opsData.cleaningRules || [];
   window.opsData.businessFlows = window.opsData.businessFlows || [];
+  window.opsData.modelConfigs = window.opsData.modelConfigs || [
+    {
+      id: "model_openai_compatible",
+      name: "OpenAI Compatible",
+      vendor: "openai-compatible",
+      model: "gpt-4.1-mini",
+      baseUrl: "https://api.openai.com/v1",
+      apiKeyMasked: "未配置",
+      status: "本地默认"
+    }
+  ];
   window.opsData.signals = window.opsData.signals || [];
   window.opsData.knowledge = window.opsData.knowledge || [];
 }
@@ -146,6 +159,111 @@ function setCleaningTab(tab) {
   $$("[data-cleaning-section]").forEach((section) => {
     section.classList.toggle("hidden", section.dataset.cleaningSection !== tab);
   });
+}
+
+function setAnalysisTab(tab) {
+  if (!$("#analysisMode")) return;
+  appState.analysisTab = tab;
+  $$("#analysisMode button").forEach((button) => button.classList.toggle("active", button.dataset.analysisTab === tab));
+  $$("[data-analysis-section]").forEach((section) => {
+    section.classList.toggle("hidden", section.dataset.analysisSection !== tab);
+  });
+}
+
+function formatDateTimeLocal(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function applyTimePreset(preset = $("#timePresetSelect")?.value || "24h") {
+  const end = new Date();
+  const start = new Date(end);
+  if (preset === "7d") start.setDate(end.getDate() - 7);
+  else if (preset === "30d") start.setDate(end.getDate() - 30);
+  else start.setHours(end.getHours() - 24);
+  if (preset !== "custom") {
+    $("#timeStartInput").value = formatDateTimeLocal(start);
+    $("#timeEndInput").value = formatDateTimeLocal(end);
+  }
+}
+
+function getDisplayTimeRangePayload() {
+  const preset = $("#timePresetSelect")?.value || "24h";
+  const presetLabel = $("#timePresetSelect")?.selectedOptions?.[0]?.textContent || "最近 24 小时";
+  return {
+    timeRange: preset === "custom" ? `${$("#timeStartInput").value} ~ ${$("#timeEndInput").value}` : presetLabel,
+    timeStart: $("#timeStartInput").value,
+    timeEnd: $("#timeEndInput").value
+  };
+}
+
+function getBusinessFields(business) {
+  return business?.fields?.length ? business.fields : ["事件名称", "等级", "归属对象", "时间", "状态/影响"];
+}
+
+function renderTimeFieldOptions() {
+  const business = getCurrentBusiness();
+  const selected = $("#timeFieldSelect")?.value || business?.timeField || "event_time";
+  const options = [...new Set([business?.timeField, "event_time", "created_at", "updated_at", "occurTime"].filter(Boolean))];
+  $("#timeFieldSelect").innerHTML = options.map((field) => `<option value="${escapeHtml(field)}">${escapeHtml(field)}</option>`).join("");
+  setSelectValue("#timeFieldSelect", selected);
+}
+
+function getSelectedAnalysisBusinessNames() {
+  const select = $("#analysisBusinessSelect");
+  if (!select) return [];
+  const values = getSelectedValues(select);
+  return values.length ? values : [window.opsData.businesses[0]?.name].filter(Boolean);
+}
+
+function renderAnalysisBusinessSelect() {
+  const select = $("#analysisBusinessSelect");
+  if (!select) return;
+  const selected = new Set(getSelectedValues(select));
+  select.innerHTML = (window.opsData.businesses || [])
+    .map((business, index) => {
+      const isSelected = selected.size ? selected.has(business.name) : index === 0;
+      return `<option value="${escapeHtml(business.name)}" ${isSelected ? "selected" : ""}>${escapeHtml(business.name)}</option>`;
+    })
+    .join("");
+}
+
+function renderAnalysisFieldSelect() {
+  const select = $("#analysisFieldSelect");
+  if (!select) return;
+  const selected = new Set(getSelectedValues(select));
+  const businessNames = getSelectedAnalysisBusinessNames();
+  const fields = [
+    ...new Set(
+      (window.opsData.businesses || [])
+        .filter((business) => businessNames.includes(business.name))
+        .flatMap((business) => getBusinessFields(business))
+    )
+  ];
+  select.innerHTML = fields
+    .map((field, index) => {
+      const isSelected = selected.size ? selected.has(field) : index < 5;
+      return `<option value="${escapeHtml(field)}" ${isSelected ? "selected" : ""}>${escapeHtml(field)}</option>`;
+    })
+    .join("");
+}
+
+function renderModelConfigSelect() {
+  const select = $("#analysisModelSelect");
+  if (!select) return;
+  const selected = select.value;
+  const configs = window.opsData.modelConfigs || [];
+  select.innerHTML = configs
+    .map((config) => `<option value="${escapeHtml(config.id)}">${escapeHtml(config.name)} · ${escapeHtml(config.model || config.vendor)}</option>`)
+    .join("");
+  setSelectValue("#analysisModelSelect", selected || configs[0]?.id || "");
+}
+
+function renderAnalysisControls() {
+  renderAnalysisBusinessSelect();
+  renderAnalysisFieldSelect();
+  renderModelConfigSelect();
+  renderModelConfigList();
 }
 
 function getConfiguredBusinessSummary() {
@@ -458,6 +576,7 @@ function getSelectedSource() {
 
 function setSelectValue(selector, value) {
   const element = $(selector);
+  if (!element) return;
   if ([...element.options].some((option) => option.value === value)) {
     element.value = value;
   }
@@ -642,6 +761,63 @@ function collectRuleForm() {
       param: $("#ruleParamInput").value.trim()
     },
     enabled: true
+  };
+}
+
+function getModelConfigById(id) {
+  return (window.opsData.modelConfigs || []).find((config) => config.id === id);
+}
+
+function renderModelConfigList() {
+  if (!$("#modelConfigList")) return;
+  $("#modelConfigList").innerHTML = (window.opsData.modelConfigs || [])
+    .map(
+      (config) => `
+        <div class="model-config-item ${config.id === $("#analysisModelSelect")?.value ? "selected" : ""}" data-model-id="${escapeHtml(config.id)}">
+          <div>
+            <strong>${escapeHtml(config.name)}</strong>
+            <small>${escapeHtml(config.vendor)} · ${escapeHtml(config.model)} · ${escapeHtml(config.baseUrl)} · Key ${escapeHtml(config.apiKeyMasked || "未配置")}</small>
+          </div>
+          <span class="status-pill ${config.status === "可用" ? "ok" : ""}">${escapeHtml(config.status || "可选")}</span>
+          <span class="row-actions">
+            <button class="small-button" data-model-action="use" data-model-id="${escapeHtml(config.id)}">使用</button>
+            <button class="small-button" data-model-action="edit" data-model-id="${escapeHtml(config.id)}">编辑</button>
+            <button class="small-button danger" data-model-action="delete" data-model-id="${escapeHtml(config.id)}">删除</button>
+          </span>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function resetModelConfigForm() {
+  appState.editingModelConfigId = "";
+  $("#modelConfigModalTitle").textContent = "新增模型配置";
+  $("#modelConfigNameInput").value = "自定义模型配置";
+  setSelectValue("#modelVendorSelect", "openai-compatible");
+  $("#modelNameInput").value = "gpt-4.1-mini";
+  $("#modelBaseUrlInput").value = "https://api.openai.com/v1";
+  $("#modelApiKeyInput").value = "";
+}
+
+function populateModelConfigForm(config) {
+  if (!config) return;
+  appState.editingModelConfigId = config.id;
+  $("#modelConfigModalTitle").textContent = "编辑模型配置";
+  $("#modelConfigNameInput").value = config.name || "";
+  setSelectValue("#modelVendorSelect", config.vendor || "openai-compatible");
+  $("#modelNameInput").value = config.model || "";
+  $("#modelBaseUrlInput").value = config.baseUrl || "";
+  $("#modelApiKeyInput").value = "";
+}
+
+function collectModelConfigForm() {
+  return {
+    name: $("#modelConfigNameInput").value.trim() || "自定义模型配置",
+    vendor: $("#modelVendorSelect").value,
+    model: $("#modelNameInput").value.trim() || "gpt-4.1-mini",
+    baseUrl: $("#modelBaseUrlInput").value.trim() || "https://api.openai.com/v1",
+    apiKey: $("#modelApiKeyInput").value.trim()
   };
 }
 
@@ -1188,9 +1364,13 @@ function populateMappingForm(mapping) {
 }
 
 function renderBusinessSelector() {
+  const selectedBusiness = $("#businessSelect")?.value || window.opsData.businesses[0]?.name || "";
   $("#businessSelect").innerHTML = window.opsData.businesses
-    .map((item) => `<option>${item.name}</option>`)
+    .map((item) => `<option value="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>`)
     .join("");
+  setSelectValue("#businessSelect", selectedBusiness);
+  renderTimeFieldOptions();
+  renderAnalysisControls();
 }
 
 function getCurrentBusiness() {
@@ -1199,17 +1379,17 @@ function getCurrentBusiness() {
 }
 
 function renderBusinessRows(current) {
-  const rows = [["事件名称", "等级", "归属对象", "时间", "状态/影响"], ...current.rows];
+  const rows = [getBusinessFields(current), ...(current?.rows || [])];
   $("#businessTable").innerHTML = rows
     .map(
       (row, index) => `
         <div class="table-row ${index === 0 ? "header" : ""}">
-          ${row.map((cell) => `<span>${cell}</span>`).join("")}
+          ${row.map((cell) => `<span>${escapeHtml(cell)}</span>`).join("")}
         </div>
       `
     )
     .join("");
-  drawTrendChart(current.name);
+  drawTrendChart(current?.name || "业务");
 }
 
 function renderBusinessTable() {
@@ -1218,6 +1398,7 @@ function renderBusinessTable() {
 
 async function queryAndRenderBusiness() {
   const fallback = getCurrentBusiness();
+  const timePayload = getDisplayTimeRangePayload();
   try {
     const result = await apiRequest("/api/businesses/query", {
       method: "POST",
@@ -1226,7 +1407,7 @@ async function queryAndRenderBusiness() {
         keyword: $("#tableSearchInput").value,
         sort: $("#sortSelect").value,
         timeField: $("#timeFieldSelect").value,
-        timeRange: $("#timeRangeInput").value,
+        ...timePayload,
         view: appState.viewMode
       })
     });
@@ -1236,6 +1417,15 @@ async function queryAndRenderBusiness() {
     const keyword = $("#tableSearchInput").value.trim().toLowerCase();
     if (keyword) {
       rows = rows.filter((row) => row.some((cell) => String(cell).toLowerCase().includes(keyword)));
+    }
+    const startTime = timePayload.timeStart ? Date.parse(timePayload.timeStart) : 0;
+    const endTime = timePayload.timeEnd ? Date.parse(timePayload.timeEnd) : 0;
+    if (startTime || endTime) {
+      rows = rows.filter((row) => {
+        const rowTime = Date.parse(String(row[3] || "").replace(" ", "T"));
+        if (Number.isNaN(rowTime)) return true;
+        return (!startTime || rowTime >= startTime) && (!endTime || rowTime <= endTime);
+      });
     }
     renderBusinessRows({ ...fallback, rows: appState.viewMode === "top" ? rows.slice(0, 3) : rows });
   }
@@ -1341,12 +1531,16 @@ function renderAnalysisResult(result) {
   const sections = result?.sections || [];
   $("#analysisOutput").innerHTML = `
     <div class="insight-stack">
+      <div class="insight-card">
+        <h3>分析范围</h3>
+        <p>${escapeHtml(result?.businessName || "-")} · 模型 ${escapeHtml(result?.model || "-")} · 字段 ${escapeHtml((result?.fields || []).join("、") || "-")}</p>
+      </div>
       ${sections
         .map(
           (section) => `
             <div class="insight-card">
-              <h3>${section.title}</h3>
-              <p>${section.content}</p>
+              <h3>${escapeHtml(section.title)}</h3>
+              <p>${escapeHtml(section.content)}</p>
             </div>
           `
         )
@@ -1354,7 +1548,7 @@ function renderAnalysisResult(result) {
       ${
         result?.evidence?.length
           ? `<div class="insight-card"><h3>证据</h3><p>${result.evidence
-              .map((item) => `${escapeHtml(item.severity)} ${escapeHtml(item.service)} ${escapeHtml(item.event)} ${escapeHtml(item.time)}`)
+              .map((item) => `${escapeHtml(item.business || "")} ${escapeHtml(item.severity)} ${escapeHtml(item.service)} ${escapeHtml(item.event)} ${escapeHtml(item.time)}`)
               .join("；")}</p></div>`
           : ""
       }
@@ -1771,11 +1965,102 @@ function bindEvents() {
     appState.selectedAuthId = window.opsData.authConfigs[0]?.id || "auth_none";
     renderAuthConfigs();
   }
-  $("#businessSelect").addEventListener("change", queryAndRenderBusiness);
+  if ($("#analysisMode")) {
+    $("#analysisMode").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-analysis-tab]");
+      if (!button) return;
+      setAnalysisTab(button.dataset.analysisTab);
+    });
+  }
+  $("#businessSelect").addEventListener("change", () => {
+    renderTimeFieldOptions();
+    queryAndRenderBusiness();
+  });
   $("#tableSearchInput").addEventListener("input", queryAndRenderBusiness);
   $("#sortSelect").addEventListener("change", queryAndRenderBusiness);
   $("#timeFieldSelect").addEventListener("change", queryAndRenderBusiness);
-  $("#timeRangeInput").addEventListener("change", queryAndRenderBusiness);
+  $("#timePresetSelect").addEventListener("change", () => {
+    applyTimePreset($("#timePresetSelect").value);
+    queryAndRenderBusiness();
+  });
+  $("#timeStartInput").addEventListener("change", () => {
+    setSelectValue("#timePresetSelect", "custom");
+    queryAndRenderBusiness();
+  });
+  $("#timeEndInput").addEventListener("change", () => {
+    setSelectValue("#timePresetSelect", "custom");
+    queryAndRenderBusiness();
+  });
+  $("#analysisBusinessSelect").addEventListener("change", renderAnalysisFieldSelect);
+  $("#analysisModelSelect").addEventListener("change", renderModelConfigList);
+  $("#modelConfigList").addEventListener("click", async (event) => {
+    const item = event.target.closest("[data-model-id]");
+    if (!item) return;
+    const modelId = item.dataset.modelId;
+    const action = event.target.dataset.modelAction || "use";
+    const config = getModelConfigById(modelId);
+    if (!config) return;
+    if (action === "use") {
+      setSelectValue("#analysisModelSelect", modelId);
+      setAnalysisTab("config");
+      renderModelConfigList();
+      return;
+    }
+    if (action === "edit") {
+      populateModelConfigForm(config);
+      openDialog("#modelConfigModal");
+      return;
+    }
+    if (action === "delete") {
+      try {
+        await apiRequest(`/api/model-configs/${encodeURIComponent(modelId)}`, { method: "DELETE" });
+      } catch {
+        // Local fallback keeps model config editing usable offline.
+      }
+      window.opsData.modelConfigs = (window.opsData.modelConfigs || []).filter((model) => model.id !== modelId);
+      renderModelConfigSelect();
+      renderModelConfigList();
+    }
+  });
+  $("#addModelConfigBtn").addEventListener("click", () => {
+    resetModelConfigForm();
+    openDialog("#modelConfigModal");
+  });
+  $("#saveModelConfigBtn").addEventListener("click", async (event) => {
+    event.preventDefault();
+    const payload = collectModelConfigForm();
+    const editingId = appState.editingModelConfigId;
+    try {
+      const saved = await apiRequest(editingId ? `/api/model-configs/${encodeURIComponent(editingId)}` : "/api/model-configs", {
+        method: editingId ? "PUT" : "POST",
+        body: JSON.stringify(payload)
+      });
+      if (editingId) {
+        window.opsData.modelConfigs = (window.opsData.modelConfigs || []).map((item) => (item.id === saved.id ? saved : item));
+      } else {
+        window.opsData.modelConfigs.unshift(saved);
+      }
+      appState.editingModelConfigId = saved.id;
+    } catch {
+      const localModel = {
+        id: editingId || `local_model_${Date.now()}`,
+        ...payload,
+        apiKey: "",
+        apiKeyMasked: payload.apiKey ? "已配置" : "未配置",
+        status: payload.apiKey ? "本地可用" : "本地待配置 Key"
+      };
+      if (editingId) {
+        window.opsData.modelConfigs = (window.opsData.modelConfigs || []).map((item) => (item.id === editingId ? { ...item, ...localModel } : item));
+      } else {
+        window.opsData.modelConfigs.unshift(localModel);
+      }
+      appState.editingModelConfigId = localModel.id;
+    }
+    renderModelConfigSelect();
+    setSelectValue("#analysisModelSelect", appState.editingModelConfigId);
+    renderModelConfigList();
+    closeDialog("#modelConfigModal");
+  });
   $("#generateAnalysisBtn").addEventListener("click", async () => {
     $("#generateAnalysisBtn").innerHTML = `<span class="icon" data-icon="refresh"></span> 分析中`;
     renderIcons();
@@ -1783,9 +2068,11 @@ function bindEvents() {
       const result = await apiRequest("/api/analysis/run", {
         method: "POST",
         body: JSON.stringify({
-          businessName: $("#businessSelect").value,
-          model: $("#modelProviderSelect").value,
-          fields: $("#analysisFieldsInput").value,
+          businessNames: getSelectedAnalysisBusinessNames(),
+          modelConfigId: $("#analysisModelSelect").value,
+          fields: getSelectedValues($("#analysisFieldSelect")),
+          comboFields: $("#analysisFieldComboInput").value,
+          scope: $("#analysisScopeSelect").value,
           format: $("#analysisFormatSelect").value,
           prompt: $("#promptTemplateInput").value
         })
@@ -2150,6 +2437,9 @@ async function boot() {
   renderFlowOutput();
   setCleaningTab(appState.cleaningTab);
   renderBusinessSelector();
+  applyTimePreset($("#timePresetSelect")?.value || "24h");
+  renderAnalysisControls();
+  setAnalysisTab(appState.analysisTab);
   renderBusinessTable();
   renderKnowledge();
   renderSyncLog();
