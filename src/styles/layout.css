@@ -156,6 +156,14 @@
 .cleaning-stack {
   display: grid;
   gap: 12px;
+  min-width: 0;
+}
+
+.cleaning-stack > *,
+.module-grid > *,
+.support-grid > *,
+.flow-result-grid > * {
+  min-width: 0;
 }
 
 .cleaning-section-title {
@@ -221,6 +229,12 @@
   .flow-result-grid,
   .analysis-layout,
   .search-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1400px) {
+  .source-workbench {
     grid-template-columns: 1fr;
   }
 }
