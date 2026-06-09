@@ -76,6 +76,9 @@ try {
     "flowDesigner",
     "flowNodeTypeSelect",
     "flowNodeRefSelect",
+    "flowNodeBranchModeSelect",
+    "flowNodeBranchFromSelect",
+    "flowNodeBranchConditionInput",
     "flowNodeInspector"
   ].forEach((id) => assert(html.includes(`id="${id}"`), `missing UI control: ${id}`));
 
@@ -197,8 +200,8 @@ try {
       ruleIds: [rule.data.id],
       nodes: [
         { id: "e2e_context", type: "context", refId: "time-window", name: "E2E 时间窗口", executionMode: "serial", param: "context.start_time/context.end_time" },
-        { id: "e2e_source_api", type: "source", refId: source.data.id, name: "E2E 多层 API 数据源", executionMode: "parallel", param: "数据库逐条入参" },
-        { id: "e2e_source_cmdb", type: "source", refId: "src_cmdb_pg", name: "CMDB PostgreSQL", executionMode: "parallel", param: "负责人补齐" },
+        { id: "e2e_source_api", type: "source", refId: source.data.id, name: "E2E 多层 API 数据源", executionMode: "parallel", param: "数据库逐条入参", branchFromId: "e2e_context", branchName: "告警接口分支", branchCondition: "severity in [P0,P1]" },
+        { id: "e2e_source_cmdb", type: "source", refId: "src_cmdb_pg", name: "CMDB PostgreSQL", executionMode: "parallel", param: "负责人补齐", branchFromId: "e2e_context", branchName: "CMDB 补齐分支", branchCondition: "service_id exists" },
         { id: "e2e_rule_enum", type: "rule", refId: rule.data.id, name: "E2E 等级枚举转换", executionMode: "join", param: "P0/P1/P2" },
         { id: "e2e_output", type: "output", refId: "business-table", name: "biz_e2e_event", executionMode: "serial", param: "upsert" }
       ],
@@ -240,6 +243,8 @@ try {
   assert(flowRun.data.outputConfig.businessTable === "biz_e2e_event", "business table should round-trip");
   assert(flowRun.data.parameterPlan.loopCalls === 3, "flow graph should combine database-driven API calls and static source calls");
   assert(flowRun.data.executionPlan.parallel === 2, "flow graph should support parallel source nodes");
+  assert(flowRun.data.executionPlan.branches === 2, "flow graph should support conditional branch lanes");
+  assert(flowRun.data.executionPlan.conditionalBranches === 2, "flow graph should keep branch conditions");
   assert(flowRun.data.executionPlan.join === 1, "flow graph should support join nodes");
 
   await request(`/api/cleaning-rules/${rule.data.id}`, { method: "DELETE" });

@@ -263,12 +263,18 @@ export function runBusinessFlow(input = {}) {
   const nowText = new Date().toISOString().slice(0, 16).replace("T", " ");
   const sourceText = sources.map((source) => source.name).join(" + ") || "未选择数据源";
   const ruleText = rules.map((rule) => rule.name).join(" + ") || "未选择规则";
+  const branchKeys = new Set((flow.nodes || []).filter((node) => node.branchFromId).map((node) => `${node.branchFromId}:${node.branchName || node.id}`));
   const executionPlan = {
     serial: (flow.nodes || []).filter((node) => (node.executionMode || "serial") === "serial").length,
     parallel: (flow.nodes || []).filter((node) => node.executionMode === "parallel").length,
     join: (flow.nodes || []).filter((node) => node.executionMode === "join").length,
+    branches: branchKeys.size,
+    conditionalBranches: (flow.nodes || []).filter((node) => node.branchFromId && node.branchCondition).length,
     summary: (flow.nodes || [])
-      .map((node, index) => `${index + 1}.${node.name || node.type}(${node.executionMode || "serial"})`)
+      .map((node, index) => {
+        const branchText = node.branchFromId ? `, 分支:${node.branchName || "未命名"}${node.branchCondition ? ` if ${node.branchCondition}` : ""}` : "";
+        return `${index + 1}.${node.name || node.type}(${node.executionMode || "serial"}${branchText})`;
+      })
       .join(" -> ")
   };
   const loopCalls = sources.reduce((sum, source) => {

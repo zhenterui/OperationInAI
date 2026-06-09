@@ -23,6 +23,7 @@ const icons = {
   refresh: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M20 11a8 8 0 0 0-14.8-4"/><path d="M4 5v5h5"/><path d="M4 13a8 8 0 0 0 14.8 4"/><path d="M20 19v-5h-5"/></svg>',
   bolt: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M13 2 4 14h7l-1 8 10-13h-7z"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>',
+  "git-branch": '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 15V6a3 3 0 0 1 3-3h6"/><path d="M9 18h6"/></svg>',
   play: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M8 5v14l11-7z"/></svg>',
   database: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>',
   cloud: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M17.5 18H8a5 5 0 1 1 1-9.9A6 6 0 0 1 20 11a3.5 3.5 0 0 1-2.5 7z"/></svg>',
@@ -574,11 +575,29 @@ function renderFlowNodeRefSelect(selector, type, selectedValue = "") {
   setSelectValue(selector, selectedValue || options[0]?.value || "");
 }
 
+function getBranchSourceOptions(currentNodeId = "") {
+  return (appState.flowNodes || [])
+    .filter((node) => node.id !== currentNodeId)
+    .map((node, index) => ({
+      value: node.id,
+      label: `${index + 1}. ${node.name || getFlowRefLabel(node.type, node.refId)}`
+    }));
+}
+
+function renderFlowBranchFromSelect(selectedValue = "", currentNodeId = "") {
+  const options = getBranchSourceOptions(currentNodeId);
+  $("#flowNodeBranchFromSelect").innerHTML = [
+    '<option value="">选择上游节点</option>',
+    ...options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
+  ].join("");
+  setSelectValue("#flowNodeBranchFromSelect", selectedValue || "");
+}
+
 function getFlowRefLabel(type, refId) {
   return getFlowRefOptions(type).find((option) => option.value === refId)?.label || refId || "未配置";
 }
 
-function makeFlowNode(type = "source", refId = "") {
+function makeFlowNode(type = "source", refId = "", overrides = {}) {
   const resolvedRef = refId || getFlowRefOptions(type)[0]?.value || "";
   return {
     id: `node_${Date.now()}_${Math.random().toString(16).slice(2, 7)}`,
@@ -586,7 +605,11 @@ function makeFlowNode(type = "source", refId = "") {
     refId: resolvedRef,
     name: getFlowRefLabel(type, resolvedRef),
     executionMode: type === "source" ? "parallel" : "serial",
-    param: type === "context" ? "context.start_time / context.end_time" : ""
+    param: type === "context" ? "context.start_time / context.end_time" : "",
+    branchFromId: "",
+    branchName: "",
+    branchCondition: "",
+    ...overrides
   };
 }
 
@@ -598,7 +621,10 @@ function defaultFlowNodesFromFlow(flow = {}) {
       refId: node.refId || "",
       name: node.name || getFlowRefLabel(node.type || "source", node.refId),
       executionMode: node.executionMode || "serial",
-      param: node.param || ""
+      param: node.param || "",
+      branchFromId: node.branchFromId || "",
+      branchName: node.branchName || "",
+      branchCondition: node.branchCondition || ""
     }));
   }
   return [
@@ -615,12 +641,17 @@ function selectFlowNode(nodeId) {
   if (!node) {
     $("#flowNodeNameInput").value = "";
     renderFlowNodeRefSelect("#flowNodeRefEditSelect", "source");
+    renderFlowBranchFromSelect();
     return;
   }
   $("#flowNodeNameInput").value = node.name || "";
   setSelectValue("#flowNodeTypeEditSelect", node.type || "source");
   renderFlowNodeRefSelect("#flowNodeRefEditSelect", node.type || "source", node.refId || "");
   setSelectValue("#flowNodeExecutionSelect", node.executionMode || "serial");
+  setSelectValue("#flowNodeBranchModeSelect", node.branchFromId ? "branch" : "main");
+  renderFlowBranchFromSelect(node.branchFromId || "", node.id);
+  $("#flowNodeBranchNameInput").value = node.branchName || "";
+  $("#flowNodeBranchConditionInput").value = node.branchCondition || "";
   $("#flowNodeParamInput").value = node.param || "";
 }
 
@@ -631,21 +662,66 @@ function getExecutionLabel(mode) {
 }
 
 function buildFlowStages(nodes = []) {
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const branchNodesByParent = new Map();
+  nodes.forEach((node, index) => {
+    if (!node.branchFromId || !nodeIds.has(node.branchFromId)) return;
+    if (!branchNodesByParent.has(node.branchFromId)) {
+      branchNodesByParent.set(node.branchFromId, []);
+    }
+    branchNodesByParent.get(node.branchFromId).push({ node, index });
+  });
+  const branchNodeIds = new Set([...branchNodesByParent.values()].flat().map((item) => item.node.id));
+  const mainNodes = nodes.filter((node) => !branchNodeIds.has(node.id));
   const stages = [];
-  for (let index = 0; index < nodes.length; index += 1) {
-    const node = nodes[index];
+  for (let index = 0; index < mainNodes.length; index += 1) {
+    const node = mainNodes[index];
     if (node.executionMode === "parallel") {
       const branches = [node];
-      while (nodes[index + 1]?.executionMode === "parallel") {
+      while (mainNodes[index + 1]?.executionMode === "parallel") {
         index += 1;
-        branches.push(nodes[index]);
+        branches.push(mainNodes[index]);
       }
       stages.push({ type: "parallel", nodes: branches });
     } else {
       stages.push({ type: "single", nodes: [node] });
     }
+    const parentNodes = stageNodes(stages[stages.length - 1]);
+    parentNodes.forEach((parentNode) => {
+      const branchEntries = branchNodesByParent.get(parentNode.id) || [];
+      if (!branchEntries.length) return;
+      const branchesByName = new Map();
+      branchEntries.forEach(({ node: branchNode, index: originalIndex }) => {
+        const branchKey = branchNode.branchName || `分支 ${branchesByName.size + 1}`;
+        if (!branchesByName.has(branchKey)) {
+          branchesByName.set(branchKey, {
+            name: branchKey,
+            condition: branchNode.branchCondition || "",
+            nodes: [],
+            firstIndex: originalIndex
+          });
+        }
+        const branch = branchesByName.get(branchKey);
+        branch.nodes.push(branchNode);
+        if (!branch.condition && branchNode.branchCondition) {
+          branch.condition = branchNode.branchCondition;
+        }
+      });
+      stages.push({
+        type: "branch",
+        parent: parentNode,
+        branches: [...branchesByName.values()].sort((a, b) => a.firstIndex - b.firstIndex)
+      });
+    });
   }
   return stages;
+}
+
+function stageNodes(stage) {
+  if (!stage) return [];
+  if (stage.nodes) return stage.nodes;
+  if (stage.branches) return stage.branches.flatMap((branch) => branch.nodes);
+  return [];
 }
 
 function renderFlowNodeCard(node, index, variant = "") {
@@ -657,6 +733,7 @@ function renderFlowNodeCard(node, index, variant = "") {
       </div>
       <strong>${escapeHtml(node.name || getFlowRefLabel(node.type, node.refId))}</strong>
       <small>${escapeHtml(getFlowRefLabel(node.type, node.refId))}</small>
+      ${node.branchFromId ? `<small>分支：${escapeHtml(node.branchName || "未命名分支")}</small>` : ""}
       <small>${escapeHtml(node.param || "无额外参数")}</small>
       <div class="flow-node-actions">
         <button class="small-button" data-flow-node-action="edit" data-flow-node-id="${escapeHtml(node.id)}">编辑</button>
@@ -684,6 +761,27 @@ function renderFlowDesigner() {
           <div class="flow-stage parallel-stage">
             <div class="flow-branch-label">并行分支</div>
             <div class="flow-parallel-branches">${branchCards}</div>
+          </div>
+        `;
+      }
+      if (stage.type === "branch") {
+        const branchLanes = stage.branches
+          .map((branch) => `
+            <div class="flow-branch-lane">
+              <div class="flow-branch-lane-head">
+                <strong>${escapeHtml(branch.name)}</strong>
+                <small>${escapeHtml(branch.condition || "无条件，进入该分支")}</small>
+              </div>
+              <div class="flow-branch-lane-body">
+                ${branch.nodes.map((node) => renderFlowNodeCard(node, nodeIndex++, "branch-node")).join("")}
+              </div>
+            </div>
+          `)
+          .join("");
+        return `
+          <div class="flow-stage conditional-branch-stage">
+            <div class="flow-branch-label">从 ${escapeHtml(stage.parent.name || getFlowRefLabel(stage.parent.type, stage.parent.refId))} 分支</div>
+            <div class="flow-conditional-branches">${branchLanes}</div>
           </div>
         `;
       }
@@ -752,13 +850,14 @@ function renderFlowTable() {
     ...(window.opsData.businessFlows || []).map((flow) => {
       const nodes = flow.nodes || [];
       const parallel = nodes.filter((node) => node.executionMode === "parallel").length;
+      const branchCount = new Set(nodes.filter((node) => node.branchFromId).map((node) => `${node.branchFromId}:${node.branchName || node.id}`)).size;
       const selected = flow.id === appState.selectedFlowId ? "selected" : "";
       return `
         <div class="flow-list-row ${selected}" data-flow-id="${escapeHtml(flow.id)}">
           <span>${escapeHtml(flow.businessName)}</span>
           <span>${escapeHtml(flow.name)}</span>
           <span>${escapeHtml(String(nodes.length || (flow.dataSourceIds?.length || 0) + (flow.ruleIds?.length || 0)))}</span>
-          <span>${escapeHtml(parallel ? `${parallel} 并行` : "串行")}</span>
+          <span>${escapeHtml(branchCount ? `${branchCount} 分支` : parallel ? `${parallel} 并行` : "串行")}</span>
           <span>${escapeHtml(flow.status || "ready")}</span>
           <span class="row-actions">
             <button class="small-button" data-flow-action="edit" data-flow-id="${escapeHtml(flow.id)}">编辑</button>
@@ -807,7 +906,7 @@ function renderFlowOutput(result) {
       <li>规则：${result.rules.map((rule) => escapeHtml(rule.name)).join("、") || "未选择"}</li>
       <li>落库：原始表 ${escapeHtml(result.outputConfig?.rawTable || "-")}，清洗表 ${escapeHtml(result.outputConfig?.cleanTable || "-")}，业务表 ${escapeHtml(result.outputConfig?.businessTable || "-")}</li>
       <li>写入策略：${escapeHtml(result.outputConfig?.writeStrategy || "-")} / 主键 ${escapeHtml(result.outputConfig?.primaryKey || "-")} / 去重 ${escapeHtml(result.outputConfig?.dedupeStrategy || "-")}</li>
-      <li>执行计划：串行 ${escapeHtml(String(result.executionPlan?.serial || 0))} 个，并行 ${escapeHtml(String(result.executionPlan?.parallel || 0))} 个，汇聚 ${escapeHtml(String(result.executionPlan?.join || 0))} 个</li>
+      <li>执行计划：串行 ${escapeHtml(String(result.executionPlan?.serial || 0))} 个，并行 ${escapeHtml(String(result.executionPlan?.parallel || 0))} 个，分支 ${escapeHtml(String(result.executionPlan?.branches || 0))} 条，汇聚 ${escapeHtml(String(result.executionPlan?.join || 0))} 个</li>
       <li>入参循环：${escapeHtml(String(result.parameterPlan?.loopCalls || 0))} 次调用，${escapeHtml(result.parameterPlan?.summary || "固定入参")}</li>
     </ul>
   `;
@@ -1341,13 +1440,37 @@ function bindEvents() {
     appState.selectedFlowNodeId = node.id;
     renderFlowDesigner();
   });
+  $("#addBranchNodeBtn").addEventListener("click", () => {
+    const selectedNode = appState.flowNodes.find((node) => node.id === appState.selectedFlowNodeId);
+    const parentNodeId = selectedNode?.branchFromId || selectedNode?.id || appState.flowNodes[0]?.id || "";
+    const parentNode = appState.flowNodes.find((node) => node.id === parentNodeId);
+    const branchCount = appState.flowNodes.filter((node) => node.branchFromId === parentNodeId).length + 1;
+    const selectedType = $("#flowNodeTypeSelect").value || "source";
+    const branchType = selectedType === "context" ? "source" : selectedType;
+    const node = makeFlowNode(branchType, branchType === selectedType ? $("#flowNodeRefSelect").value : "", {
+      executionMode: "serial",
+      branchFromId: parentNodeId,
+      branchName: `分支 ${branchCount}`,
+      branchCondition: branchCount === 1 ? "满足条件时进入" : "其他条件"
+    });
+    if (parentNode) {
+      const parentIndex = appState.flowNodes.findIndex((item) => item.id === parentNode.id);
+      appState.flowNodes.splice(parentIndex + branchCount, 0, node);
+    } else {
+      appState.flowNodes.push(node);
+    }
+    appState.selectedFlowNodeId = node.id;
+    renderFlowDesigner();
+  });
   $("#flowDesigner").addEventListener("click", (event) => {
     const nodeCard = event.target.closest("[data-flow-node-id]");
     if (!nodeCard) return;
     const action = event.target.dataset.flowNodeAction;
     const nodeId = nodeCard.dataset.flowNodeId;
     if (action === "delete") {
-      appState.flowNodes = appState.flowNodes.filter((node) => node.id !== nodeId);
+      appState.flowNodes = appState.flowNodes
+        .filter((node) => node.id !== nodeId)
+        .map((node) => (node.branchFromId === nodeId ? { ...node, branchFromId: "", branchName: "", branchCondition: "" } : node));
       appState.selectedFlowNodeId = appState.flowNodes[0]?.id || "";
       renderFlowDesigner();
       return;
@@ -1362,12 +1485,24 @@ function bindEvents() {
     node.refId = $("#flowNodeRefEditSelect").value;
     node.name = $("#flowNodeNameInput").value.trim() || getFlowRefLabel(node.type, node.refId);
     node.executionMode = $("#flowNodeExecutionSelect").value;
+    if ($("#flowNodeBranchModeSelect").value === "branch") {
+      node.branchFromId = $("#flowNodeBranchFromSelect").value || appState.flowNodes.find((item) => item.id !== node.id)?.id || "";
+      node.branchName = $("#flowNodeBranchNameInput").value.trim() || "默认分支";
+      node.branchCondition = $("#flowNodeBranchConditionInput").value.trim();
+    } else {
+      node.branchFromId = "";
+      node.branchName = "";
+      node.branchCondition = "";
+    }
     node.param = $("#flowNodeParamInput").value.trim();
     renderFlowDesigner();
   });
   $("#deleteFlowNodeBtn").addEventListener("click", () => {
     if (!appState.selectedFlowNodeId) return;
-    appState.flowNodes = appState.flowNodes.filter((node) => node.id !== appState.selectedFlowNodeId);
+    const deletedNodeId = appState.selectedFlowNodeId;
+    appState.flowNodes = appState.flowNodes
+      .filter((node) => node.id !== deletedNodeId)
+      .map((node) => (node.branchFromId === deletedNodeId ? { ...node, branchFromId: "", branchName: "", branchCondition: "" } : node));
     appState.selectedFlowNodeId = appState.flowNodes[0]?.id || "";
     renderFlowDesigner();
   });
