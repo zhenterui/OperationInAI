@@ -12,6 +12,7 @@ function normalizeList(value, fallback = []) {
 }
 
 export function runAnalysis(payload = {}) {
+  // Accept both the old single-business payload and the newer multi-business analysis payload.
   const businessNames = normalizeList(payload.businessNames || payload.businessName, [store.businesses[0]?.name].filter(Boolean));
   const selectedBusinesses = businessNames
     .map((name) => store.businesses.find((item) => item.name === name))

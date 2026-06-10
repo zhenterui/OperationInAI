@@ -1041,6 +1041,57 @@ select[multiple] option {
   color: var(--muted);
 }
 
+.guide-layout {
+  display: grid;
+  gap: 14px;
+}
+
+.guide-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.guide-card {
+  min-height: 138px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.guide-card .icon {
+  width: 34px;
+  height: 34px;
+  padding: 8px;
+  border: 1px solid rgba(48, 232, 199, 0.28);
+  border-radius: var(--radius);
+  color: var(--accent);
+  background: rgba(48, 232, 199, 0.08);
+}
+
+.guide-card small {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.guide-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.guide-steps span {
+  color: var(--accent);
+  font-weight: 800;
+}
+
 textarea {
   resize: vertical;
   padding: 11px;

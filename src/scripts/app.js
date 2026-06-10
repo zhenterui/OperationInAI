@@ -316,6 +316,8 @@ function getConfiguredBusinessSummary() {
   };
 }
 
+// The overview is derived from user configuration instead of static dashboard data,
+// so every source/rule/flow edit can immediately change the operational picture.
 function buildOverviewModel() {
   const summary = getConfiguredBusinessSummary();
   const cleaningScore = summary.configuredSourceCount
@@ -623,6 +625,7 @@ function collectSourceForm() {
   const auth = getSourceAuthConfig();
   const authType = normalizeAuthType(auth?.type);
   const authName = auth?.name || "无认证";
+  // Data sources only store an auth config reference; secret values stay in the auth library.
   return {
     name: $("#sourceNameInput").value.trim() || "未命名数据源",
     type: $("#sourceTypeInput").value.trim() || "GET /api/custom/list",
@@ -1283,6 +1286,7 @@ async function runSelectedBusinessFlow() {
     renderOverview();
   } catch {
     const payload = collectFlowForm();
+    // Keep the no-code designer demonstrable even when the backend is temporarily offline.
     renderFlowOutput({
       flow: { ...flow, ...payload },
       sources: window.opsData.sources.filter((source) => payload.dataSourceIds.includes(source.id)),

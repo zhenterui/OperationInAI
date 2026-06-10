@@ -462,6 +462,7 @@ export function queryBusiness(input = {}) {
   const startTime = input.timeStart ? Date.parse(input.timeStart) : 0;
   const endTime = input.timeEnd ? Date.parse(input.timeEnd) : 0;
   if (startTime || endTime) {
+    // Prototype rows keep the business timestamp at index 3; the selected timeField is preserved in query metadata.
     rows = rows.filter((row) => {
       const rowTime = parseBusinessTime(row[3]);
       if (!rowTime) return true;

@@ -41,6 +41,10 @@
             <span class="icon" data-icon="search"></span>
             <span>智能搜索</span>
           </button>
+          <button class="nav-item" data-panel="guide">
+            <span class="icon" data-icon="file"></span>
+            <span>使用说明</span>
+          </button>
         </nav>
 
         <div class="side-status">
@@ -758,6 +762,67 @@
                 </button>
               </div>
               <div class="answer-card" id="answerCard"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="panel" id="guide" aria-labelledby="panelTitle">
+          <div class="guide-layout">
+            <article class="surface wide">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Quick Guide</p>
+                  <h2>使用说明</h2>
+                </div>
+                <span class="status-pill ok">按业务流使用</span>
+              </div>
+              <div class="guide-grid">
+                <div class="guide-card">
+                  <span class="icon" data-icon="radar"></span>
+                  <strong>1. 看态势</strong>
+                  <small>态势总览会根据已配置业务、业务流、数据源、规则和业务数据自动生成指标、流程和风险信号。</small>
+                </div>
+                <div class="guide-card">
+                  <span class="icon" data-icon="pipeline"></span>
+                  <strong>2. 配业务流</strong>
+                  <small>进入数据清洗，先配置数据源和认证，再配置字段映射与清洗规则，最后在业务配置中编排串行、并行和条件分支节点。</small>
+                </div>
+                <div class="guide-card">
+                  <span class="icon" data-icon="chart"></span>
+                  <strong>3. 查业务数据</strong>
+                  <small>进入数据展示，选择业务模型、时间字段、时间预设或自定义时间组件，再按风险、时间或影响范围排序。</small>
+                </div>
+                <div class="guide-card">
+                  <span class="icon" data-icon="brain"></span>
+                  <strong>4. 做智能分析</strong>
+                  <small>进入智能分析，先在模型配置页签维护厂商、URL、模型和 API Key，再选择一个或多个业务与字段生成分析。</small>
+                </div>
+                <div class="guide-card">
+                  <span class="icon" data-icon="search"></span>
+                  <strong>5. 问知识库</strong>
+                  <small>进入智能搜索，配置 URL 或本地路径知识源后，通过问题输入触发关键词匹配和提示词回答。</small>
+                </div>
+              </div>
+            </article>
+
+            <article class="surface wide">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Recommended Flow</p>
+                  <h2>推荐配置顺序</h2>
+                </div>
+              </div>
+              <div class="guide-steps">
+                <button class="small-button" data-panel-link="cleaning">数据源配置</button>
+                <span>→</span>
+                <button class="small-button" data-panel-link="cleaning">字段映射与规则</button>
+                <span>→</span>
+                <button class="small-button" data-panel-link="cleaning">业务流编排</button>
+                <span>→</span>
+                <button class="small-button" data-panel-link="display">数据展示</button>
+                <span>→</span>
+                <button class="small-button" data-panel-link="analysis">智能分析</button>
+              </div>
             </article>
           </div>
         </section>

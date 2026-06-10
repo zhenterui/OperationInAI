@@ -4,11 +4,12 @@
 
 ## 已实现能力
 
-- 数据清洗：数据源配置、认证类型、字段映射、手动同步任务。
-- 数据展示：业务模型、业务数据表格、时间字段、筛选排序和趋势图。
-- 智能分析：模型配置、提示词区域、后端模拟分析接口、结构化分析结果。
+- 态势总览：按已配置业务、业务流、数据源、规则和业务数据自动生成指标、风险雷达和运维信号。
+- 数据清洗：数据源配置、认证配置、字段映射、清洗规则、业务流编排、手动同步任务。
+- 数据展示：业务模型、业务数据表格、时间组件筛选、字段搜索、排序、TOP 和趋势图。
+- 智能分析：业务多选、字段多选、组合字段、模型配置页签、提示词区域、结构化分析结果。
 - 智能搜索：知识源列表、问题输入、后端模拟搜索问答、引用来源。
-- 后端服务：健康检查、启动数据、数据源、字段映射、同步日志、分析、搜索接口。
+- 后端服务：健康检查、启动数据、数据源、认证、规则、业务流、模型配置、同步日志、分析、搜索接口。
 
 ## 目录结构
 
@@ -17,6 +18,9 @@
 ├── index.html
 ├── package.json
 ├── README.md
+├── docs
+│   ├── DESIGN.md
+│   └── USAGE.md
 ├── server
 │   ├── core
 │   ├── data
@@ -55,6 +59,8 @@ http://127.0.0.1:4173/api/health
 ```powershell
 npm.cmd run check
 npm.cmd run api:smoke
+npm.cmd run cleaning:e2e
+npm.cmd run port:check
 npm.cmd run static
 ```
 
@@ -79,6 +85,10 @@ npm.cmd run static
 - `POST /api/cleaning-rules`
 - `PUT /api/cleaning-rules/:id`
 - `DELETE /api/cleaning-rules/:id`
+- `GET /api/model-configs`
+- `POST /api/model-configs`
+- `PUT /api/model-configs/:id`
+- `DELETE /api/model-configs/:id`
 - `GET /api/businesses`
 - `POST /api/businesses/query`
 - `GET /api/business-flows`
@@ -90,3 +100,8 @@ npm.cmd run static
 - `GET /api/analysis/results`
 - `GET /api/knowledge-sources`
 - `POST /api/search/query`
+
+## 文档
+
+- [设计文档](docs/DESIGN.md)
+- [使用文档](docs/USAGE.md)
