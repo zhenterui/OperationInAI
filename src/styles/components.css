@@ -1311,6 +1311,21 @@ textarea {
   gap: 14px;
 }
 
+.display-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.36fr);
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.display-advanced-filter {
+  margin-top: 10px;
+}
+
+.display-advanced-filter .small-button {
+  min-height: 38px;
+}
+
 .chart-panel {
   margin-top: 14px;
   border: 1px solid var(--line);
@@ -1319,11 +1334,85 @@ textarea {
   overflow: hidden;
 }
 
+.chart-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chart-toolbar h3,
+.display-analysis-panel h3 {
+  margin: 2px 0 0;
+  font-size: 16px;
+}
+
+.icon-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.icon-tabs .icon {
+  width: 15px;
+  height: 15px;
+}
+
 .chart-panel canvas,
 .radar-wrap canvas {
   width: 100%;
   height: auto;
   display: block;
+}
+
+.display-analysis-panel {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02)),
+    rgba(9, 25, 31, 0.72);
+}
+
+.compact-head {
+  margin-bottom: 12px;
+}
+
+.display-insight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.display-insight-grid div {
+  min-height: 82px;
+  padding: 12px;
+  border: 1px solid rgba(48, 232, 199, 0.15);
+  border-radius: 8px;
+  background: rgba(3, 18, 24, 0.44);
+}
+
+.display-insight-grid strong,
+.display-insight-grid small {
+  display: block;
+}
+
+.display-insight-grid strong {
+  color: var(--accent);
+  font-size: 22px;
+}
+
+.display-insight-grid small {
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+.display-insight-card {
+  min-height: 0;
+  margin-top: 12px;
 }
 
 .radar-wrap {
@@ -1422,6 +1511,16 @@ textarea {
 
   .flow-storage-guide {
     grid-template-columns: 1fr;
+  }
+
+  .display-layout,
+  .display-insight-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .flow-board,

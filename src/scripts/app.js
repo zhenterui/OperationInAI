@@ -12,6 +12,8 @@ const appState = {
   flowNodes: [],
   lastSourceTest: null,
   viewMode: "table",
+  chartType: "line",
+  lastDisplayResult: null,
   cleaningTab: "business",
   analysisTab: "config",
   editingModelConfigId: ""
@@ -21,6 +23,9 @@ const icons = {
   radar: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M12 3a9 9 0 1 1-9 9"/><path d="M12 7a5 5 0 1 1-5 5"/><path d="M12 11a1 1 0 1 1-1 1"/><path d="M12 3v4M21 12h-4M5.6 18.4l2.8-2.8"/></svg>',
   pipeline: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M4 6h6v6H4zM14 12h6v6h-6z"/><path d="M10 9h2a4 4 0 0 1 4 4v1M7 12v2a4 4 0 0 0 4 4h3"/></svg>',
   chart: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 16v-5M12 16V8M16 16v-8"/></svg>',
+  "line-chart": '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 15 4-5 3 3 5-7"/></svg>',
+  "bar-chart": '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 16v-4M12 16V8M16 16v-7"/></svg>',
+  "pie-chart": '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M12 3v9h9"/><path d="M21 12a9 9 0 1 1-9-9"/></svg>',
   brain: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M8 6a4 4 0 0 0-4 4 4 4 0 0 0 1 7.7A4 4 0 0 0 12 20V5a4 4 0 0 0-4-4"/><path d="M16 6a4 4 0 0 1 4 4 4 4 0 0 1-1 7.7A4 4 0 0 1 12 20"/><path d="M8 10h1M15 10h1M8 15h2M14 15h2"/></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M20 11a8 8 0 0 0-14.8-4"/><path d="M4 5v5h5"/><path d="M4 13a8 8 0 0 0 14.8 4"/><path d="M20 19v-5h-5"/></svg>',
@@ -151,6 +156,9 @@ function setPanel(panelId) {
   $$(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === panelId));
   const active = $(`.nav-item[data-panel="${panelId}"] span:last-child`);
   $("#panelTitle").textContent = active ? active.textContent : "态势总览";
+  if (panelId === "display") {
+    requestAnimationFrame(() => renderBusinessTable());
+  }
 }
 
 function setCleaningTab(tab) {
@@ -1680,8 +1688,99 @@ function getCurrentBusiness() {
   return current;
 }
 
+function setupDisplayWorkbenchLayout() {
+  const displayPanel = $("#display");
+  const surface = displayPanel?.querySelector(".surface");
+  const filterRow = displayPanel?.querySelector(".filter-row");
+  const businessContent = $(".business-content", displayPanel);
+  const chartPanel = $(".chart-panel", displayPanel);
+  if (!surface || !filterRow || !businessContent || !chartPanel || $("#displayAnalysisResult")) return;
+
+  const advancedFilter = document.createElement("div");
+  advancedFilter.className = "filter-row compact display-advanced-filter";
+  advancedFilter.innerHTML = `
+    <label><span>风险等级</span><select id="severityFilterSelect"><option value="">全部等级</option></select></label>
+    <label><span>对象/服务</span><select id="ownerFilterSelect"><option value="">全部对象</option></select></label>
+    <label><span>字段筛选</span><select id="fieldFilterSelect"></select></label>
+    <label><span>字段值</span><input id="fieldValueFilterInput" type="search" placeholder="输入字段值关键词" /></label>
+    <button class="small-button" id="resetDisplayFiltersBtn" type="button">重置筛选</button>
+  `;
+  filterRow.after(advancedFilter);
+
+  const displayLayout = document.createElement("div");
+  displayLayout.className = "display-layout";
+  businessContent.before(displayLayout);
+  displayLayout.append(businessContent);
+  displayLayout.insertAdjacentHTML(
+    "beforeend",
+    `<aside class="display-analysis-panel">
+      <div class="section-head compact-head">
+        <div><p class="eyebrow">Display Insight</p><h3>分析结果</h3></div>
+        <button class="small-button" id="refreshDisplayAnalysisBtn" type="button"><span class="icon" data-icon="spark"></span>刷新</button>
+      </div>
+      <div id="displayAnalysisResult"></div>
+    </aside>`
+  );
+
+  chartPanel.insertAdjacentHTML(
+    "afterbegin",
+    `<div class="chart-toolbar">
+      <div><p class="eyebrow">Chart View</p><h3 id="displayChartTitle">业务图表</h3></div>
+      <div class="segmented icon-tabs" id="chartTypeMode">
+        <button class="active" data-chart-type="line" title="折线图"><span class="icon" data-icon="line-chart"></span>折线</button>
+        <button data-chart-type="bar" title="柱状图"><span class="icon" data-icon="bar-chart"></span>柱状</button>
+        <button data-chart-type="pie" title="饼图"><span class="icon" data-icon="pie-chart"></span>饼图</button>
+      </div>
+    </div>`
+  );
+}
+
+function updateSelectOptions(selector, values, allLabel) {
+  const select = $(selector);
+  if (!select) return;
+  const selected = select.value;
+  const uniqueValues = [...new Set(values.filter(Boolean).map(String))];
+  select.innerHTML = [`<option value="">${escapeHtml(allLabel)}</option>`, ...uniqueValues.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`)].join("");
+  setSelectValue(selector, uniqueValues.includes(selected) ? selected : "");
+}
+
+function updateDisplayFilterOptions(business) {
+  if (!$("#severityFilterSelect")) return;
+  const rows = business?.rows || [];
+  const fields = getBusinessFields(business);
+  updateSelectOptions("#severityFilterSelect", rows.map((row) => row[1]), "全部等级");
+  updateSelectOptions("#ownerFilterSelect", rows.map((row) => row[2]), "全部对象");
+  const selectedField = $("#fieldFilterSelect")?.value || "";
+  $("#fieldFilterSelect").innerHTML = [
+    '<option value="">全部字段</option>',
+    ...fields.map((field, index) => `<option value="${index}">${escapeHtml(field)}</option>`)
+  ].join("");
+  if (selectedField && Number(selectedField) < fields.length) setSelectValue("#fieldFilterSelect", selectedField);
+}
+
+function applyDisplayFilters(business) {
+  if (!business) return { fields: [], rows: [] };
+  updateDisplayFilterOptions(business);
+  const severity = $("#severityFilterSelect")?.value || "";
+  const owner = $("#ownerFilterSelect")?.value || "";
+  const fieldIndex = $("#fieldFilterSelect")?.value || "";
+  const fieldValue = ($("#fieldValueFilterInput")?.value || "").trim().toLowerCase();
+  let rows = [...(business.rows || [])];
+  if (severity) rows = rows.filter((row) => String(row[1] || "") === severity);
+  if (owner) rows = rows.filter((row) => String(row[2] || "") === owner);
+  if (fieldValue) {
+    rows = rows.filter((row) => {
+      if (fieldIndex !== "") return String(row[Number(fieldIndex)] || "").toLowerCase().includes(fieldValue);
+      return row.some((cell) => String(cell).toLowerCase().includes(fieldValue));
+    });
+  }
+  return { ...business, rows };
+}
+
 function renderBusinessRows(current) {
-  const rows = [getBusinessFields(current), ...(current?.rows || [])];
+  const filtered = applyDisplayFilters(current);
+  appState.lastDisplayResult = filtered;
+  const rows = [getBusinessFields(filtered), ...(filtered?.rows || [])];
   $("#businessTable").innerHTML = rows
     .map(
       (row, index) => `
@@ -1691,7 +1790,8 @@ function renderBusinessRows(current) {
       `
     )
     .join("");
-  drawTrendChart(current?.name || "业务");
+  drawDisplayChart(filtered);
+  renderDisplayAnalysis(filtered);
 }
 
 function renderBusinessTable() {
@@ -1899,6 +1999,166 @@ function fitCanvas(canvas) {
   const ctx = canvas.getContext("2d");
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   return { ctx, width: rect.width, height: rect.width * 0.44 };
+}
+
+function countBy(values) {
+  return values.reduce((acc, value) => {
+    const key = String(value || "未分类");
+    acc.set(key, (acc.get(key) || 0) + 1);
+    return acc;
+  }, new Map());
+}
+
+function getDisplayChartData(business) {
+  const rows = business?.rows || [];
+  const severityCounts = [...countBy(rows.map((row) => row[1])).entries()];
+  const objectCounts = [...countBy(rows.map((row) => row[2])).entries()].sort((a, b) => b[1] - a[1]).slice(0, 7);
+  const timeCounts = [...countBy(rows.map((row) => String(row[3] || "").slice(5, 16))).entries()].slice(-8);
+  return {
+    severityCounts: severityCounts.length ? severityCounts : [["无数据", 1]],
+    objectCounts: objectCounts.length ? objectCounts : [["无数据", 0]],
+    timeCounts: timeCounts.length ? timeCounts : [["无数据", 0]]
+  };
+}
+
+function drawChartFrame(ctx, width, height, title) {
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "rgba(255,255,255,.03)";
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = "rgba(156,238,226,.16)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 5; i += 1) {
+    const y = 42 + i * ((height - 84) / 4);
+    ctx.beginPath();
+    ctx.moveTo(34, y);
+    ctx.lineTo(width - 26, y);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#8fb1b2";
+  ctx.font = "12px Microsoft YaHei, sans-serif";
+  ctx.fillText(title, 24, 24);
+}
+
+function drawLineBusinessChart(ctx, width, height, business) {
+  const data = getDisplayChartData(business).timeCounts;
+  drawChartFrame(ctx, width, height, `${business?.name || "业务"} 时间趋势`);
+  const max = Math.max(1, ...data.map((item) => item[1]));
+  const step = data.length > 1 ? (width - 92) / (data.length - 1) : 0;
+  const points = data.map((item, index) => ({
+    label: item[0],
+    value: item[1],
+    x: 46 + index * step,
+    y: height - 42 - (item[1] / max) * (height - 98)
+  }));
+  const gradient = ctx.createLinearGradient(0, 0, width, 0);
+  gradient.addColorStop(0, "#30e8c7");
+  gradient.addColorStop(0.55, "#4d8dff");
+  gradient.addColorStop(1, "#8df25f");
+  ctx.strokeStyle = gradient;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  points.forEach((point, index) => {
+    if (index === 0) ctx.moveTo(point.x, point.y);
+    else ctx.lineTo(point.x, point.y);
+  });
+  ctx.stroke();
+  points.forEach((point) => {
+    ctx.fillStyle = "#eafff8";
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#9fbfc2";
+    ctx.fillText(String(point.value), point.x - 4, point.y - 10);
+  });
+}
+
+function drawBarBusinessChart(ctx, width, height, business) {
+  const data = getDisplayChartData(business).objectCounts;
+  drawChartFrame(ctx, width, height, `${business?.name || "业务"} 对象分布`);
+  const max = Math.max(1, ...data.map((item) => item[1]));
+  const barWidth = Math.max(22, (width - 86) / Math.max(1, data.length) - 12);
+  data.forEach(([label, value], index) => {
+    const x = 46 + index * (barWidth + 12);
+    const barHeight = (value / max) * (height - 100);
+    const y = height - 42 - barHeight;
+    const gradient = ctx.createLinearGradient(0, y, 0, height - 42);
+    gradient.addColorStop(0, "#30e8c7");
+    gradient.addColorStop(1, "rgba(77,141,255,.42)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x, y, barWidth, barHeight);
+    ctx.fillStyle = "#cce9e6";
+    ctx.fillText(String(value), x + 4, y - 8);
+    ctx.fillStyle = "#8fb1b2";
+    ctx.fillText(String(label).slice(0, 6), x, height - 22);
+  });
+}
+
+function drawPieBusinessChart(ctx, width, height, business) {
+  const data = getDisplayChartData(business).severityCounts;
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "rgba(255,255,255,.03)";
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = "#8fb1b2";
+  ctx.font = "12px Microsoft YaHei, sans-serif";
+  ctx.fillText(`${business?.name || "业务"} 风险等级占比`, 24, 24);
+  const total = Math.max(1, data.reduce((sum, item) => sum + item[1], 0));
+  const colors = ["#30e8c7", "#4d8dff", "#ffc35c", "#ff6b86", "#8df25f", "#a78bfa"];
+  const cx = width * 0.38;
+  const cy = height * 0.56;
+  const radius = Math.min(width, height) * 0.26;
+  let start = -Math.PI / 2;
+  data.forEach(([label, value], index) => {
+    const angle = (value / total) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, radius, start, start + angle);
+    ctx.closePath();
+    ctx.fillStyle = colors[index % colors.length];
+    ctx.fill();
+    const legendY = 70 + index * 26;
+    ctx.fillRect(width * 0.68, legendY - 10, 12, 12);
+    ctx.fillStyle = "#cce9e6";
+    ctx.fillText(`${label} ${value}`, width * 0.68 + 20, legendY);
+    start += angle;
+  });
+}
+
+function drawDisplayChart(business = appState.lastDisplayResult || getCurrentBusiness()) {
+  const canvas = $("#trendChart");
+  if (!canvas) return;
+  const { ctx, width, height } = fitCanvas(canvas);
+  const title = $("#displayChartTitle");
+  if (title) title.textContent = appState.chartType === "bar" ? "柱状图" : appState.chartType === "pie" ? "饼图" : "折线图";
+  if (appState.chartType === "bar") drawBarBusinessChart(ctx, width, height, business);
+  else if (appState.chartType === "pie") drawPieBusinessChart(ctx, width, height, business);
+  else drawLineBusinessChart(ctx, width, height, business);
+}
+
+function renderDisplayAnalysis(business = appState.lastDisplayResult) {
+  const container = $("#displayAnalysisResult");
+  if (!container) return;
+  const rows = business?.rows || [];
+  const total = rows.length;
+  const highRiskRows = rows.filter((row) => ["P0", "P1", "高", "严重"].includes(String(row[1] || "").toUpperCase()));
+  const severityTop = [...countBy(rows.map((row) => row[1])).entries()].sort((a, b) => b[1] - a[1])[0] || ["-", 0];
+  const objectTop = [...countBy(rows.map((row) => row[2])).entries()].sort((a, b) => b[1] - a[1])[0] || ["-", 0];
+  const latest = rows.map((row) => row[3]).filter(Boolean).sort().at(-1) || "-";
+  container.innerHTML = `
+    <div class="display-insight-grid">
+      <div><strong>${escapeHtml(String(total))}</strong><small>筛选后记录</small></div>
+      <div><strong>${escapeHtml(String(highRiskRows.length))}</strong><small>高风险记录</small></div>
+      <div><strong>${escapeHtml(String(severityTop[0]))}</strong><small>最高频等级 ${escapeHtml(String(severityTop[1]))}</small></div>
+      <div><strong>${escapeHtml(String(objectTop[0]))}</strong><small>集中对象 ${escapeHtml(String(objectTop[1]))}</small></div>
+    </div>
+    <div class="insight-card display-insight-card">
+      <h3>结论</h3>
+      <p>${escapeHtml(business?.name || "业务")} 当前筛选结果共 ${escapeHtml(String(total))} 条，${highRiskRows.length ? `其中 ${escapeHtml(String(highRiskRows.length))} 条属于高风险，应优先查看 ${escapeHtml(String(objectTop[0]))}。` : "暂无明显高风险集中项，可继续观察趋势变化。"}</p>
+    </div>
+    <div class="insight-card display-insight-card">
+      <h3>建议</h3>
+      <p>最近记录时间 ${escapeHtml(String(latest))}。建议结合图表切换查看时间趋势、对象分布和等级占比，再进入智能分析生成更完整的根因和改进措施。</p>
+    </div>
+  `;
 }
 
 function drawTrendChart(label) {
@@ -2699,12 +2959,35 @@ function bindEvents() {
     $("#knowledgeNameInput").focus();
   });
   $("#viewMode").addEventListener("click", (event) => {
-    if (event.target.tagName !== "BUTTON") return;
-    appState.viewMode = event.target.dataset.view;
-    $$("#viewMode button").forEach((button) => button.classList.toggle("active", button === event.target));
+    const button = event.target.closest("[data-view]");
+    if (!button) return;
+    appState.viewMode = button.dataset.view;
+    $$("#viewMode button").forEach((item) => item.classList.toggle("active", item === button));
     $(".data-table").style.display = appState.viewMode === "chart" ? "none" : "block";
     $(".chart-panel").style.display = appState.viewMode === "table" ? "block" : "block";
     queryAndRenderBusiness();
+  });
+  $("#chartTypeMode")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-chart-type]");
+    if (!button) return;
+    appState.chartType = button.dataset.chartType;
+    $$("#chartTypeMode button").forEach((item) => item.classList.toggle("active", item === button));
+    drawDisplayChart();
+    renderDisplayAnalysis(appState.lastDisplayResult);
+  });
+  ["severityFilterSelect", "ownerFilterSelect", "fieldFilterSelect"].forEach((id) => {
+    $(`#${id}`)?.addEventListener("change", queryAndRenderBusiness);
+  });
+  $("#fieldValueFilterInput")?.addEventListener("input", queryAndRenderBusiness);
+  $("#resetDisplayFiltersBtn")?.addEventListener("click", () => {
+    setSelectValue("#severityFilterSelect", "");
+    setSelectValue("#ownerFilterSelect", "");
+    setSelectValue("#fieldFilterSelect", "");
+    $("#fieldValueFilterInput").value = "";
+    queryAndRenderBusiness();
+  });
+  $("#refreshDisplayAnalysisBtn")?.addEventListener("click", () => {
+    renderDisplayAnalysis(appState.lastDisplayResult || getCurrentBusiness());
   });
   $("#globalSearch").addEventListener("input", () => {
     const keyword = $("#globalSearch").value.trim().toLowerCase();
@@ -2769,6 +3052,7 @@ async function boot() {
   renderFlowOutput();
   setBusinessDetailMode("list");
   setCleaningTab(appState.cleaningTab);
+  setupDisplayWorkbenchLayout();
   renderBusinessSelector();
   applyTimePreset($("#timePresetSelect")?.value || "24h");
   renderAnalysisControls();
