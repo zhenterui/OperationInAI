@@ -15,6 +15,7 @@ export function createDataSource(input = {}) {
 function toSourcePatch(input = {}) {
   return {
     name: input.name || "未命名数据源",
+    category: input.category || "默认数据源",
     kind: input.kind || "api",
     type: input.type || "GET /api/custom/list",
     authType: input.authType || "cookie-refresh",

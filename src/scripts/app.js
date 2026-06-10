@@ -161,6 +161,37 @@ function setCleaningTab(tab) {
   });
 }
 
+function normalizeCategory(value, fallback = "未分类") {
+  return String(value || fallback).trim() || fallback;
+}
+
+function renderGroupedConfigList(selector, items, options = {}) {
+  const container = $(selector);
+  if (!container) return;
+  const groups = new Map();
+  (items || []).forEach((item) => {
+    const category = normalizeCategory(options.getCategory?.(item), options.fallbackCategory || "未分类");
+    if (!groups.has(category)) groups.set(category, []);
+    groups.get(category).push(item);
+  });
+  container.innerHTML = [...groups.entries()]
+    .map(
+      ([category, groupItems], index) => `
+        <details class="config-group" ${index === 0 ? "open" : ""}>
+          <summary>
+            <span>${escapeHtml(category)}</span>
+            <span class="status-pill">${groupItems.length} 项</span>
+          </summary>
+          <div class="${escapeHtml(options.bodyClass || "config-group-body")}">
+            ${options.headerHtml || ""}
+            ${groupItems.map((item) => options.renderItem(item)).join("")}
+          </div>
+        </details>
+      `
+    )
+    .join("");
+}
+
 function setAnalysisTab(tab) {
   if (!$("#analysisMode")) return;
   appState.analysisTab = tab;
@@ -413,9 +444,10 @@ function renderFlow() {
 }
 
 function renderSources() {
-  $("#sourceStack").innerHTML = window.opsData.sources
-    .map(
-      (source) => `
+  renderGroupedConfigList("#sourceStack", window.opsData.sources, {
+    bodyClass: "source-group-body",
+    getCategory: (source) => source.category || (source.kind === "database" ? "数据库" : source.kind === "file" ? "本地文件" : "API"),
+    renderItem: (source) => `
         <div class="source-card ${source.id === appState.selectedSourceId ? "selected" : ""}" data-source-id="${escapeHtml(source.id || "")}" role="button" tabindex="0">
           <span class="icon" data-icon="${source.icon}"></span>
           <div>
@@ -425,8 +457,7 @@ function renderSources() {
           <span class="status-pill ${source.health === "pending" ? "" : "ok"}">${source.health === "pending" ? "待配置" : "运行中"}</span>
         </div>
       `
-    )
-    .join("");
+  });
 }
 
 function renderAuthConfigs() {
@@ -449,9 +480,10 @@ function renderAuthConfigs() {
     const source = getSelectedSource();
     setSelectValue("#sourceAuthConfigSelect", source?.authConfigId || "auth_none");
   }
-  $("#authConfigList").innerHTML = (window.opsData.authConfigs || [])
-    .map(
-      (auth) => `
+  renderGroupedConfigList("#authConfigList", window.opsData.authConfigs || [], {
+    bodyClass: "support-group-body",
+    getCategory: (auth) => auth.category || authTypeLabels[normalizeAuthType(auth.type)] || "认证配置",
+    renderItem: (auth) => `
         <div class="support-list-item ${auth.id === appState.selectedAuthId ? "selected" : ""}" data-auth-id="${escapeHtml(auth.id)}">
           <div>
             <strong>${escapeHtml(auth.name)}</strong>
@@ -463,8 +495,7 @@ function renderAuthConfigs() {
           </div>
         </div>
       `
-    )
-    .join("");
+  });
 }
 
 function renderMappingSourceSelect() {
@@ -673,6 +704,7 @@ function populateAuthForm(auth = getSelectedAuthConfig()) {
   appState.selectedAuthId = auth.id;
   appState.editingAuthId = auth.id;
   $("#authNameInput").value = auth.name || "";
+  $("#authCategoryInput").value = auth.category || authTypeLabels[normalizeAuthType(auth.type)] || "认证配置";
   setSelectValue("#authConfigTypeSelect", normalizeAuthType(auth.type));
   $("#authCookieNameInput").value = auth.cookieName || "";
   $("#authPasswordInput").value = auth.cookieValue || "";
@@ -683,6 +715,7 @@ function resetAuthForm() {
   appState.editingAuthId = "";
   $("#authModalTitle").textContent = "新增认证";
   $("#authNameInput").value = "自定义 Cookie 认证";
+  $("#authCategoryInput").value = "API 认证";
   setSelectValue("#authConfigTypeSelect", "api-cookie");
   $("#authCookieNameInput").value = "OPS_SESSION";
   $("#authPasswordInput").value = "";
@@ -691,6 +724,7 @@ function resetAuthForm() {
 function collectAuthForm() {
   return {
     name: $("#authNameInput").value.trim() || "自定义认证配置",
+    category: $("#authCategoryInput").value.trim() || "认证配置",
     type: $("#authConfigTypeSelect").value,
     username: "",
     password: $("#authPasswordInput").value,
@@ -722,6 +756,7 @@ function populateSourceForm(source = getSelectedSource()) {
   if (!source) return;
   appState.selectedSourceId = source.id;
   $("#sourceNameInput").value = source.name || "";
+  $("#sourceCategoryInput").value = source.category || (source.kind === "database" ? "数据库" : source.kind === "file" ? "本地文件" : "API");
   $("#sourceTypeInput").value = source.type || "";
   setSelectValue("#sourceKindSelect", source.kind || "api");
   setSelectValue("#sourceAuthConfigSelect", source.authConfigId || "auth_none");
@@ -765,6 +800,7 @@ function collectSourceForm() {
   // Data sources only store an auth config reference; secret values stay in the auth library.
   return {
     name: $("#sourceNameInput").value.trim() || "未命名数据源",
+    category: $("#sourceCategoryInput").value.trim() || "默认数据源",
     type: $("#sourceTypeInput").value.trim() || "GET /api/custom/list",
     kind: $("#sourceKindSelect").value,
     authType,
@@ -802,36 +838,28 @@ function collectSourceForm() {
 }
 
 function renderRuleTable() {
-  const rows = [["规则名称", "类型", "表达式", "说明", "操作"], ...(window.opsData.cleaningRules || []).map((rule) => [
-    rule.name,
-    rule.type,
-    rule.expression,
-    rule.description,
-    rule.id
-  ])];
-  $("#ruleTable").innerHTML = rows
-    .map((row, index) => {
-      if (index === 0) {
-        return `
+  const headerHtml = `
         <div class="mapping-row support-rule-row header">
-          ${row.map((cell) => `<span>${escapeHtml(cell)}</span>`).join("")}
+          ${["规则名称", "类型", "表达式", "说明", "操作"].map((cell) => `<span>${escapeHtml(cell)}</span>`).join("")}
         </div>
       `;
-      }
-      return `
+  renderGroupedConfigList("#ruleTable", window.opsData.cleaningRules || [], {
+    bodyClass: "rule-group-body",
+    headerHtml,
+    getCategory: (rule) => rule.category || rule.type || "清洗规则",
+    renderItem: (rule) => `
         <div class="mapping-row support-rule-row">
-          <span>${escapeHtml(row[0])}</span>
-          <span>${escapeHtml(row[1])}</span>
-          <span>${escapeHtml(row[2])}</span>
-          <span>${escapeHtml(row[3])}</span>
+          <span>${escapeHtml(rule.name)}</span>
+          <span>${escapeHtml(rule.type)}</span>
+          <span>${escapeHtml(rule.expression)}</span>
+          <span>${escapeHtml(rule.description)}</span>
           <span class="row-actions">
-            <button class="small-button" data-rule-action="edit" data-rule-id="${escapeHtml(row[4])}">编辑</button>
-            <button class="small-button danger" data-rule-action="delete" data-rule-id="${escapeHtml(row[4])}">删除</button>
+            <button class="small-button" data-rule-action="edit" data-rule-id="${escapeHtml(rule.id)}">编辑</button>
+            <button class="small-button danger" data-rule-action="delete" data-rule-id="${escapeHtml(rule.id)}">删除</button>
           </span>
         </div>
-      `;
-    })
-    .join("");
+      `
+  });
 }
 
 function getRuleById(id) {
@@ -871,6 +899,7 @@ function populateRuleForm(rule) {
   appState.editingRuleId = rule.id;
   $("#ruleModalTitle").textContent = "编辑规则";
   $("#ruleNameInput").value = rule.name || "";
+  $("#ruleCategoryInput").value = rule.category || rule.type || "清洗规则";
   setSelectValue("#ruleTypeSelect", rule.type || "mapping");
   setSelectValue("#ruleActionSelect", rule.config?.action || "trim");
   $("#ruleSourceFieldInput").value = rule.config?.sourceField || "";
@@ -884,6 +913,7 @@ function resetRuleForm() {
   appState.editingRuleId = "";
   $("#ruleModalTitle").textContent = "新增规则";
   $("#ruleNameInput").value = "服务名标准化";
+  $("#ruleCategoryInput").value = "字段标准化";
   setSelectValue("#ruleTypeSelect", "normalize");
   setSelectValue("#ruleActionSelect", "trim");
   $("#ruleSourceFieldInput").value = "service_name";
@@ -897,6 +927,7 @@ function collectRuleForm() {
   syncRuleExpressionPreview();
   return {
     name: $("#ruleNameInput").value.trim() || "自定义清洗规则",
+    category: $("#ruleCategoryInput").value.trim() || "清洗规则",
     type: $("#ruleTypeSelect").value,
     expression: $("#ruleExpressionInput").value.trim() || "trim + normalize",
     description: $("#ruleDescInput").value.trim() || "用户自定义清洗规则",
@@ -916,9 +947,10 @@ function getModelConfigById(id) {
 
 function renderModelConfigList() {
   if (!$("#modelConfigList")) return;
-  $("#modelConfigList").innerHTML = (window.opsData.modelConfigs || [])
-    .map(
-      (config) => `
+  renderGroupedConfigList("#modelConfigList", window.opsData.modelConfigs || [], {
+    bodyClass: "model-group-body",
+    getCategory: (config) => config.category || config.vendor || "模型配置",
+    renderItem: (config) => `
         <div class="model-config-item ${config.id === $("#analysisModelSelect")?.value ? "selected" : ""}" data-model-id="${escapeHtml(config.id)}">
           <div>
             <strong>${escapeHtml(config.name)}</strong>
@@ -932,14 +964,14 @@ function renderModelConfigList() {
           </span>
         </div>
       `
-    )
-    .join("");
+  });
 }
 
 function resetModelConfigForm() {
   appState.editingModelConfigId = "";
   $("#modelConfigModalTitle").textContent = "新增模型配置";
   $("#modelConfigNameInput").value = "自定义模型配置";
+  $("#modelConfigCategoryInput").value = "通用模型";
   setSelectValue("#modelVendorSelect", "openai-compatible");
   $("#modelNameInput").value = "gpt-4.1-mini";
   $("#modelBaseUrlInput").value = "https://api.openai.com/v1";
@@ -951,6 +983,7 @@ function populateModelConfigForm(config) {
   appState.editingModelConfigId = config.id;
   $("#modelConfigModalTitle").textContent = "编辑模型配置";
   $("#modelConfigNameInput").value = config.name || "";
+  $("#modelConfigCategoryInput").value = config.category || config.vendor || "模型配置";
   setSelectValue("#modelVendorSelect", config.vendor || "openai-compatible");
   $("#modelNameInput").value = config.model || "";
   $("#modelBaseUrlInput").value = config.baseUrl || "";
@@ -960,6 +993,7 @@ function populateModelConfigForm(config) {
 function collectModelConfigForm() {
   return {
     name: $("#modelConfigNameInput").value.trim() || "自定义模型配置",
+    category: $("#modelConfigCategoryInput").value.trim() || "模型配置",
     vendor: $("#modelVendorSelect").value,
     model: $("#modelNameInput").value.trim() || "gpt-4.1-mini",
     baseUrl: $("#modelBaseUrlInput").value.trim() || "https://api.openai.com/v1",

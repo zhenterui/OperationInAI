@@ -382,6 +382,10 @@
                   <input id="sourceNameInput" value="新增 API 数据源" />
                 </label>
                 <label>
+                  <span>数据源类别</span>
+                  <input id="sourceCategoryInput" value="默认数据源" placeholder="如 生产 API / CMDB / 巡检文件" />
+                </label>
+                <label>
                   <span>数据源地址/表名/文件</span>
                   <input id="sourceTypeInput" value="GET /api/custom/list" />
                 </label>
@@ -885,6 +889,10 @@
             <input id="authNameInput" value="自定义 Cookie 认证" />
           </label>
           <label>
+            <span>认证类别</span>
+            <input id="authCategoryInput" value="API 认证" placeholder="如 API 认证 / 数据库认证" />
+          </label>
+          <label>
             <span>认证类型</span>
             <select id="authConfigTypeSelect">
               <option value="api-cookie">API / Cookie</option>
@@ -923,6 +931,10 @@
           <label>
             <span>规则名称</span>
             <input id="ruleNameInput" value="服务名标准化" />
+          </label>
+          <label>
+            <span>规则类别</span>
+            <input id="ruleCategoryInput" value="字段标准化" placeholder="如 字段标准化 / 过滤 / 关联补齐" />
           </label>
           <label>
             <span>规则类型</span>
@@ -990,6 +1002,10 @@
           <label>
             <span>配置名称</span>
             <input id="modelConfigNameInput" value="OpenAI Compatible" />
+          </label>
+          <label>
+            <span>模型类别</span>
+            <input id="modelConfigCategoryInput" value="通用模型" placeholder="如 通用模型 / 私有模型 / 分析专用" />
           </label>
           <label>
             <span>厂商</span>

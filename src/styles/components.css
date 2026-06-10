@@ -680,6 +680,46 @@
   border-color: var(--line-strong);
 }
 
+.config-group {
+  border-bottom: 1px solid var(--line);
+}
+
+.config-group:last-child {
+  border-bottom: 0;
+}
+
+.config-group summary {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  color: var(--text);
+  cursor: pointer;
+  background: rgba(48, 232, 199, 0.055);
+}
+
+.config-group summary::marker {
+  color: var(--accent);
+}
+
+.config-group-body,
+.source-group-body,
+.support-group-body,
+.rule-group-body,
+.model-group-body {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.rule-group-body {
+  min-width: 1040px;
+  gap: 0;
+  padding: 0;
+}
+
 .response-preview {
   max-height: 260px;
   margin: 0;

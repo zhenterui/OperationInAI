@@ -57,6 +57,7 @@ export function createAuthConfig(input = {}) {
   const config = {
     id: `auth_${Date.now()}`,
     name: input.name || "自定义认证配置",
+    category: input.category || "认证配置",
     type: input.type || "cookie",
     username: input.username || "",
     password: input.password ? "******" : "",
@@ -83,6 +84,7 @@ export function updateAuthConfig(id, input = {}) {
   const updated = {
     ...existing,
     name: input.name || existing.name,
+    category: input.category || existing.category || "认证配置",
     type: input.type || existing.type,
     username: input.username ?? existing.username,
     password: input.password ? "******" : existing.password,
@@ -122,6 +124,7 @@ export function createModelConfig(input = {}) {
   const config = {
     id: `model_${Date.now()}`,
     name: input.name || "自定义模型配置",
+    category: input.category || "模型配置",
     vendor: input.vendor || "openai-compatible",
     model: input.model || "gpt-4.1-mini",
     baseUrl: input.baseUrl || "https://api.openai.com/v1",
@@ -146,6 +149,7 @@ export function updateModelConfig(id, input = {}) {
   const updated = {
     ...existing,
     name: input.name || existing.name,
+    category: input.category || existing.category || "模型配置",
     vendor: input.vendor || existing.vendor,
     model: input.model || existing.model,
     baseUrl: input.baseUrl || existing.baseUrl,
@@ -173,6 +177,7 @@ export function createCleaningRule(input = {}) {
   const rule = {
     id: `rule_${Date.now()}`,
     name: input.name || "自定义清洗规则",
+    category: input.category || "清洗规则",
     type: input.type || "mapping",
     expression: input.expression || "trim + normalize",
     description: input.description || "用户自定义清洗规则",
@@ -195,6 +200,7 @@ export function updateCleaningRule(id, input = {}) {
   const updated = {
     ...existing,
     name: input.name || existing.name,
+    category: input.category || existing.category || "清洗规则",
     type: input.type || existing.type,
     expression: input.expression || existing.expression,
     description: input.description || existing.description,
