@@ -40,6 +40,23 @@ const icons = {
   send: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4z"/></svg>'
 };
 
+const multiSelectConfigs = {
+  paramFieldSelect: { label: "来源字段勾选", empty: "未选择来源字段" },
+  responseKeepFieldsSelect: { label: "保留字段勾选", empty: "未选择保留字段" },
+  analysisBusinessSelect: { label: "分析业务选择", empty: "未选择分析业务" },
+  analysisFieldSelect: { label: "分析字段选择", empty: "未选择分析字段" }
+};
+
+const popularModelPresets = [
+  { id: "preset_deepseek_chat", name: "DeepSeek Chat", category: "中国热门模型", vendor: "deepseek", model: "deepseek-chat", baseUrl: "https://api.deepseek.com/v1" },
+  { id: "preset_qwen_plus", name: "通义千问 Qwen Plus", category: "中国热门模型", vendor: "qwen", model: "qwen-plus", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1" },
+  { id: "preset_kimi_k2", name: "Kimi K2", category: "中国热门模型", vendor: "moonshot", model: "kimi-k2-0711-preview", baseUrl: "https://api.moonshot.cn/v1" },
+  { id: "preset_hunyuan_turbo", name: "腾讯混元 Turbo", category: "中国热门模型", vendor: "hunyuan", model: "hunyuan-turbos-latest", baseUrl: "https://api.hunyuan.cloud.tencent.com/v1" },
+  { id: "preset_gpt_4o_mini", name: "OpenAI GPT-4o mini", category: "美国热门模型", vendor: "openai-compatible", model: "gpt-4o-mini", baseUrl: "https://api.openai.com/v1" },
+  { id: "preset_claude_sonnet", name: "Claude Sonnet", category: "美国热门模型", vendor: "anthropic", model: "claude-3-5-sonnet-latest", baseUrl: "https://api.anthropic.com/v1" },
+  { id: "preset_gemini_flash", name: "Gemini Flash", category: "美国热门模型", vendor: "gemini", model: "gemini-1.5-flash", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" }
+];
+
 async function apiRequest(path, options = {}) {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -104,6 +121,17 @@ function normalizeOpsData() {
       status: "本地默认"
     }
   ];
+  const existingModelIds = new Set(window.opsData.modelConfigs.map((config) => config.id));
+  popularModelPresets.forEach((preset) => {
+    if (existingModelIds.has(preset.id)) return;
+    window.opsData.modelConfigs.push({
+      ...preset,
+      apiKey: "",
+      apiKeyMasked: "未配置",
+      status: "预置模板，待配置 API Key",
+      updatedAt: new Date().toISOString()
+    });
+  });
   window.opsData.signals = window.opsData.signals || [];
   window.opsData.knowledge = window.opsData.knowledge || [];
 }
@@ -266,6 +294,7 @@ function renderAnalysisBusinessSelect() {
       return `<option value="${escapeHtml(business.name)}" ${isSelected ? "selected" : ""}>${escapeHtml(business.name)}</option>`;
     })
     .join("");
+  refreshMultiSelectControl(select);
 }
 
 function renderAnalysisFieldSelect() {
@@ -286,6 +315,7 @@ function renderAnalysisFieldSelect() {
       return `<option value="${escapeHtml(field)}" ${isSelected ? "selected" : ""}>${escapeHtml(field)}</option>`;
     })
     .join("");
+  refreshMultiSelectControl(select);
 }
 
 function renderModelConfigSelect() {
@@ -568,6 +598,7 @@ function renderParamFieldSelect(selectedFields = []) {
       return `<option value="${escapeHtml(field)}" ${checked ? "selected" : ""}>${escapeHtml(field)}</option>`;
     })
     .join("");
+  refreshMultiSelectControl($("#paramFieldSelect"));
 }
 
 function updateRequestParamVisibility() {
@@ -644,11 +675,13 @@ function renderResponseKeepFieldOptions(selectedFields = []) {
   $("#responseKeepFieldsSelect").innerHTML = uniqueFields
     .map((field) => `<option value="${escapeHtml(field)}" ${selected.has(field) ? "selected" : ""}>${escapeHtml(field)}</option>`)
     .join("");
+  refreshMultiSelectControl($("#responseKeepFieldsSelect"));
 }
 
 function updateResponseKeepFieldsState() {
   const selectedOnly = $("#responseFieldKeepModeSelect")?.value === "selected";
   $("#responseKeepFieldsSelect").disabled = !selectedOnly;
+  refreshMultiSelectControl($("#responseKeepFieldsSelect"));
 }
 
 function suggestSourceTableName(prefix = "raw") {
@@ -954,6 +987,54 @@ function getModelConfigById(id) {
   return (window.opsData.modelConfigs || []).find((config) => config.id === id);
 }
 
+function ensureModelVendorOptions() {
+  const vendorSelect = $("#modelVendorSelect");
+  if (!vendorSelect) return;
+  const vendorLabels = {
+    "openai-compatible": "OpenAI Compatible",
+    deepseek: "DeepSeek",
+    qwen: "通义千问",
+    moonshot: "月之暗面 Kimi",
+    hunyuan: "腾讯混元",
+    anthropic: "Anthropic Claude",
+    gemini: "Google Gemini",
+    local: "本地模型"
+  };
+  Object.entries(vendorLabels).forEach(([value, label]) => {
+    if ([...vendorSelect.options].some((option) => option.value === value)) return;
+    vendorSelect.insertAdjacentHTML("beforeend", `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`);
+  });
+}
+
+function setupModelPresetControls() {
+  ensureModelVendorOptions();
+  const nameInput = $("#modelConfigNameInput");
+  if (!nameInput || $("#modelPresetSelect")) return;
+  const label = document.createElement("label");
+  label.className = "full model-preset-row";
+  label.innerHTML = `
+    <span>热门模型模板</span>
+    <div class="preset-picker">
+      <select id="modelPresetSelect">
+        <option value="">自定义配置</option>
+        ${popularModelPresets.map((preset) => `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.category)} / ${escapeHtml(preset.name)}</option>`).join("")}
+      </select>
+      <button class="small-button" id="applyModelPresetBtn" type="button">应用模板</button>
+    </div>
+  `;
+  nameInput.closest("label")?.before(label);
+}
+
+function applyModelPreset(presetId = $("#modelPresetSelect")?.value) {
+  const preset = popularModelPresets.find((item) => item.id === presetId);
+  if (!preset) return;
+  $("#modelConfigNameInput").value = preset.name;
+  $("#modelConfigCategoryInput").value = preset.category;
+  setSelectValue("#modelVendorSelect", preset.vendor);
+  $("#modelNameInput").value = preset.model;
+  $("#modelBaseUrlInput").value = preset.baseUrl;
+}
+
 function renderModelConfigList() {
   if (!$("#modelConfigList")) return;
   renderGroupedConfigList("#modelConfigList", window.opsData.modelConfigs || [], {
@@ -977,7 +1058,9 @@ function renderModelConfigList() {
 }
 
 function resetModelConfigForm() {
+  ensureModelVendorOptions();
   appState.editingModelConfigId = "";
+  setSelectValue("#modelPresetSelect", "");
   $("#modelConfigModalTitle").textContent = "新增模型配置";
   $("#modelConfigNameInput").value = "自定义模型配置";
   $("#modelConfigCategoryInput").value = "通用模型";
@@ -989,7 +1072,9 @@ function resetModelConfigForm() {
 
 function populateModelConfigForm(config) {
   if (!config) return;
+  ensureModelVendorOptions();
   appState.editingModelConfigId = config.id;
+  setSelectValue("#modelPresetSelect", "");
   $("#modelConfigModalTitle").textContent = "编辑模型配置";
   $("#modelConfigNameInput").value = config.name || "";
   $("#modelConfigCategoryInput").value = config.category || config.vendor || "模型配置";
@@ -1025,7 +1110,110 @@ function closeDialog(selector) {
 }
 
 function getSelectedValues(select) {
+  if (!select) return [];
   return [...select.selectedOptions].map((option) => option.value);
+}
+
+function getMultiSelectSummary(select) {
+  const values = getSelectedValues(select);
+  const config = multiSelectConfigs[select.id] || {};
+  if (!values.length) return config.empty || "未选择";
+  if (values.length <= 2) return values.join("、");
+  return `${values.slice(0, 2).join("、")} 等 ${values.length} 项`;
+}
+
+function refreshMultiSelectControl(select) {
+  if (!select?.multiple) return;
+  const wrapper = select.closest(".multi-select-wrap");
+  if (!wrapper) return;
+  const summary = $(".multi-select-summary", wrapper);
+  const count = $(".multi-select-count", wrapper);
+  const trigger = $(".multi-select-trigger", wrapper);
+  const values = getSelectedValues(select);
+  if (summary) summary.textContent = getMultiSelectSummary(select);
+  if (count) count.textContent = `${values.length}/${select.options.length}`;
+  if (trigger) trigger.disabled = select.disabled;
+}
+
+function refreshMultiSelectControls() {
+  Object.keys(multiSelectConfigs).forEach((id) => refreshMultiSelectControl($(`#${id}`)));
+}
+
+function setupMultiSelectControls() {
+  if (!$("#multiSelectModal")) {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<dialog class="modal multi-select-modal" id="multiSelectModal">
+        <div class="modal-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Multi Select</p>
+              <h2 id="multiSelectTitle">选择字段</h2>
+              <small id="multiSelectMeta"></small>
+            </div>
+          </div>
+          <div class="multi-check-list" id="multiSelectList"></div>
+          <div class="modal-actions">
+            <button class="small-button" id="cancelMultiSelectBtn" type="button">取消</button>
+            <button class="small-button primary" id="confirmMultiSelectBtn" type="button">确定</button>
+          </div>
+        </div>
+      </dialog>`
+    );
+  }
+  Object.entries(multiSelectConfigs).forEach(([id, config]) => {
+    const select = $(`#${id}`);
+    if (!select || select.dataset.enhanced === "true") return;
+    select.dataset.enhanced = "true";
+    select.classList.add("native-multi-select");
+    const wrapper = document.createElement("div");
+    wrapper.className = "multi-select-wrap";
+    select.parentNode.insertBefore(wrapper, select);
+    wrapper.append(select);
+    wrapper.insertAdjacentHTML(
+      "beforeend",
+      `<button class="multi-select-trigger" type="button" data-multi-select-trigger="${escapeHtml(id)}">
+        <span class="multi-select-summary">${escapeHtml(getMultiSelectSummary(select))}</span>
+        <span class="multi-select-count">${getSelectedValues(select).length}/${select.options.length}</span>
+      </button>`
+    );
+    select.addEventListener("change", () => refreshMultiSelectControl(select));
+  });
+}
+
+function openMultiSelectDialog(selectId) {
+  const select = $(`#${selectId}`);
+  const dialog = $("#multiSelectModal");
+  if (!select || !dialog) return;
+  const config = multiSelectConfigs[selectId] || {};
+  $("#multiSelectTitle").textContent = config.label || "选择字段";
+  $("#multiSelectMeta").textContent = `共 ${select.options.length} 项，可多选`;
+  const selected = new Set(getSelectedValues(select));
+  $("#multiSelectList").innerHTML = [...select.options]
+    .map(
+      (option) => `
+        <label class="multi-check-item">
+          <input type="checkbox" value="${escapeHtml(option.value)}" ${selected.has(option.value) ? "checked" : ""} />
+          <span>${escapeHtml(option.textContent || option.value)}</span>
+        </label>
+      `
+    )
+    .join("");
+  dialog.dataset.targetSelect = selectId;
+  openDialog("#multiSelectModal");
+}
+
+function applyMultiSelectDialog() {
+  const dialog = $("#multiSelectModal");
+  const select = $(`#${dialog?.dataset.targetSelect || ""}`);
+  if (!select) return;
+  const selected = new Set($$("#multiSelectList input:checked").map((input) => input.value));
+  [...select.options].forEach((option) => {
+    option.selected = selected.has(option.value);
+  });
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+  refreshMultiSelectControl(select);
+  closeDialog("#multiSelectModal");
 }
 
 function getFlowRefOptions(type) {
@@ -2312,6 +2500,14 @@ function animateBackground() {
 function bindEvents() {
   $$(".nav-item").forEach((item) => item.addEventListener("click", () => setPanel(item.dataset.panel)));
   $$("[data-panel-link]").forEach((item) => item.addEventListener("click", () => setPanel(item.dataset.panelLink)));
+  document.addEventListener("click", (event) => {
+    const trigger = event.target.closest("[data-multi-select-trigger]");
+    if (trigger) {
+      openMultiSelectDialog(trigger.dataset.multiSelectTrigger);
+    }
+  });
+  $("#confirmMultiSelectBtn")?.addEventListener("click", applyMultiSelectDialog);
+  $("#cancelMultiSelectBtn")?.addEventListener("click", () => closeDialog("#multiSelectModal"));
   if ($("#cleaningMode")) {
     $("#cleaningMode").addEventListener("click", (event) => {
       if (event.target.tagName !== "BUTTON") return;
@@ -2576,6 +2772,8 @@ function bindEvents() {
   });
   $("#analysisBusinessSelect").addEventListener("change", renderAnalysisFieldSelect);
   $("#analysisModelSelect").addEventListener("change", renderModelConfigList);
+  $("#modelPresetSelect")?.addEventListener("change", () => applyModelPreset());
+  $("#applyModelPresetBtn")?.addEventListener("click", () => applyModelPreset());
   $("#modelConfigList").addEventListener("click", async (event) => {
     const item = event.target.closest("[data-model-id]");
     if (!item) return;
@@ -3052,12 +3250,15 @@ async function boot() {
   renderFlowOutput();
   setBusinessDetailMode("list");
   setCleaningTab(appState.cleaningTab);
+  setupModelPresetControls();
   setupDisplayWorkbenchLayout();
   renderBusinessSelector();
   applyTimePreset($("#timePresetSelect")?.value || "24h");
   renderAnalysisControls();
   setAnalysisTab(appState.analysisTab);
   renderBusinessTable();
+  setupMultiSelectControls();
+  refreshMultiSelectControls();
   renderKnowledge();
   renderSyncLog();
   renderAnalysis();

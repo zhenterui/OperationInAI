@@ -255,6 +255,7 @@ export const store = {
     {
       id: "model_openai_compatible",
       name: "OpenAI Compatible",
+      category: "美国热门模型",
       vendor: "openai-compatible",
       model: "gpt-4.1-mini",
       baseUrl: "https://api.openai.com/v1",
@@ -266,12 +267,85 @@ export const store = {
     {
       id: "model_deepseek",
       name: "DeepSeek 运维分析",
+      category: "中国热门模型",
       vendor: "deepseek",
       model: "deepseek-chat",
       baseUrl: "https://api.deepseek.com/v1",
       apiKey: "",
       apiKeyMasked: "未配置",
       status: "可选",
+      updatedAt: now()
+    },
+    {
+      id: "preset_qwen_plus",
+      name: "通义千问 Qwen Plus",
+      category: "中国热门模型",
+      vendor: "qwen",
+      model: "qwen-plus",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      apiKey: "",
+      apiKeyMasked: "未配置",
+      status: "预置模板，待配置 API Key",
+      updatedAt: now()
+    },
+    {
+      id: "preset_kimi_k2",
+      name: "Kimi K2",
+      category: "中国热门模型",
+      vendor: "moonshot",
+      model: "kimi-k2-0711-preview",
+      baseUrl: "https://api.moonshot.cn/v1",
+      apiKey: "",
+      apiKeyMasked: "未配置",
+      status: "预置模板，待配置 API Key",
+      updatedAt: now()
+    },
+    {
+      id: "preset_hunyuan_turbo",
+      name: "腾讯混元 Turbo",
+      category: "中国热门模型",
+      vendor: "hunyuan",
+      model: "hunyuan-turbos-latest",
+      baseUrl: "https://api.hunyuan.cloud.tencent.com/v1",
+      apiKey: "",
+      apiKeyMasked: "未配置",
+      status: "预置模板，待配置 API Key",
+      updatedAt: now()
+    },
+    {
+      id: "preset_gpt_4o_mini",
+      name: "OpenAI GPT-4o mini",
+      category: "美国热门模型",
+      vendor: "openai-compatible",
+      model: "gpt-4o-mini",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "",
+      apiKeyMasked: "未配置",
+      status: "预置模板，待配置 API Key",
+      updatedAt: now()
+    },
+    {
+      id: "preset_claude_sonnet",
+      name: "Claude Sonnet",
+      category: "美国热门模型",
+      vendor: "anthropic",
+      model: "claude-3-5-sonnet-latest",
+      baseUrl: "https://api.anthropic.com/v1",
+      apiKey: "",
+      apiKeyMasked: "未配置",
+      status: "预置模板，待配置 API Key",
+      updatedAt: now()
+    },
+    {
+      id: "preset_gemini_flash",
+      name: "Gemini Flash",
+      category: "美国热门模型",
+      vendor: "gemini",
+      model: "gemini-1.5-flash",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      apiKey: "",
+      apiKeyMasked: "未配置",
+      status: "预置模板，待配置 API Key",
       updatedAt: now()
     }
   ],
