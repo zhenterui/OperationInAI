@@ -478,6 +478,12 @@ function renderMappingSourceSelect() {
   $("#mappingResponsePathInput").value = source?.responsePath || "data.items";
   setSelectValue("#responseKeepModeSelect", source?.responseConfig?.keepMode || source?.responseKeepMode || "all");
   $("#responseFilterInput").value = source?.responseConfig?.filterCondition || source?.responseFilter || "";
+  setSelectValue("#responseFieldKeepModeSelect", source?.responseConfig?.fieldKeepMode || "all");
+  renderResponseKeepFieldOptions(source?.responseConfig?.keepFields || []);
+  updateResponseKeepFieldsState();
+  setSelectValue("#responsePersistModeSelect", source?.responseConfig?.persistMode || "none");
+  $("#responseTargetTableInput").value = source?.responseConfig?.targetTable || "";
+  updateResponsePersistState();
 }
 
 function renderParamSourceSelect(selectedId = "") {
@@ -490,10 +496,96 @@ function renderParamSourceSelect(selectedId = "") {
   setSelectValue("#paramSourceSelect", selectedId);
 }
 
+function getSourceFieldCandidates(sourceId) {
+  const source = (window.opsData.sources || []).find((item) => item.id === sourceId);
+  const mappingFields = (window.opsData.fieldMappings || [])
+    .filter((mapping) => mapping.sourceId === sourceId)
+    .flatMap((mapping) => [mapping.sourceField, mapping.targetField])
+    .filter(Boolean);
+  if (mappingFields.length) return [...new Set(mappingFields)];
+  if (source?.kind === "database") return ["service_id", "service_name", "owner", "env", "labels.tier", "updated_at"];
+  if (source?.kind === "file") return ["check_item", "service", "result", "duration", "checked_at"];
+  return ["alarmName", "level", "occurTime", "duration", "service.id", "service.owner", "extra.queue.lag"];
+}
+
+function getParamFieldCandidates() {
+  const sourceType = $("#paramSourceTypeSelect")?.value || "static";
+  if (sourceType === "flow") {
+    return ["context.start_time", "context.end_time", "context.businessName", "context.batchId", "context.tenant", "context.env"];
+  }
+  if (sourceType === "static") {
+    return ["start_time", "end_time", "severity", "owner", "env"];
+  }
+  return getSourceFieldCandidates($("#paramSourceSelect")?.value);
+}
+
+function renderParamFieldSelect(selectedFields = []) {
+  const fields = getParamFieldCandidates();
+  const selected = new Set(selectedFields.filter((field) => fields.includes(field)));
+  $("#paramFieldSelect").innerHTML = fields
+    .map((field, index) => {
+      const checked = selected.size ? selected.has(field) : index < Math.min(fields.length, 3);
+      return `<option value="${escapeHtml(field)}" ${checked ? "selected" : ""}>${escapeHtml(field)}</option>`;
+    })
+    .join("");
+}
+
+function updateRequestParamVisibility() {
+  const method = ($("#apiMethodSelect")?.value || "GET").toUpperCase();
+  const supportsBody = !["GET", "DELETE", "HEAD"].includes(method);
+  $$("[data-request-param]").forEach((item) => {
+    const param = item.dataset.requestParam;
+    item.classList.toggle("hidden", param === "body" && !supportsBody);
+  });
+}
+
 function updateParamSourceTypeHelp() {
   const value = $("#paramSourceTypeSelect")?.value || "static";
   if ($("#paramSourceTypeHelp")) {
     $("#paramSourceTypeHelp").textContent = paramSourceTypeTips[value] || paramSourceTypeTips.static;
+  }
+  const queryLabel = $("#paramQueryInput")?.closest("label")?.querySelector("span");
+  const sourceLabel = $("#paramSourceSelect")?.closest("label")?.querySelector("span");
+  const filter = $("#paramFilterInput");
+  if (sourceLabel) {
+    sourceLabel.textContent = value === "database" ? "来源数据库" : value === "source" ? "上游数据源" : "来源";
+  }
+  if (queryLabel) {
+    queryLabel.textContent = value === "database" ? "来源 SQL" : value === "flow" ? "上下文过滤条件" : value === "source" ? "上游过滤条件" : "固定条件";
+  }
+  if (filter) {
+    filter.placeholder =
+      value === "database"
+        ? "如 env == prod，SQL 可自动建议 where 条件"
+        : value === "flow"
+          ? "如 context.env == prod"
+          : value === "source"
+            ? "如 level == P0 或 service.owner != ''"
+            : "固定入参通常无需过滤";
+  }
+  $("#paramSourceSelect").disabled = value === "static" || value === "flow";
+  renderParamFieldSelect(getSelectedValues($("#paramFieldSelect")));
+}
+
+function autoGenerateParamMapping() {
+  const fields = getSelectedValues($("#paramFieldSelect"));
+  const effectiveFields = fields.length ? fields : getParamFieldCandidates().slice(0, 3);
+  const method = ($("#apiMethodSelect")?.value || "GET").toUpperCase();
+  const targetScope = ["GET", "DELETE", "HEAD"].includes(method) ? "query" : "body";
+  const mappings = effectiveFields.map((field) => ({
+    from: field,
+    to: `${targetScope}.${field.replace(/^context\./, "").replace(/[^a-zA-Z0-9_]/g, "_")}`
+  }));
+  $("#paramMappingInput").value = JSON.stringify(mappings, null, 2);
+  const sourceType = $("#paramSourceTypeSelect").value;
+  const filter = $("#paramFilterInput").value.trim();
+  if (sourceType === "database") {
+    const selected = effectiveFields.length ? effectiveFields.join(", ") : "service_id, owner, env";
+    $("#paramQueryInput").value = `select ${selected} from upstream_table${filter ? ` where ${filter}` : " where env = 'prod'"}`;
+  } else if (sourceType === "source") {
+    $("#paramQueryInput").value = filter || (effectiveFields.includes("level") ? "level == 'P0' || level == 'P1'" : "保留上游输出记录");
+  } else if (sourceType === "flow") {
+    $("#paramQueryInput").value = filter || "context.start_time && context.end_time";
   }
 }
 
@@ -503,6 +595,42 @@ function renderResponseFieldOptions(fields = appState.lastSourceTest?.fields || 
     '<option value="">选择测试响应字段</option>',
     ...uniqueFields.map((field) => `<option value="${escapeHtml(field)}">${escapeHtml(field)}</option>`)
   ].join("");
+}
+
+function renderResponseKeepFieldOptions(selectedFields = []) {
+  const fields = appState.lastSourceTest?.recordFields?.length ? appState.lastSourceTest.recordFields : appState.lastSourceTest?.fields || selectedFields;
+  const uniqueFields = [...new Set((fields || []).filter(Boolean))];
+  const selected = new Set(selectedFields);
+  $("#responseKeepFieldsSelect").innerHTML = uniqueFields
+    .map((field) => `<option value="${escapeHtml(field)}" ${selected.has(field) ? "selected" : ""}>${escapeHtml(field)}</option>`)
+    .join("");
+}
+
+function updateResponseKeepFieldsState() {
+  const selectedOnly = $("#responseFieldKeepModeSelect")?.value === "selected";
+  $("#responseKeepFieldsSelect").disabled = !selectedOnly;
+}
+
+function suggestSourceTableName(prefix = "raw") {
+  const source = getSelectedSource();
+  const base = (source?.name || $("#sourceNameInput")?.value || "data_source")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+  return `${prefix}_${base || "data_source"}`;
+}
+
+function updateResponsePersistState() {
+  const mode = $("#responsePersistModeSelect")?.value || "none";
+  const tableInput = $("#responseTargetTableInput");
+  if (!tableInput) return;
+  tableInput.disabled = mode === "none";
+  if (mode === "none") {
+    tableInput.value = "";
+  } else if (!tableInput.value.trim()) {
+    tableInput.value = suggestSourceTableName(mode === "clean-table" ? "clean" : "raw");
+  }
 }
 
 function renderSourceTestResult(result) {
@@ -515,12 +643,16 @@ function renderSourceTestResult(result) {
   const uniqueFields = [...new Set((displayFields || []).filter(Boolean))];
   $("#sourceTestResult").innerHTML = `
     <div class="test-summary">
-      <span class="status-pill ok">HTTP ${escapeHtml(result.status)}</span>
+      <span class="status-pill ${result.ok === false ? "danger" : "ok"}">HTTP ${escapeHtml(result.status)}</span>
+      <span class="status-pill ${result.sourceMode === "real" ? "ok" : ""}">${result.sourceMode === "real" ? "真实请求" : "模拟响应"}</span>
       <span>${escapeHtml(result.durationMs)} ms</span>
       <span>${escapeHtml(result.testedAt)}</span>
       <span>${escapeHtml(uniqueFields.length)} 个可选字段</span>
       <span>${escapeHtml(result.recordCount ?? 0)} 条样本记录</span>
       <span>${escapeHtml(result.request?.keepMode === "filter" ? "按条件过滤" : "全部保留")}</span>
+      <span>${escapeHtml(result.request?.fieldKeepMode === "selected" ? `保留 ${result.request?.keepFields?.length || 0} 个字段` : "保留全部字段")}</span>
+      <span>${escapeHtml(result.request?.persistMode === "none" ? "不单独存储" : `存储到 ${result.request?.targetTable || "-"}`)}</span>
+      ${result.error ? `<span class="status-pill danger">${escapeHtml(result.error)}</span>` : ""}
     </div>
     <div class="field-chip-list">
       ${uniqueFields.map((field) => `<button class="field-chip" data-response-field="${escapeHtml(field)}">${escapeHtml(field)}</button>`).join("")}
@@ -528,6 +660,8 @@ function renderSourceTestResult(result) {
     <pre class="response-preview">${escapeHtml(JSON.stringify(result.responseBody, null, 2))}</pre>
   `;
   renderResponseFieldOptions(uniqueFields);
+  renderResponseKeepFieldOptions(getSelectedValues($("#responseKeepFieldsSelect")));
+  updateResponseKeepFieldsState();
 }
 
 function getSelectedAuthConfig() {
@@ -593,6 +727,7 @@ function populateSourceForm(source = getSelectedSource()) {
   setSelectValue("#sourceAuthConfigSelect", source.authConfigId || "auth_none");
   $("#responsePathInput").value = source.responsePath || "data.items";
   setSelectValue("#apiMethodSelect", source.requestConfig?.method || "GET");
+  updateRequestParamVisibility();
   $("#paginationInput").value = source.requestConfig?.pagination || "";
   $("#queryParamsInput").value = JSON.stringify(source.requestConfig?.queryParams || {}, null, 2);
   $("#headerParamsInput").value = JSON.stringify(source.requestConfig?.headers || {}, null, 2);
@@ -603,6 +738,8 @@ function populateSourceForm(source = getSelectedSource()) {
   renderParamSourceSelect(parameterConfig.sourceId || "");
   setSelectValue("#paramSourceTypeSelect", parameterConfig.sourceType || "static");
   updateParamSourceTypeHelp();
+  renderParamFieldSelect(parameterConfig.selectedFields || []);
+  $("#paramFilterInput").value = parameterConfig.filterCondition || "";
   $("#paramQueryInput").value = parameterConfig.query || "";
   $("#paramMappingInput").value = JSON.stringify(parameterConfig.mappings || [], null, 2);
   setSelectValue("#paramIterationModeSelect", parameterConfig.iterationMode || "single");
@@ -644,11 +781,17 @@ function collectSourceForm() {
     pagination: $("#paginationInput").value.trim(),
     responseConfig: {
       keepMode: $("#responseKeepModeSelect")?.value || "all",
-      filterCondition: $("#responseFilterInput")?.value.trim() || ""
+      filterCondition: $("#responseFilterInput")?.value.trim() || "",
+      fieldKeepMode: $("#responseFieldKeepModeSelect")?.value || "all",
+      keepFields: getSelectedValues($("#responseKeepFieldsSelect")),
+      persistMode: $("#responsePersistModeSelect")?.value || "none",
+      targetTable: $("#responseTargetTableInput")?.value.trim() || ""
     },
     parameterConfig: {
       sourceType: $("#paramSourceTypeSelect").value,
       sourceId: $("#paramSourceSelect").value,
+      selectedFields: getSelectedValues($("#paramFieldSelect")),
+      filterCondition: $("#paramFilterInput").value.trim(),
       query: $("#paramQueryInput").value.trim(),
       mappings: parseJsonInput("#paramMappingInput", []),
       iterationMode: $("#paramIterationModeSelect").value,
@@ -1885,12 +2028,27 @@ function bindEvents() {
   $("#mappingResponsePathInput").addEventListener("change", () => {
     $("#responsePathInput").value = $("#mappingResponsePathInput").value;
   });
+  $("#responseFieldKeepModeSelect").addEventListener("change", updateResponseKeepFieldsState);
+  $("#responsePersistModeSelect").addEventListener("change", updateResponsePersistState);
+  $("#sourceKindSelect").addEventListener("change", () => {
+    updateRequestParamVisibility();
+    renderParamFieldSelect();
+  });
+  $("#apiMethodSelect").addEventListener("change", () => {
+    updateRequestParamVisibility();
+    renderParamFieldSelect(getSelectedValues($("#paramFieldSelect")));
+  });
   $("#responseFieldSelect").addEventListener("change", () => {
     if ($("#responseFieldSelect").value) {
       $("#mapSourceInput").value = $("#responseFieldSelect").value;
     }
   });
   $("#paramSourceTypeSelect").addEventListener("change", updateParamSourceTypeHelp);
+  $("#paramSourceSelect").addEventListener("change", () => renderParamFieldSelect());
+  $("#autoParamMappingBtn").addEventListener("click", () => {
+    autoGenerateParamMapping();
+    renderIcons();
+  });
   ["#ruleTypeSelect", "#ruleActionSelect", "#ruleSourceFieldInput", "#ruleTargetFieldInput", "#ruleParamInput"].forEach((selector) => {
     $(selector)?.addEventListener("input", syncRuleExpressionPreview);
     $(selector)?.addEventListener("change", syncRuleExpressionPreview);

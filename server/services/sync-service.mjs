@@ -33,11 +33,17 @@ function toSourcePatch(input = {}) {
     },
     responseConfig: {
       keepMode: input.responseConfig?.keepMode || input.responseKeepMode || "all",
-      filterCondition: input.responseConfig?.filterCondition || input.responseFilter || ""
+      filterCondition: input.responseConfig?.filterCondition || input.responseFilter || "",
+      fieldKeepMode: input.responseConfig?.fieldKeepMode || "all",
+      keepFields: Array.isArray(input.responseConfig?.keepFields) ? input.responseConfig.keepFields : [],
+      persistMode: input.responseConfig?.persistMode || "none",
+      targetTable: input.responseConfig?.targetTable || ""
     },
     parameterConfig: {
       sourceType: input.parameterConfig?.sourceType || "static",
       sourceId: input.parameterConfig?.sourceId || "",
+      selectedFields: Array.isArray(input.parameterConfig?.selectedFields) ? input.parameterConfig.selectedFields : [],
+      filterCondition: input.parameterConfig?.filterCondition || "",
       query: input.parameterConfig?.query || "",
       mappings: Array.isArray(input.parameterConfig?.mappings) ? input.parameterConfig.mappings : [],
       iterationMode: input.parameterConfig?.iterationMode || "single",
@@ -136,7 +142,67 @@ function getByPath(value, path = "") {
   }, value);
 }
 
-export function testDataSource(input = {}) {
+function normalizeSourceUrl(type = "") {
+  const value = String(type || "").trim();
+  const withoutMethod = value.replace(/^(GET|POST|PUT|DELETE|PATCH)\s+/i, "").trim();
+  if (!/^https?:\/\//i.test(withoutMethod)) return "";
+  return withoutMethod;
+}
+
+function appendQueryParams(url, queryParams = {}) {
+  const parsed = new URL(url);
+  Object.entries(queryParams || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => parsed.searchParams.append(key, String(item)));
+    } else {
+      parsed.searchParams.set(key, String(value));
+    }
+  });
+  return parsed.toString();
+}
+
+async function fetchRealSource(config = {}) {
+  const sourceUrl = normalizeSourceUrl(config.type);
+  if (!sourceUrl || (config.kind || "api") !== "api") return null;
+  const method = String(config.method || config.requestConfig?.method || "GET").toUpperCase();
+  const queryParams = config.queryParams || config.requestConfig?.queryParams || {};
+  const headers = { ...(config.headers || config.requestConfig?.headers || {}) };
+  const body = config.body || config.requestConfig?.body || {};
+  const authConfig = store.authConfigs.find((item) => item.id === config.authConfigId);
+  if (authConfig?.cookieName && authConfig?.cookieValue) {
+    headers.Cookie = `${authConfig.cookieName}=${authConfig.cookieValue}`;
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(appendQueryParams(sourceUrl, queryParams), {
+      method,
+      headers,
+      body: ["GET", "DELETE", "HEAD"].includes(method) ? undefined : JSON.stringify(body || {}),
+      signal: controller.signal
+    });
+    const text = await response.text();
+    let responseBody;
+    try {
+      responseBody = text ? JSON.parse(text) : {};
+    } catch {
+      responseBody = { text };
+    }
+    return {
+      responseBody,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      sourceMode: "real",
+      error: response.ok ? "" : `HTTP ${response.status}`
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function testDataSource(input = {}) {
   const source = input.sourceId
     ? store.dataSources.find((item) => item.id === input.sourceId)
     : null;
@@ -149,8 +215,30 @@ export function testDataSource(input = {}) {
   const responsePath = config.responsePath || "data.items";
   const keepMode = config.responseConfig?.keepMode || config.responseKeepMode || "all";
   const filterCondition = config.responseConfig?.filterCondition || config.responseFilter || "";
-  const responseBody =
-    kind === "database"
+  const fieldKeepMode = config.responseConfig?.fieldKeepMode || "all";
+  const keepFields = Array.isArray(config.responseConfig?.keepFields) ? config.responseConfig.keepFields : [];
+  const persistMode = config.responseConfig?.persistMode || "none";
+  const targetTable = config.responseConfig?.targetTable || "";
+  let sourceMode = "mock";
+  let status = 200;
+  let durationMs = 186;
+  let error = "";
+  let responseBody;
+  try {
+    const realResult = await fetchRealSource(config);
+    if (realResult) {
+      responseBody = realResult.responseBody;
+      status = realResult.status;
+      durationMs = realResult.durationMs;
+      sourceMode = realResult.sourceMode;
+      error = realResult.error;
+    }
+  } catch (fetchError) {
+    error = fetchError.message || "实际请求失败，已回退模拟响应";
+  }
+  if (!responseBody) {
+    responseBody =
+      kind === "database"
       ? {
           rows: [
             {
@@ -262,18 +350,21 @@ export function testDataSource(input = {}) {
               page: 1,
               pageInfo: {
                 hasNext: true,
-                nextPageToken: "mock-next-page"
+              nextPageToken: "mock-next-page"
               }
             }
           };
+  }
   const recordValue = getByPath(responseBody, responsePath);
-  const recordFields = flattenFields(recordValue, normalizePathPrefix(responsePath));
+  const recordFields = recordValue === undefined ? [] : flattenFields(recordValue, normalizePathPrefix(responsePath));
   const recordCount = Array.isArray(recordValue) ? recordValue.length : recordValue && typeof recordValue === "object" ? 1 : 0;
 
   return {
-    ok: true,
-    status: 200,
-    durationMs: 186,
+    ok: status >= 200 && status < 400,
+    status,
+    durationMs,
+    sourceMode,
+    error,
     testedAt: now,
     request: {
       kind,
@@ -282,6 +373,10 @@ export function testDataSource(input = {}) {
       responsePath,
       keepMode,
       filterCondition,
+      fieldKeepMode,
+      keepFields,
+      persistMode,
+      targetTable,
       parameterConfig: config.parameterConfig || {},
       queryParams: config.queryParams || config.requestConfig?.queryParams || {},
       headers: config.headers || config.requestConfig?.headers || {},

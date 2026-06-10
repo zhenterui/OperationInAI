@@ -414,15 +414,15 @@
                   <span>分页字段</span>
                   <input id="paginationInput" value="page=1&pageSize=100" />
                 </label>
-                <label class="full">
+                <label class="full" data-request-param="query">
                   <span>Query 入参 JSON</span>
                   <textarea id="queryParamsInput" rows="3">{ "startTime": "{{start_time}}", "endTime": "{{end_time}}" }</textarea>
                 </label>
-                <label class="full">
+                <label class="full" data-request-param="headers">
                   <span>Header 入参 JSON</span>
                   <textarea id="headerParamsInput" rows="3">{ "X-System": "OperationInAI" }</textarea>
                 </label>
-                <label class="full">
+                <label class="full" data-request-param="body">
                   <span>Body 入参 JSON</span>
                   <textarea id="bodyParamsInput" rows="4">{ "severity": ["P0", "P1"], "includeRecovered": false }</textarea>
                 </label>
@@ -441,8 +441,16 @@
                   <select id="paramSourceSelect"></select>
                 </label>
                 <label class="full">
+                  <span>来源字段勾选</span>
+                  <select id="paramFieldSelect" multiple></select>
+                </label>
+                <label class="full">
                   <span>来源查询/过滤条件</span>
                   <textarea id="paramQueryInput" rows="3">select service_id, owner, env from asset_service_relation where env = 'prod'</textarea>
+                </label>
+                <label class="full">
+                  <span>过滤条件生成</span>
+                  <input id="paramFilterInput" value="" placeholder="勾选字段后可生成，如 env == prod 或 context.businessName == 告警业务" />
                 </label>
                 <label class="full">
                   <span>入参字段映射 JSON</span>
@@ -462,6 +470,13 @@
                 <label>
                   <span>并发/重试</span>
                   <input id="paramStrategyInput" value="concurrency=5; retries=2; continueOnError=true" />
+                </label>
+                <label>
+                  <span>自动生成</span>
+                  <button class="small-button" id="autoParamMappingBtn" type="button">
+                    <span class="icon" data-icon="spark"></span>
+                    生成入参与过滤
+                  </button>
                 </label>
               </form>
               <div class="test-result" id="sourceTestResult">
@@ -500,6 +515,30 @@
                 <label>
                   <span>过滤条件</span>
                   <input id="responseFilterInput" value="" placeholder="level == P0 或 duration &gt; 300" />
+                </label>
+                <label>
+                  <span>字段保留</span>
+                  <select id="responseFieldKeepModeSelect">
+                    <option value="all">保留全部字段</option>
+                    <option value="selected">只保留指定字段</option>
+                  </select>
+                </label>
+                <label class="full">
+                  <span>保留字段</span>
+                  <select id="responseKeepFieldsSelect" multiple></select>
+                </label>
+                <label>
+                  <span>存储策略</span>
+                  <select id="responsePersistModeSelect">
+                    <option value="none">不单独存储</option>
+                    <option value="raw-table">存储到原始表</option>
+                    <option value="clean-table">存储到清洗表</option>
+                    <option value="custom-table">存储到指定表</option>
+                  </select>
+                </label>
+                <label>
+                  <span>目标表名</span>
+                  <input id="responseTargetTableInput" value="" placeholder="如 raw_alarm_api" />
                 </label>
               </div>
               <div class="inline-editor mapping-editor">
