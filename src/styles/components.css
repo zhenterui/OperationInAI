@@ -22,10 +22,50 @@
   align-items: flex-start;
 }
 
+.business-list-panel,
+.business-detail-panel {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.business-list-panel {
+  border-top-color: rgba(48, 232, 199, 0.18);
+}
+
+.business-detail-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.business-detail-panel.hidden {
+  display: none;
+}
+
+.business-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(48, 232, 199, 0.2);
+  border-radius: var(--radius);
+  background: rgba(48, 232, 199, 0.055);
+}
+
+.business-detail-head h3 {
+  margin: 2px 0 0;
+}
+
+.business-detail-panel[data-business-mode="preview"] .edit-only,
+.business-detail-panel:not([data-business-mode="preview"]) .preview-only {
+  display: none;
+}
+
 .business-profile,
 .business-flow-panel,
 .business-result-panel {
-  margin-top: 16px;
+  margin-top: 0;
   padding-top: 16px;
   border-top: 1px solid rgba(255, 255, 255, 0.09);
 }
@@ -124,6 +164,34 @@
 .flow-advanced-config .flow-config {
   margin: 0;
   padding: 0 12px 12px;
+}
+
+.flow-storage-guide {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0 12px 12px;
+}
+
+.flow-storage-guide div {
+  min-height: 94px;
+  padding: 12px;
+  border: 1px solid rgba(48, 232, 199, 0.16);
+  border-radius: 8px;
+  background: rgba(3, 18, 24, 0.44);
+}
+
+.flow-storage-guide strong,
+.flow-storage-guide small,
+.field-help {
+  display: block;
+}
+
+.flow-storage-guide small,
+.field-help {
+  margin-top: 6px;
+  color: var(--muted);
+  line-height: 1.55;
 }
 
 .flow-toolbar,
@@ -414,11 +482,16 @@
 .flow-list-row {
   min-width: 760px;
   display: grid;
-  grid-template-columns: 1.15fr 1.1fr 0.55fr 0.72fr 0.68fr 190px;
+  grid-template-columns: 1.05fr 1.05fr 0.45fr 0.58fr 0.95fr 0.55fr 260px;
   align-items: center;
   gap: 10px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);
+}
+
+.flow-list-row.empty {
+  grid-template-columns: 1fr;
+  color: var(--muted);
 }
 
 .flow-list-row:last-child {
@@ -1339,7 +1412,15 @@ textarea {
     flex-direction: column;
   }
 
+  .business-detail-head {
+    flex-direction: column;
+  }
+
   .business-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .flow-storage-guide {
     grid-template-columns: 1fr;
   }
 

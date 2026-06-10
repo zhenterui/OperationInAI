@@ -8,6 +8,7 @@ const appState = {
   editingMappingId: "",
   selectedFlowId: "",
   selectedFlowNodeId: "",
+  businessDetailMode: "list",
   flowNodes: [],
   lastSourceTest: null,
   viewMode: "table",
@@ -1277,6 +1278,7 @@ function renderFlowControls() {
     resetFlowForm();
   }
   renderFlowDesigner();
+  setBusinessDetailMode(appState.businessDetailMode);
 }
 
 function getSelectedFlow() {
@@ -1319,29 +1321,36 @@ function resetFlowForm() {
 }
 
 function renderFlowTable() {
-  const header = ["业务", "唯一业务流", "节点", "执行", "状态", "操作"];
+  const modernHeader = ["业务", "业务流", "节点", "拓扑", "业务表", "状态", "操作"];
   $("#flowTable").innerHTML = [
-    `<div class="flow-list-row header">${header.map((cell) => `<span>${escapeHtml(cell)}</span>`).join("")}</div>`,
+    `<div class="flow-list-row header">${modernHeader.map((cell) => `<span>${escapeHtml(cell)}</span>`).join("")}</div>`,
     ...(window.opsData.businessFlows || []).map((flow) => {
       const nodes = flow.nodes || [];
       const parallel = nodes.filter((node) => node.executionMode === "parallel").length;
       const branchCount = new Set(nodes.filter((node) => node.branchFromId).map((node) => `${node.branchFromId}:${node.branchName || node.id}`)).size;
       const selected = flow.id === appState.selectedFlowId ? "selected" : "";
+      const outputTable = flow.outputConfig?.businessTable || `biz_${flow.businessName || "business"}`;
+      const topology = branchCount ? `${branchCount} 分支` : parallel ? `${parallel} 并行` : "串行";
       return `
         <div class="flow-list-row ${selected}" data-flow-id="${escapeHtml(flow.id)}">
           <span>${escapeHtml(flow.businessName)}</span>
           <span>${escapeHtml(flow.name)}</span>
           <span>${escapeHtml(String(nodes.length || (flow.dataSourceIds?.length || 0) + (flow.ruleIds?.length || 0)))}</span>
-          <span>${escapeHtml(branchCount ? `${branchCount} 分支` : parallel ? `${parallel} 并行` : "串行")}</span>
+          <span>${escapeHtml(topology)}</span>
+          <span>${escapeHtml(outputTable)}</span>
           <span>${escapeHtml(flow.status || "ready")}</span>
           <span class="row-actions">
+            <button class="small-button" data-flow-action="preview" data-flow-id="${escapeHtml(flow.id)}">预览</button>
             <button class="small-button" data-flow-action="edit" data-flow-id="${escapeHtml(flow.id)}">编辑</button>
             <button class="small-button" data-flow-action="run" data-flow-id="${escapeHtml(flow.id)}">运行</button>
             <button class="small-button danger" data-flow-action="delete" data-flow-id="${escapeHtml(flow.id)}">删除</button>
           </span>
         </div>
       `;
-    })
+    }),
+    ...(window.opsData.businessFlows || []).length
+      ? []
+      : ['<div class="flow-list-row empty"><span>暂无业务，点击右上角新增业务开始配置。</span></div>']
   ].join("");
 }
 
@@ -1387,6 +1396,114 @@ function renderFlowOutput(result) {
   `;
 }
 
+function setupBusinessWorkbenchLayout() {
+  const workbench = $(".business-workbench");
+  const sectionHead = workbench?.querySelector(":scope > .section-head");
+  const profile = $(".business-profile", workbench);
+  const flowPanel = $(".business-flow-panel", workbench);
+  const resultPanel = $(".business-result-panel", workbench);
+  const flowTable = $("#flowTable");
+  if (!workbench || !sectionHead || !profile || !flowPanel || !resultPanel || !flowTable || $("#businessDetailPanel")) return;
+
+  const listPanel = document.createElement("section");
+  listPanel.className = "business-list-panel";
+  listPanel.innerHTML = `
+    <div class="business-profile-head">
+      <div>
+        <p class="eyebrow">Business List</p>
+        <h3>已有业务</h3>
+      </div>
+      <span class="status-pill">先预览，再编辑</span>
+    </div>
+  `;
+  listPanel.append(flowTable);
+  sectionHead.after(listPanel);
+
+  const detailPanel = document.createElement("div");
+  detailPanel.id = "businessDetailPanel";
+  detailPanel.className = "business-detail-panel hidden";
+  detailPanel.dataset.businessMode = "list";
+  detailPanel.innerHTML = `
+    <div class="business-detail-head">
+      <div>
+        <p class="eyebrow" id="businessDetailEyebrow">Business Detail</p>
+        <h3 id="businessDetailTitle">业务详情</h3>
+      </div>
+      <div class="row-actions"></div>
+    </div>
+  `;
+  const actionBar = $(".row-actions", detailPanel);
+  ["createFlowBtn", "runFlowBtn", "deleteFlowBtn"].forEach((id) => {
+    const button = $(`#${id}`);
+    if (button) actionBar.append(button);
+  });
+  actionBar.insertAdjacentHTML("afterbegin", '<button class="small-button preview-only" id="previewEditFlowBtn">转入编辑</button>');
+  actionBar.insertAdjacentHTML("beforeend", '<button class="small-button" id="closeFlowDetailBtn">收起</button>');
+  listPanel.after(detailPanel);
+  detailPanel.append(profile, flowPanel, resultPanel);
+
+  const flowResultGrid = $(".flow-result-grid", resultPanel);
+  if (flowResultGrid) {
+    flowResultGrid.replaceWith($("#flowOutput"));
+  }
+  const resultTitle = $(".business-result-panel h3", detailPanel);
+  if (resultTitle) resultTitle.textContent = "执行验证";
+
+  const advanced = $(".flow-advanced-config");
+  const flowConfig = $(".flow-config", advanced);
+  if (advanced && flowConfig && !$(".flow-storage-guide", advanced)) {
+    const guide = document.createElement("div");
+    guide.className = "flow-storage-guide";
+    guide.innerHTML = `
+      <div><strong>原始表</strong><small>保存数据源刚返回的原始记录，方便追溯接口响应、分页结果和采集异常；不填时自动生成 raw_*。</small></div>
+      <div><strong>清洗表</strong><small>保存字段映射、默认值、过滤和规则处理后的中间结果；不填时自动生成 clean_*。</small></div>
+      <div><strong>业务表</strong><small>保存最终给态势总览、数据展示和智能分析使用的数据；不填时自动生成 biz_*。</small></div>
+    `;
+    flowConfig.before(guide);
+  }
+  [
+    ["flowRawTableInput", "可选。留空时后端按业务名生成 raw_业务名，用于保存采集原文。"],
+    ["flowCleanTableInput", "可选。留空时生成 clean_业务名，用于保存映射和清洗后的中间结果。"],
+    ["flowBusinessTableInput", "建议配置。最终展示、分析和总览优先读取这张业务结果表。"]
+  ].forEach(([id, text]) => {
+    const label = $(`#${id}`)?.closest("label");
+    if (label && !$(".field-help", label)) {
+      label.insertAdjacentHTML("beforeend", `<small class="field-help">${escapeHtml(text)}</small>`);
+    }
+  });
+}
+
+function isBusinessPreviewMode() {
+  return appState.businessDetailMode === "preview";
+}
+
+function setBusinessDetailMode(mode = "list") {
+  appState.businessDetailMode = mode;
+  const detailPanel = $("#businessDetailPanel");
+  if (!detailPanel) return;
+  const isList = mode === "list";
+  const isCreate = mode === "create";
+  const isPreview = mode === "preview";
+  detailPanel.classList.toggle("hidden", isList);
+  detailPanel.dataset.businessMode = mode;
+  $("#businessDetailEyebrow").textContent = isCreate ? "Create Business" : mode === "edit" ? "Edit Business" : "Preview Business";
+  $("#businessDetailTitle").textContent = isCreate ? "新增业务配置" : mode === "edit" ? "编辑业务配置" : "业务预览";
+
+  $$("input, select, textarea", detailPanel).forEach((control) => {
+    control.disabled = isPreview;
+  });
+  $$(".flow-toolbar button, .flow-inspector button", detailPanel).forEach((button) => {
+    button.disabled = isPreview;
+  });
+  $("#createFlowBtn").disabled = isPreview;
+  $("#runFlowBtn").disabled = isList || isCreate;
+  $("#deleteFlowBtn").disabled = isList || isCreate;
+  $("#previewEditFlowBtn").disabled = isList;
+  if (!isList) {
+    detailPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
 async function deleteBusinessFlow(flowId = appState.selectedFlowId) {
   const flow = (window.opsData.businessFlows || []).find((item) => item.id === flowId);
   if (!flow) return;
@@ -1399,8 +1516,10 @@ async function deleteBusinessFlow(flowId = appState.selectedFlowId) {
   appState.selectedFlowId = window.opsData.businessFlows[0]?.id || "";
   if (appState.selectedFlowId) {
     populateFlowForm(getSelectedFlow());
+    setBusinessDetailMode("preview");
   } else {
     resetFlowForm();
+    setBusinessDetailMode("list");
   }
   renderFlowDesigner();
   renderFlowTable();
@@ -1426,6 +1545,7 @@ async function saveBusinessFlow() {
     }
     appState.selectedFlowId = saved.id;
     populateFlowForm(saved);
+    setBusinessDetailMode("preview");
   } catch {
     const localFlow = { id: editingId || `local_flow_${Date.now()}`, ...payload, status: "ready" };
     if ((window.opsData.businessFlows || []).some((flow) => flow.id === localFlow.id)) {
@@ -1435,6 +1555,7 @@ async function saveBusinessFlow() {
     }
     appState.selectedFlowId = localFlow.id;
     populateFlowForm(localFlow);
+    setBusinessDetailMode("preview");
   }
   renderFlowDesigner();
   renderFlowTable();
@@ -1953,12 +2074,14 @@ function bindEvents() {
     }
   });
   $("#addFlowNodeBtn").addEventListener("click", () => {
+    if (isBusinessPreviewMode()) return;
     const node = makeFlowNode($("#flowNodeTypeSelect").value, $("#flowNodeRefSelect").value);
     appState.flowNodes.push(node);
     appState.selectedFlowNodeId = node.id;
     renderFlowDesigner();
   });
   $("#addBranchNodeBtn").addEventListener("click", () => {
+    if (isBusinessPreviewMode()) return;
     const selectedNode = appState.flowNodes.find((node) => node.id === appState.selectedFlowNodeId);
     const parentNodeId = selectedNode?.branchFromId || selectedNode?.id || appState.flowNodes[0]?.id || "";
     const parentNode = appState.flowNodes.find((node) => node.id === parentNodeId);
@@ -1986,6 +2109,7 @@ function bindEvents() {
     const action = event.target.dataset.flowNodeAction;
     const nodeId = nodeCard.dataset.flowNodeId;
     if (action === "delete") {
+      if (isBusinessPreviewMode()) return;
       appState.flowNodes = appState.flowNodes
         .filter((node) => node.id !== nodeId)
         .map((node) => (node.branchFromId === nodeId ? { ...node, branchFromId: "", branchName: "", branchCondition: "" } : node));
@@ -1997,6 +2121,7 @@ function bindEvents() {
     renderFlowDesigner();
   });
   $("#saveFlowNodeBtn").addEventListener("click", () => {
+    if (isBusinessPreviewMode()) return;
     const node = appState.flowNodes.find((item) => item.id === appState.selectedFlowNodeId);
     if (!node) return;
     node.type = $("#flowNodeTypeEditSelect").value;
@@ -2016,6 +2141,7 @@ function bindEvents() {
     renderFlowDesigner();
   });
   $("#deleteFlowNodeBtn").addEventListener("click", () => {
+    if (isBusinessPreviewMode()) return;
     if (!appState.selectedFlowNodeId) return;
     const deletedNodeId = appState.selectedFlowNodeId;
     appState.flowNodes = appState.flowNodes
@@ -2039,6 +2165,7 @@ function bindEvents() {
     populateFlowForm(flow);
     renderFlowDesigner();
     renderFlowTable();
+    setBusinessDetailMode(action === "edit" ? "edit" : "preview");
     if (action === "run") {
       await runSelectedBusinessFlow();
     }
@@ -2531,6 +2658,14 @@ function bindEvents() {
   $("#newFlowBtn").addEventListener("click", () => {
     resetFlowForm();
     renderFlowTable();
+    setBusinessDetailMode("create");
+  });
+  $("#previewEditFlowBtn").addEventListener("click", () => {
+    setBusinessDetailMode("edit");
+  });
+  $("#closeFlowDetailBtn").addEventListener("click", () => {
+    setBusinessDetailMode("list");
+    renderFlowTable();
   });
   $("#createFlowBtn").addEventListener("click", async () => {
     await saveBusinessFlow();
@@ -2628,9 +2763,11 @@ async function boot() {
   renderSourceTestResult();
   renderMappings();
   renderRuleTable();
+  setupBusinessWorkbenchLayout();
   renderFlowControls();
   renderFlowTable();
   renderFlowOutput();
+  setBusinessDetailMode("list");
   setCleaningTab(appState.cleaningTab);
   renderBusinessSelector();
   applyTimePreset($("#timePresetSelect")?.value || "24h");
