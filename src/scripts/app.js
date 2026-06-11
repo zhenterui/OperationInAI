@@ -3,12 +3,14 @@ const $$ = (selector, scope = document) => [...scope.querySelectorAll(selector)]
 const appState = {
   selectedSourceId: "src_alarm_api",
   selectedAuthId: "auth_cookie_ops",
+  editingSourceId: "",
   editingAuthId: "",
   editingRuleId: "",
   editingMappingId: "",
   selectedFlowId: "",
   selectedFlowNodeId: "",
   businessDetailMode: "list",
+  sourceDetailMode: "list",
   flowNodes: [],
   lastSourceTest: null,
   viewMode: "table",
@@ -95,6 +97,7 @@ function normalizeOpsData() {
     {
       id: "auth_none",
       name: "无认证",
+      category: "通用认证",
       type: "none",
       username: "",
       password: "",
@@ -137,11 +140,17 @@ function normalizeOpsData() {
 }
 
 const authTypeLabels = {
-  "api-cookie": "API / Cookie",
-  "db-account-password": "数据库 / 账号密码",
-  cookie: "API / Cookie",
-  "account-password": "数据库 / 账号密码",
-  none: "通用 / 无认证"
+  "api-cookie": "Cookie",
+  "db-account-password": "账号密码",
+  cookie: "Cookie",
+  "account-password": "账号密码",
+  none: "无认证"
+};
+
+const authCategoryLabels = {
+  "api-cookie": "API 认证",
+  "db-account-password": "数据库认证",
+  none: "通用认证"
 };
 
 const paramSourceTypeTips = {
@@ -162,6 +171,10 @@ function normalizeAuthType(type) {
   if (type === "cookie") return "api-cookie";
   if (type === "account-password") return "db-account-password";
   return type || "none";
+}
+
+function getAuthCategory(type) {
+  return authCategoryLabels[normalizeAuthType(type)] || "通用认证";
 }
 
 function escapeHtml(value) {
@@ -494,6 +507,11 @@ function renderSources() {
             <small>${escapeHtml(source.type)} · ${escapeHtml(source.status)}</small>
           </div>
           <span class="status-pill ${source.health === "pending" ? "" : "ok"}">${source.health === "pending" ? "待配置" : "运行中"}</span>
+          <span class="row-actions source-card-actions">
+            <button class="small-button" data-source-action="preview" data-source-id="${escapeHtml(source.id || "")}" type="button">预览</button>
+            <button class="small-button" data-source-action="edit" data-source-id="${escapeHtml(source.id || "")}" type="button">编辑</button>
+            <button class="small-button danger" data-source-action="delete" data-source-id="${escapeHtml(source.id || "")}" type="button">删除</button>
+          </span>
         </div>
       `
   });
@@ -501,9 +519,9 @@ function renderSources() {
 
 function renderAuthConfigs() {
   const groups = [
-    ["API", ["api-cookie"]],
-    ["数据库", ["db-account-password"]],
-    ["通用", ["none"]]
+    ["API 认证", ["api-cookie"]],
+    ["数据库认证", ["db-account-password"]],
+    ["通用认证", ["none"]]
   ];
   const options = groups
     .map(([label, types]) => {
@@ -521,7 +539,7 @@ function renderAuthConfigs() {
   }
   renderGroupedConfigList("#authConfigList", window.opsData.authConfigs || [], {
     bodyClass: "support-group-body",
-    getCategory: (auth) => auth.category || authTypeLabels[normalizeAuthType(auth.type)] || "认证配置",
+    getCategory: (auth) => auth.category || getAuthCategory(auth.type),
     renderItem: (auth) => `
         <div class="support-list-item ${auth.id === appState.selectedAuthId ? "selected" : ""}" data-auth-id="${escapeHtml(auth.id)}">
           <div>
@@ -741,12 +759,22 @@ function getSelectedAuthConfig() {
   return (window.opsData.authConfigs || []).find((auth) => auth.id === appState.selectedAuthId) || window.opsData.authConfigs?.[0];
 }
 
+function setAuthCategoryValue(value) {
+  const category = value || "API 认证";
+  const select = $("#authCategoryInput");
+  if (!select) return;
+  if (![...select.options].some((option) => option.value === category)) {
+    select.insertAdjacentHTML("beforeend", `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`);
+  }
+  select.value = category;
+}
+
 function populateAuthForm(auth = getSelectedAuthConfig()) {
   if (!auth) return;
   appState.selectedAuthId = auth.id;
   appState.editingAuthId = auth.id;
   $("#authNameInput").value = auth.name || "";
-  $("#authCategoryInput").value = auth.category || authTypeLabels[normalizeAuthType(auth.type)] || "认证配置";
+  setAuthCategoryValue(auth.category || getAuthCategory(auth.type));
   setSelectValue("#authConfigTypeSelect", normalizeAuthType(auth.type));
   $("#authCookieNameInput").value = auth.cookieName || "";
   $("#authPasswordInput").value = auth.cookieValue || "";
@@ -757,7 +785,7 @@ function resetAuthForm() {
   appState.editingAuthId = "";
   $("#authModalTitle").textContent = "新增认证";
   $("#authNameInput").value = "自定义 Cookie 认证";
-  $("#authCategoryInput").value = "API 认证";
+  setAuthCategoryValue("API 认证");
   setSelectValue("#authConfigTypeSelect", "api-cookie");
   $("#authCookieNameInput").value = "OPS_SESSION";
   $("#authPasswordInput").value = "";
@@ -796,6 +824,7 @@ function setSelectValue(selector, value) {
 
 function populateSourceForm(source = getSelectedSource()) {
   if (!source) return;
+  appState.editingSourceId = source.id;
   appState.selectedSourceId = source.id;
   $("#sourceNameInput").value = source.name || "";
   $("#sourceCategoryInput").value = source.category || (source.kind === "database" ? "数据库" : source.kind === "file" ? "本地文件" : "API");
@@ -824,6 +853,58 @@ function populateSourceForm(source = getSelectedSource()) {
   if ($("#mappingSourceSelect").options.length) {
     renderMappingSourceSelect();
   }
+}
+
+function resetSourceForm() {
+  appState.editingSourceId = "";
+  $("#sourceNameInput").value = "新增 API 数据源";
+  $("#sourceCategoryInput").value = "默认数据源";
+  $("#sourceTypeInput").value = "GET /api/custom/list";
+  setSelectValue("#sourceKindSelect", "api");
+  setSelectValue("#sourceAuthConfigSelect", "auth_none");
+  $("#responsePathInput").value = "data.items";
+  setSelectValue("#apiMethodSelect", "GET");
+  $("#paginationInput").value = "page=1&pageSize=100";
+  $("#queryParamsInput").value = JSON.stringify({ startTime: "{{start_time}}", endTime: "{{end_time}}" }, null, 2);
+  $("#headerParamsInput").value = JSON.stringify({ "X-System": "OperationInAI" }, null, 2);
+  $("#bodyParamsInput").value = JSON.stringify({ severity: ["P0", "P1"], includeRecovered: false }, null, 2);
+  setSelectValue("#responseKeepModeSelect", "all");
+  $("#responseFilterInput").value = "";
+  renderParamSourceSelect("");
+  setSelectValue("#paramSourceTypeSelect", "static");
+  updateParamSourceTypeHelp();
+  renderParamFieldSelect();
+  $("#paramFilterInput").value = "";
+  $("#paramQueryInput").value = "";
+  $("#paramMappingInput").value = "[]";
+  setSelectValue("#paramIterationModeSelect", "single");
+  $("#paramStrategyInput").value = "concurrency=5; retries=2; continueOnError=true";
+  appState.lastSourceTest = null;
+  renderSourceTestResult();
+}
+
+function setSourceFormReadonly(readonly) {
+  $$("#sourceModal input, #sourceModal select, #sourceModal textarea").forEach((element) => {
+    element.disabled = readonly;
+  });
+  $("#testSourceBtn").classList.toggle("hidden", readonly);
+  $("#saveSourceBtn").classList.toggle("hidden", readonly);
+  $("#deleteSourceBtn").classList.toggle("hidden", readonly || appState.sourceDetailMode === "create");
+  refreshMultiSelectControls();
+}
+
+function openSourceModal(mode, source = getSelectedSource()) {
+  appState.sourceDetailMode = mode;
+  if (mode === "create") {
+    resetSourceForm();
+    $("#sourceModalTitle").textContent = "新建数据源";
+  } else {
+    populateSourceForm(source);
+    $("#sourceModalTitle").textContent = mode === "preview" ? "数据源预览" : "编辑数据源";
+  }
+  setSourceFormReadonly(mode === "preview");
+  openDialog("#sourceModal");
+  renderIcons();
 }
 
 function parseJsonInput(selector, fallback = {}) {
@@ -877,6 +958,80 @@ function collectSourceForm() {
     },
     status: authType.includes("none") ? "无认证" : `${authTypeLabels[authType] || authType}：${authName}`
   };
+}
+
+async function deleteSelectedSource(source = getSelectedSource()) {
+  if (!source?.id) return;
+  try {
+    await apiRequest(`/api/data-sources/${encodeURIComponent(source.id)}`, {
+      method: "DELETE"
+    });
+  } catch {
+    // Local fallback keeps the UI usable when the API is offline.
+  }
+  window.opsData.sources = window.opsData.sources.filter((item) => item.id !== source.id);
+  appState.selectedSourceId = window.opsData.sources[0]?.id || "";
+  appState.editingSourceId = "";
+  $("#sourceActionStatus").textContent = `已删除：${source.name}`;
+  if ($("#sourceModal")?.open) closeDialog("#sourceModal");
+  if (appState.selectedSourceId) populateSourceForm();
+  renderSources();
+  renderMappingSourceSelect();
+  renderMappings();
+  renderOverview();
+  renderIcons();
+}
+
+async function saveSourceFromModal() {
+  const payload = collectSourceForm();
+  const editingId = appState.sourceDetailMode === "create" ? "" : appState.editingSourceId || appState.selectedSourceId;
+  if (!editingId) {
+    $("#sourceActionStatus").textContent = "正在新增数据源...";
+    try {
+      const source = await apiRequest("/api/data-sources", {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      appState.selectedSourceId = source.id;
+      appState.editingSourceId = source.id;
+      window.opsData.sources.unshift(source);
+      $("#sourceActionStatus").textContent = `已新增并选中：${source.name}`;
+    } catch {
+      const localSource = {
+        id: `local_${Date.now()}`,
+        ...payload,
+        status: "本地新增，待后端保存",
+        icon: "cloud"
+      };
+      appState.selectedSourceId = localSource.id;
+      appState.editingSourceId = localSource.id;
+      window.opsData.sources.unshift(localSource);
+      $("#sourceActionStatus").textContent = `后端不可用，已在本地新增：${localSource.name}`;
+    }
+  } else {
+    try {
+      const saved = await apiRequest(`/api/data-sources/${encodeURIComponent(editingId)}`, {
+        method: "PUT",
+        body: JSON.stringify(payload)
+      });
+      appState.selectedSourceId = saved.id;
+      appState.editingSourceId = saved.id;
+      window.opsData.sources = window.opsData.sources.map((item) => (item.id === saved.id ? saved : item));
+      $("#sourceActionStatus").textContent = `已保存：${saved.name}`;
+    } catch {
+      window.opsData.sources = window.opsData.sources.map((item) => (item.id === editingId ? { ...item, ...payload, updatedAt: new Date().toISOString() } : item));
+      appState.selectedSourceId = editingId;
+      appState.editingSourceId = editingId;
+      $("#sourceActionStatus").textContent = `后端不可用，已本地保存：${payload.name}`;
+    }
+  }
+  populateSourceForm();
+  closeDialog("#sourceModal");
+  renderSources();
+  renderMappingSourceSelect();
+  renderMappings();
+  renderOverview();
+  renderIcons();
 }
 
 function renderRuleTable() {
@@ -2629,7 +2784,29 @@ function bindEvents() {
   $("#sourceStack").addEventListener("click", (event) => {
     const card = event.target.closest("[data-source-id]");
     if (!card) return;
-    appState.selectedSourceId = card.dataset.sourceId;
+    const sourceId = event.target.dataset.sourceId || card.dataset.sourceId;
+    const source = (window.opsData.sources || []).find((item) => item.id === sourceId);
+    const action = event.target.dataset.sourceAction;
+    if (!source) return;
+    appState.selectedSourceId = sourceId;
+    if (action === "preview") {
+      openSourceModal("preview", source);
+      renderSources();
+      renderMappings();
+      renderIcons();
+      return;
+    }
+    if (action === "edit") {
+      openSourceModal("edit", source);
+      renderSources();
+      renderMappings();
+      renderIcons();
+      return;
+    }
+    if (action === "delete") {
+      deleteSelectedSource(source);
+      return;
+    }
     populateSourceForm();
     renderSources();
     renderMappings();
@@ -2896,57 +3073,8 @@ function bindEvents() {
     }
     renderIcons();
   });
-  $("#addSourceBtn").addEventListener("click", async () => {
-    const payload = collectSourceForm();
-    $("#sourceActionStatus").textContent = "正在新增数据源...";
-    try {
-      const source = await apiRequest("/api/data-sources", {
-        method: "POST",
-        body: JSON.stringify(payload)
-      });
-      appState.selectedSourceId = source.id;
-      window.opsData.sources.unshift(source);
-      $("#sourceActionStatus").textContent = `已新增并选中：${source.name}`;
-    } catch (error) {
-      const localSource = {
-        id: `local_${Date.now()}`,
-        ...payload,
-        status: "本地新增，待后端保存",
-        icon: "cloud"
-      };
-      appState.selectedSourceId = localSource.id;
-      window.opsData.sources.unshift(localSource);
-      $("#sourceActionStatus").textContent = `后端不可用，已在本地新增：${localSource.name}`;
-    }
-    populateSourceForm();
-    renderSources();
-    renderMappingSourceSelect();
-    renderMappings();
-    renderOverview();
-    renderIcons();
-  });
-  $("#saveSourceBtn").addEventListener("click", async () => {
-    const source = getSelectedSource();
-    if (!source?.id) return;
-    const payload = collectSourceForm();
-    try {
-      const saved = await apiRequest(`/api/data-sources/${encodeURIComponent(source.id)}`, {
-        method: "PUT",
-        body: JSON.stringify(payload)
-      });
-      window.opsData.sources = window.opsData.sources.map((item) => (item.id === saved.id ? saved : item));
-      $("#sourceActionStatus").textContent = `已保存：${saved.name}`;
-    } catch {
-      window.opsData.sources = window.opsData.sources.map((item) => (item.id === source.id ? { ...item, ...payload, updatedAt: new Date().toISOString() } : item));
-      $("#sourceActionStatus").textContent = `后端不可用，已本地保存：${payload.name}`;
-    }
-    populateSourceForm();
-    renderSources();
-    renderMappingSourceSelect();
-    renderMappings();
-    renderOverview();
-    renderIcons();
-  });
+  $("#addSourceBtn").addEventListener("click", () => openSourceModal("create"));
+  $("#saveSourceBtn").addEventListener("click", saveSourceFromModal);
   $("#testSourceBtn").addEventListener("click", async () => {
     $("#sourceTestResult").innerHTML = '<div class="module-status">正在测试数据源联通性...</div>';
     const payload = { sourceId: appState.selectedSourceId, ...collectSourceForm() };
@@ -2962,26 +3090,7 @@ function bindEvents() {
       renderResponseFieldOptions([]);
     }
   });
-  $("#deleteSourceBtn").addEventListener("click", async () => {
-    const source = getSelectedSource();
-    if (!source?.id) return;
-    try {
-      await apiRequest(`/api/data-sources/${encodeURIComponent(source.id)}`, {
-        method: "DELETE"
-      });
-    } catch {
-      // Local fallback keeps the UI usable when the API is offline.
-    }
-    window.opsData.sources = window.opsData.sources.filter((item) => item.id !== source.id);
-    appState.selectedSourceId = window.opsData.sources[0]?.id || "";
-    $("#sourceActionStatus").textContent = `已删除：${source.name}`;
-    populateSourceForm();
-    renderSources();
-    renderMappingSourceSelect();
-    renderMappings();
-    renderOverview();
-    renderIcons();
-  });
+  $("#deleteSourceBtn").addEventListener("click", () => deleteSelectedSource(getSelectedSource()));
   $("#mappingTable").addEventListener("click", async (event) => {
     const action = event.target.dataset.mappingAction;
     const mappingId = event.target.dataset.mappingId;

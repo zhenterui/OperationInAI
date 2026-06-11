@@ -350,33 +350,32 @@
                   <p class="eyebrow">Source Hub</p>
                   <h2>数据源列表</h2>
                 </div>
-                <span class="status-pill">点击选择</span>
+                <button class="small-button primary" id="addSourceBtn">
+                  <span class="icon" data-icon="plus"></span>
+                  新建数据源
+                </button>
               </div>
-              <div class="module-status" id="sourceActionStatus">选择左侧数据源编辑，或填写表单后点击新增源。</div>
+              <div class="module-status" id="sourceActionStatus">先查看已有数据源，点击预览或编辑后再进入详细配置。</div>
               <div class="source-stack" id="sourceStack"></div>
             </article>
 
-              <article class="surface">
+              <dialog class="modal source-modal" id="sourceModal">
+              <form class="modal-panel source-modal-panel" method="dialog">
               <div class="section-head">
                 <div>
                   <p class="eyebrow">Source Config</p>
-                  <h2>编辑数据源</h2>
+                  <h2 id="sourceModalTitle">编辑数据源</h2>
                 </div>
-                <button class="small-button primary" id="addSourceBtn">
-                  <span class="icon" data-icon="plus"></span>
-                  新增源
-                </button>
-                <button class="small-button" id="saveSourceBtn">
-                  保存
-                </button>
-                <button class="small-button" id="testSourceBtn">
-                  测试联通
-                </button>
-                <button class="small-button danger" id="deleteSourceBtn">
-                  删除
+                <button class="icon-button" value="cancel" aria-label="关闭">
+                  <span class="icon" data-icon="refresh"></span>
                 </button>
               </div>
-              <form class="config-form">
+              <div class="source-modal-toolbar">
+                <button class="small-button" id="testSourceBtn" type="button">
+                  测试联通
+                </button>
+              </div>
+              <div class="config-form">
                 <label>
                   <span>数据源名称</span>
                   <input id="sourceNameInput" value="新增 API 数据源" />
@@ -482,11 +481,17 @@
                     生成入参与过滤
                   </button>
                 </label>
-              </form>
+              </div>
               <div class="test-result" id="sourceTestResult">
                 <div class="module-status">配置入参后点击“测试联通”，这里会显示返回状态、响应字段和响应体。</div>
               </div>
-            </article>
+              <div class="modal-actions">
+                <button class="small-button" value="cancel">取消</button>
+                <button class="small-button danger" id="deleteSourceBtn" type="button">删除</button>
+                <button class="small-button primary" id="saveSourceBtn" type="button">保存</button>
+              </div>
+            </form>
+            </dialog>
             </div>
 
             <article class="surface wide mapping-workbench cleaning-block" data-cleaning-section="source">
@@ -890,14 +895,18 @@
           </label>
           <label>
             <span>认证类别</span>
-            <input id="authCategoryInput" value="API 认证" placeholder="如 API 认证 / 数据库认证" />
+            <select id="authCategoryInput">
+              <option value="API 认证">API 认证</option>
+              <option value="数据库认证">数据库认证</option>
+              <option value="通用认证">通用认证</option>
+            </select>
           </label>
           <label>
             <span>认证类型</span>
             <select id="authConfigTypeSelect">
-              <option value="api-cookie">API / Cookie</option>
-              <option value="db-account-password">数据库 / 账号密码</option>
-              <option value="none">通用 / 无认证</option>
+              <option value="api-cookie">Cookie</option>
+              <option value="db-account-password">账号密码</option>
+              <option value="none">无认证</option>
             </select>
           </label>
           <label>

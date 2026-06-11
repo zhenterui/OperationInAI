@@ -118,6 +118,7 @@ export const store = {
     {
       id: "auth_cookie_ops",
       name: "运维平台 Cookie 登录",
+      category: "API 认证",
       type: "api-cookie",
       username: "ops_user",
       password: "******",
@@ -132,6 +133,7 @@ export const store = {
     {
       id: "auth_db_cmdb",
       name: "CMDB 数据库账号",
+      category: "数据库认证",
       type: "db-account-password",
       username: "cmdb_reader",
       password: "******",
@@ -146,6 +148,7 @@ export const store = {
     {
       id: "auth_none",
       name: "无认证",
+      category: "通用认证",
       type: "none",
       username: "",
       password: "",
