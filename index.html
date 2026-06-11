@@ -209,6 +209,7 @@
                   <label>
                     <span>清洗表名</span>
                     <input id="flowCleanTableInput" value="clean_alarm_event" />
+                    <small class="field-help">保存过滤、字段映射、默认值和清洗规则处理后的中间结果，便于追溯与复跑。</small>
                   </label>
                   <label>
                     <span>业务表名</span>
@@ -512,7 +513,7 @@
                 </label>
                 <label>
                   <span>响应数据路径</span>
-                  <input id="mappingResponsePathInput" value="data.items" />
+                  <input id="mappingResponsePathInput" value="data.items" placeholder="如 data.items 或 data.detail.list[]" />
                 </label>
                 <label>
                   <span>记录保留</span>
@@ -523,7 +524,7 @@
                 </label>
                 <label>
                   <span>过滤条件</span>
-                  <input id="responseFilterInput" value="" placeholder="level == P0 或 duration &gt; 300" />
+                  <input id="responseFilterInput" value="" placeholder="如 level in [P0,P1]、items[].type == cpu、metrics[].value &gt; 80" />
                 </label>
                 <label>
                   <span>字段保留</span>
@@ -544,6 +545,7 @@
                     <option value="clean-table">存储到清洗表</option>
                     <option value="custom-table">存储到指定表</option>
                   </select>
+                  <small class="field-help">清洗表用于保存当前数据源过滤和字段保留后的结果，业务流中的清洗表用于保存多源汇总清洗后的中间结果。</small>
                 </label>
                 <label>
                   <span>目标表名</span>
@@ -551,21 +553,42 @@
                 </label>
               </div>
               <div class="inline-editor mapping-editor">
-                <select id="responseFieldSelect" aria-label="响应字段">
-                  <option value="">选择测试响应字段</option>
-                </select>
-                <input id="mapSourceInput" value="raw.status" aria-label="源字段" />
-                <input id="mapTargetInput" value="status" aria-label="目标字段" />
-                <select id="mapTypeSelect" aria-label="字段类型">
-                  <option>字符串</option>
-                  <option>枚举</option>
-                  <option>时间</option>
-                  <option>数字</option>
-                </select>
-                <input id="mapDefaultInput" value="" aria-label="默认值" placeholder="默认值" />
-                <select id="mapRuleSelect" aria-label="清洗规则"></select>
-                <input id="mapRuleInput" value="" aria-label="规则参数" placeholder="规则参数/覆盖说明" />
-                <button class="small-button" id="addMappingBtn">
+                <label>
+                  <span>测试响应字段</span>
+                  <select id="responseFieldSelect" aria-label="响应字段">
+                    <option value="">选择测试响应字段</option>
+                  </select>
+                </label>
+                <label>
+                  <span>源字段路径</span>
+                  <input id="mapSourceInput" value="raw.status" aria-label="源字段" placeholder="如 data.items[].level" />
+                </label>
+                <label>
+                  <span>目标字段名</span>
+                  <input id="mapTargetInput" value="status" aria-label="目标字段" placeholder="如 severity" />
+                </label>
+                <label>
+                  <span>字段类型</span>
+                  <select id="mapTypeSelect" aria-label="字段类型">
+                    <option>字符串</option>
+                    <option>枚举</option>
+                    <option>时间</option>
+                    <option>数字</option>
+                  </select>
+                </label>
+                <label>
+                  <span>默认值</span>
+                  <input id="mapDefaultInput" value="" aria-label="默认值" placeholder="为空时使用" />
+                </label>
+                <label>
+                  <span>清洗规则</span>
+                  <select id="mapRuleSelect" aria-label="清洗规则"></select>
+                </label>
+                <label>
+                  <span>规则参数</span>
+                  <input id="mapRuleInput" value="" aria-label="规则参数" placeholder="参数/覆盖说明" />
+                </label>
+                <button class="small-button inline-editor-action" id="addMappingBtn">
                   <span class="icon" data-icon="plus"></span>
                   添加映射
                 </button>
@@ -870,6 +893,32 @@
                 <button class="small-button" data-panel-link="display">数据展示</button>
                 <span>→</span>
                 <button class="small-button" data-panel-link="analysis">智能分析</button>
+              </div>
+            </article>
+
+            <article class="surface wide">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Expression Guide</p>
+                  <h2>表达式速查</h2>
+                </div>
+                <span class="status-pill">过滤条件 / 清洗规则</span>
+              </div>
+              <div class="guide-grid expression-guide-grid">
+                <div class="guide-card expression-guide-card">
+                  <span class="icon" data-icon="pipeline"></span>
+                  <strong>过滤条件怎么写</strong>
+                  <small>先用响应数据路径定位记录集合，例如 <code>data.items[]</code> 或 <code>data.metrics[]</code>，再写条件：<code>level in [P0,P1] && duration &gt; 300</code>。</small>
+                  <small>支持 <code>==</code>、<code>!=</code>、<code>&gt;</code>、<code>&gt;=</code>、<code>&lt;</code>、<code>&lt;=</code>、<code>contains</code>、<code>in [a,b]</code>、<code>exists</code>，并支持 <code>&amp;&amp;</code> 和 <code>||</code>。</small>
+                  <small>嵌套数组可写 <code>data.metrics[].name == cpu && value &gt;= 90</code>，<code>[]</code> 表示数组任意元素。</small>
+                </div>
+                <div class="guide-card expression-guide-card">
+                  <span class="icon" data-icon="spark"></span>
+                  <strong>清洗规则怎么写</strong>
+                  <small>规则表达式格式为 <code>源字段 -&gt; 目标字段 | 动作(参数)</code>。目标字段为空时，默认覆盖原字段。</small>
+                  <small>常用动作：<code>trim</code>、<code>lower</code>、<code>upper</code>、<code>enum</code>、<code>default</code>、<code>filter</code>、<code>date</code>、<code>number</code>、<code>enrich</code>。</small>
+                  <small>示例：<code>level -&gt; severity | enum(P0=高,P1=中,P2=低)</code>，<code>owner -&gt; owner | default(未分配)</code>。</small>
+                </div>
               </div>
             </article>
           </div>

@@ -69,6 +69,125 @@ API 数据源的“测试联通”规则：
 - 字段保留策略：保留全部字段，或只保留测试响应中勾选的字段。
 - 存储策略：不单独存储，或存储到原始表、清洗表、指定表。
 
+#### 过滤条件表达式
+
+过滤条件用于从数据源响应中筛选需要保留的记录。系统会先按“响应数据路径”定位记录集合，再对每条记录执行过滤条件。
+
+响应数据路径示例：
+
+```text
+data.items
+data.items[]
+data.detail.list[]
+sheets[0].rows
+```
+
+字段路径写法：
+
+```text
+level
+service.owner
+service.metadata.region
+data.items[].level
+data.metrics[].labels.region
+rows[0].name
+```
+
+支持的操作符：
+
+```text
+field == value
+field != value
+field > value
+field >= value
+field < value
+field <= value
+field contains value
+field in [a,b,c]
+field exists
+```
+
+支持 `&&` 和 `||` 组合：
+
+```text
+level in [P0,P1] && duration > 300
+name == cpu || name == mem
+owner exists && status != closed
+```
+
+嵌套数组和单条对象内嵌 list/dict 的写法：
+
+```text
+data.metrics[].name == cpu && value >= 90
+data.items[].service.owner exists
+data.items[].tags[] contains prod
+```
+
+说明：
+
+- `[]` 表示数组中的任意元素。
+- 字符串可以不加引号，例如 `level == P0`。
+- 值里包含空格时建议加引号，例如 `owner == "平台 团队"`。
+- 当前不支持括号优先级表达式，例如 `(A || B) && C`。复杂条件建议拆成更简单的条件。
+
+#### 清洗表说明
+
+清洗表是原始数据和最终业务表之间的中间结果表。它保存已经完成过滤、字段映射、默认值填充、规则转换后的数据，主要用于排查清洗逻辑、追溯数据来源和复跑业务流。业务表更偏展示和分析，清洗表更偏过程留痕和质量控制。
+
+### 清洗规则表达式
+
+清洗规则用于描述字段如何转换、标准化、补默认值、过滤或关联补齐。当前推荐通过规则弹窗中的“规则类型、规则动作、作用字段、输出字段、参数配置”生成表达式，不建议用户直接手写复杂表达式。
+
+表达式格式：
+
+```text
+源字段 -> 目标字段 | 动作(参数)
+```
+
+如果目标字段为空，则覆盖原字段：
+
+```text
+service_name | trim
+```
+
+如果输出到新字段：
+
+```text
+level -> severity | enum(P0=高,P1=中,P2=低)
+```
+
+当前规则动作：
+
+```text
+trim       去除首尾空格
+lower      转小写
+upper      转大写
+enum       枚举转换
+default    空值默认
+filter     条件过滤
+date       时间格式化
+number     数值转换
+enrich     关联补齐
+```
+
+常见示例：
+
+```text
+service.name -> service_name | trim
+level -> severity | enum(P0=高,P1=中,P2=低)
+owner -> owner | default(未分配)
+occurTime -> event_time | date(YYYY-MM-DD HH:mm:ss)
+duration -> impact_minutes | number(seconds_to_minutes)
+service_id -> owner | enrich(cmdb.service_id=service_id)
+```
+
+规则字段含义：
+
+- 作用字段：源响应或中间结果中的字段路径。
+- 输出字段：清洗后的目标字段；为空时默认覆盖作用字段。
+- 规则动作：系统内置的处理动作。
+- 参数配置：动作需要的补充参数，例如枚举映射、默认值、时间格式、关联表字段等。
+
 ### 业务流
 
 一个业务对应一个业务流。业务流节点可表示：

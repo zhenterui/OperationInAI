@@ -136,6 +136,41 @@ try {
   assert(sourceTest.data.request.parameterConfig.sourceType === "database", "parameter source should round-trip");
   assert(sourceTest.data.request.parameterConfig.iterationMode === "per-record", "iteration mode should round-trip");
 
+  const nestedSingleRecordTest = await request("/api/data-sources/test", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E 单对象内嵌数组数据源",
+      kind: "api",
+      type: "POST /api/e2e/nested-single",
+      method: "POST",
+      responsePath: "data.metrics[]",
+      responseBody: {
+        code: 0,
+        data: {
+          host: "ops-node-01",
+          metrics: [
+            { name: "cpu", value: 91, labels: { region: "cn-east", core: true } },
+            { name: "mem", value: 62, labels: { region: "cn-east", core: false } }
+          ],
+          detail: {
+            owner: "platform",
+            tags: ["hot", "prod"]
+          }
+        }
+      },
+      responseConfig: {
+        keepMode: "filter",
+        filterCondition: "data.metrics[].name == cpu && value >= 90",
+        fieldKeepMode: "selected",
+        keepFields: ["data.metrics[].name", "data.metrics[].value", "data.metrics[].labels.region"]
+      }
+    })
+  });
+  assert(nestedSingleRecordTest.data.recordCount === 2, "nested single object should expose inner list records");
+  assert(nestedSingleRecordTest.data.filteredRecordCount === 1, "nested list filter should keep only matching inner item");
+  assert(nestedSingleRecordTest.data.recordFields.includes("data.metrics[].labels.region"), "nested dict field should remain selectable after filtering");
+  assert(nestedSingleRecordTest.data.selectedRecords[0]["data.metrics[].name"] === "cpu", "selected nested field should be extracted");
+
   const rule = await request("/api/cleaning-rules", {
     method: "POST",
     body: JSON.stringify({

@@ -1033,7 +1033,8 @@
 }
 
 .mapping-editor {
-  grid-template-columns: 1.1fr 0.95fr 0.95fr 96px 0.78fr 1fr 1fr auto;
+  grid-template-columns: minmax(170px, 1.1fr) minmax(150px, 0.95fr) minmax(150px, 0.95fr) 112px minmax(120px, 0.78fr) minmax(150px, 1fr) minmax(150px, 1fr) auto;
+  align-items: end;
 }
 
 .rule-editor {
@@ -1062,7 +1063,8 @@
 }
 
 .config-form label,
-.filter-row label {
+.filter-row label,
+.inline-editor label {
   position: relative;
   display: grid;
   gap: 7px;
@@ -1100,9 +1102,20 @@
 }
 
 .config-form span,
-.filter-row span {
+.filter-row span,
+.inline-editor span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.field-help {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.inline-editor-action {
+  align-self: end;
 }
 
 input,
@@ -1326,6 +1339,23 @@ select[multiple] option {
 .guide-card small {
   color: var(--muted);
   line-height: 1.6;
+}
+
+.expression-guide-grid {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.expression-guide-card {
+  min-height: 0;
+}
+
+.guide-card code {
+  padding: 1px 5px;
+  border: 1px solid rgba(48, 232, 199, 0.18);
+  border-radius: 5px;
+  color: #dffdf5;
+  background: rgba(48, 232, 199, 0.08);
+  font-size: 12px;
 }
 
 .guide-steps {

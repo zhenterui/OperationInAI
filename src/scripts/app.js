@@ -740,6 +740,7 @@ function renderSourceTestResult(result) {
       <span>${escapeHtml(result.testedAt)}</span>
       <span>${escapeHtml(uniqueFields.length)} 个可选字段</span>
       <span>${escapeHtml(result.recordCount ?? 0)} 条样本记录</span>
+      <span>${escapeHtml(result.filteredRecordCount ?? result.recordCount ?? 0)} 条过滤后记录</span>
       <span>${escapeHtml(result.request?.keepMode === "filter" ? "按条件过滤" : "全部保留")}</span>
       <span>${escapeHtml(result.request?.fieldKeepMode === "selected" ? `保留 ${result.request?.keepFields?.length || 0} 个字段` : "保留全部字段")}</span>
       <span>${escapeHtml(result.request?.persistMode === "none" ? "不单独存储" : `存储到 ${result.request?.targetTable || "-"}`)}</span>
@@ -748,6 +749,8 @@ function renderSourceTestResult(result) {
     <div class="field-chip-list">
       ${uniqueFields.map((field) => `<button class="field-chip" data-response-field="${escapeHtml(field)}">${escapeHtml(field)}</button>`).join("")}
     </div>
+    ${result.selectedRecords?.length ? `<div class="module-status">过滤/字段保留后的样本</div><pre class="response-preview">${escapeHtml(JSON.stringify(result.selectedRecords, null, 2))}</pre>` : ""}
+    <div class="module-status">原始响应体</div>
     <pre class="response-preview">${escapeHtml(JSON.stringify(result.responseBody, null, 2))}</pre>
   `;
   renderResponseFieldOptions(uniqueFields);

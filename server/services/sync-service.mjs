@@ -127,20 +127,145 @@ function normalizePathPrefix(path = "") {
   return String(path).replace(/\[\d+\]/g, "[]").replace(/\.$/, "");
 }
 
+function normalizeRecordPrefix(path = "") {
+  return normalizePathPrefix(path).replace(/\[\]$/, "");
+}
+
 function pathToSegments(path = "") {
   return String(path)
+    .replace(/\[\]/g, ".*")
+    .replace(/\[\*\]/g, ".*")
     .replace(/\[(\d+)\]/g, ".$1")
     .split(".")
     .map((part) => part.trim())
     .filter(Boolean);
 }
 
-function getByPath(value, path = "") {
+function getValuesByPath(value, path = "") {
   if (!path) return value;
-  return pathToSegments(path).reduce((current, part) => {
-    if (current === undefined || current === null) return undefined;
-    return current[part];
-  }, value);
+  const segments = pathToSegments(path);
+  const visit = (current, index) => {
+    if (current === undefined || current === null) return [];
+    if (index >= segments.length) return [current];
+    const part = segments[index];
+    if (part === "*") {
+      const list = Array.isArray(current) ? current : [current];
+      return list.flatMap((item) => visit(item, index + 1));
+    }
+    if (Array.isArray(current)) {
+      return current.flatMap((item) => visit(item?.[part], index + 1));
+    }
+    return visit(current[part], index + 1);
+  };
+  return visit(value, 0);
+}
+
+function getByPath(value, path = "") {
+  const values = getValuesByPath(value, path);
+  if (!path) return values;
+  return path.includes("[]") || path.includes("[*]") ? values : values[0];
+}
+
+function stripResponsePrefix(field = "", responsePath = "") {
+  const normalizedField = normalizePathPrefix(field);
+  const normalizedPath = normalizePathPrefix(responsePath);
+  if (!normalizedPath || normalizedField === normalizedPath) return normalizedField;
+  const dottedPrefix = `${normalizedPath}.`;
+  return normalizedField.startsWith(dottedPrefix) ? normalizedField.slice(dottedPrefix.length) : normalizedField;
+}
+
+function unquoteValue(value = "") {
+  return String(value).trim().replace(/^['"]|['"]$/g, "");
+}
+
+function normalizeComparable(value) {
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  const text = unquoteValue(value);
+  if (/^-?\d+(\.\d+)?$/.test(text)) return Number(text);
+  if (text === "true") return true;
+  if (text === "false") return false;
+  return text;
+}
+
+function compareValues(actual, operator, expected) {
+  const left = normalizeComparable(actual);
+  const right = normalizeComparable(expected);
+  if (operator === "==") return left === right;
+  if (operator === "!=") return left !== right;
+  if (operator === ">") return Number(left) > Number(right);
+  if (operator === ">=") return Number(left) >= Number(right);
+  if (operator === "<") return Number(left) < Number(right);
+  if (operator === "<=") return Number(left) <= Number(right);
+  if (operator === "contains") return String(left).includes(String(right));
+  return false;
+}
+
+function evaluateSingleFilter(record, condition = "", responsePath = "") {
+  const text = String(condition || "").trim();
+  if (!text) return true;
+  const existsMatch = text.match(/^(.+?)\s+exists$/i);
+  if (existsMatch) {
+    return getValuesByPath(record, stripResponsePrefix(existsMatch[1], responsePath)).some((value) => value !== undefined && value !== null && value !== "");
+  }
+  const inMatch = text.match(/^(.+?)\s+in\s+\[(.*)\]$/i);
+  if (inMatch) {
+    const values = getValuesByPath(record, stripResponsePrefix(inMatch[1], responsePath));
+    const expected = inMatch[2]
+      .split(",")
+      .map((item) => normalizeComparable(item))
+      .filter((item) => item !== "");
+    return values.some((value) => expected.includes(normalizeComparable(value)));
+  }
+  const match = text.match(/^(.+?)\s*(==|!=|>=|<=|>|<|contains)\s*(.+)$/i);
+  if (!match) return true;
+  const [, field, operator, expected] = match;
+  const values = getValuesByPath(record, stripResponsePrefix(field, responsePath));
+  return values.some((value) => compareValues(value, operator.toLowerCase(), expected));
+}
+
+function matchesFilter(record, filterCondition = "", responsePath = "") {
+  const condition = String(filterCondition || "").trim();
+  if (!condition) return true;
+  return condition
+    .split(/\s+&&\s+/)
+    .every((andPart) =>
+      andPart
+        .split(/\s+\|\|\s+/)
+        .some((orPart) => evaluateSingleFilter(record, orPart, responsePath))
+    );
+}
+
+function selectKeepFields(records = [], keepFields = [], responsePath = "") {
+  if (!keepFields.length) return records;
+  return records.map((record) => {
+    if (!record || typeof record !== "object") return record;
+    return keepFields.reduce((output, field) => {
+      const localField = stripResponsePrefix(field, responsePath);
+      const values = getValuesByPath(record, localField);
+      output[field] = values.length > 1 ? values : values[0] ?? "";
+      return output;
+    }, {});
+  });
+}
+
+function extractResponseRecords(responseBody, config = {}) {
+  const responsePath = config.responsePath || "";
+  const recordValue = getByPath(responseBody, responsePath);
+  const records = Array.isArray(recordValue) ? recordValue : recordValue === undefined ? [] : [recordValue];
+  const filteredRecords = config.keepMode === "filter"
+    ? records.filter((record) => matchesFilter(record, config.filterCondition, responsePath))
+    : records;
+  const selectedRecords = config.fieldKeepMode === "selected"
+    ? selectKeepFields(filteredRecords, config.keepFields, responsePath)
+    : filteredRecords;
+  return {
+    recordValue,
+    records,
+    filteredRecords,
+    selectedRecords,
+    recordCount: records.length,
+    filteredRecordCount: filteredRecords.length
+  };
 }
 
 function normalizeSourceUrl(type = "") {
@@ -224,7 +349,7 @@ export async function testDataSource(input = {}) {
   let status = 200;
   let durationMs = 186;
   let error = "";
-  let responseBody;
+  let responseBody = config.responseBody || config.mockResponseBody;
   try {
     const realResult = await fetchRealSource(config);
     if (realResult) {
@@ -356,9 +481,14 @@ export async function testDataSource(input = {}) {
             }
           };
   }
-  const recordValue = getByPath(responseBody, responsePath);
-  const recordFields = recordValue === undefined ? [] : flattenFields(recordValue, normalizePathPrefix(responsePath));
-  const recordCount = Array.isArray(recordValue) ? recordValue.length : recordValue && typeof recordValue === "object" ? 1 : 0;
+  const extraction = extractResponseRecords(responseBody, {
+    responsePath,
+    keepMode,
+    filterCondition,
+    fieldKeepMode,
+    keepFields
+  });
+  const recordFields = extraction.recordValue === undefined ? [] : flattenFields(extraction.filteredRecords, normalizeRecordPrefix(responsePath));
 
   return {
     ok: status >= 200 && status < 400,
@@ -387,7 +517,9 @@ export async function testDataSource(input = {}) {
     responseBody,
     fields: flattenFields(responseBody),
     recordFields,
-    recordCount
+    recordCount: extraction.recordCount,
+    filteredRecordCount: extraction.filteredRecordCount,
+    selectedRecords: extraction.selectedRecords.slice(0, 10)
   };
 }
 
