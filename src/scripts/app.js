@@ -16,6 +16,7 @@ const appState = {
   viewMode: "table",
   chartType: "line",
   lastDisplayResult: null,
+  responseValueFilters: [],
   cleaningTab: "business",
   analysisTab: "config",
   editingModelConfigId: ""
@@ -153,6 +154,12 @@ const authCategoryLabels = {
   none: "通用认证"
 };
 
+const authTypeByCategory = {
+  "API 认证": "api-cookie",
+  "数据库认证": "db-account-password",
+  "通用认证": "none"
+};
+
 const paramSourceTypeTips = {
   static: "固定入参：直接使用 Query/Header/Body 中配置的值。",
   database: "数据库查询：先查出记录，再按字段映射逐条或批量调用。",
@@ -175,6 +182,10 @@ function normalizeAuthType(type) {
 
 function getAuthCategory(type) {
   return authCategoryLabels[normalizeAuthType(type)] || "通用认证";
+}
+
+function getAuthTypeFromCategory(category) {
+  return authTypeByCategory[category] || "none";
 }
 
 function escapeHtml(value) {
@@ -567,6 +578,7 @@ function renderMappingSourceSelect() {
   setSelectValue("#responseKeepModeSelect", source?.responseConfig?.keepMode || source?.responseKeepMode || "all");
   $("#responseFilterInput").value = source?.responseConfig?.filterCondition || source?.responseFilter || "";
   setSelectValue("#responseFieldKeepModeSelect", source?.responseConfig?.fieldKeepMode || "all");
+  appState.responseValueFilters = Array.isArray(source?.responseConfig?.valueFilters) ? source.responseConfig.valueFilters : [];
   renderResponseKeepFieldOptions(source?.responseConfig?.keepFields || []);
   updateResponseKeepFieldsState();
   setSelectValue("#responsePersistModeSelect", source?.responseConfig?.persistMode || "none");
@@ -697,8 +709,10 @@ function renderResponseKeepFieldOptions(selectedFields = []) {
 }
 
 function updateResponseKeepFieldsState() {
-  const selectedOnly = $("#responseFieldKeepModeSelect")?.value === "selected";
+  const mode = $("#responseFieldKeepModeSelect")?.value || "all";
+  const selectedOnly = mode === "selected" || mode === "value-filter";
   $("#responseKeepFieldsSelect").disabled = !selectedOnly;
+  $("#configureValueFiltersBtn").disabled = mode !== "value-filter";
   refreshMultiSelectControl($("#responseKeepFieldsSelect"));
 }
 
@@ -742,7 +756,7 @@ function renderSourceTestResult(result) {
       <span>${escapeHtml(result.recordCount ?? 0)} 条样本记录</span>
       <span>${escapeHtml(result.filteredRecordCount ?? result.recordCount ?? 0)} 条过滤后记录</span>
       <span>${escapeHtml(result.request?.keepMode === "filter" ? "按条件过滤" : "全部保留")}</span>
-      <span>${escapeHtml(result.request?.fieldKeepMode === "selected" ? `保留 ${result.request?.keepFields?.length || 0} 个字段` : "保留全部字段")}</span>
+      <span>${escapeHtml(result.request?.fieldKeepMode === "value-filter" ? `值过滤 ${result.request?.valueFilters?.filter((filter) => filter.enabled)?.length || 0} 项` : result.request?.fieldKeepMode === "selected" ? `保留 ${result.request?.keepFields?.length || 0} 个字段` : "保留全部字段")}</span>
       <span>${escapeHtml(result.request?.persistMode === "none" ? "不单独存储" : `存储到 ${result.request?.targetTable || "-"}`)}</span>
       ${result.error ? `<span class="status-pill danger">${escapeHtml(result.error)}</span>` : ""}
     </div>
@@ -772,6 +786,28 @@ function setAuthCategoryValue(value) {
   select.value = category;
 }
 
+function syncAuthFormByCategory() {
+  const category = $("#authCategoryInput")?.value || "API 认证";
+  const type = getAuthTypeFromCategory(category);
+  setSelectValue("#authConfigTypeSelect", type);
+  $("#authConfigTypeSelect").disabled = true;
+  $$("[data-auth-field]").forEach((field) => {
+    const name = field.dataset.authField;
+    const visible =
+      (type === "api-cookie" && ["cookie", "secret"].includes(name)) ||
+      (type === "db-account-password" && ["username", "secret"].includes(name));
+    field.classList.toggle("hidden", !visible);
+  });
+  if ($("#authSecretLabel")) {
+    $("#authSecretLabel").textContent = type === "db-account-password" ? "密码" : "Cookie 值";
+  }
+  if (type === "none") {
+    $("#authUsernameInput").value = "";
+    $("#authCookieNameInput").value = "";
+    $("#authPasswordInput").value = "";
+  }
+}
+
 function populateAuthForm(auth = getSelectedAuthConfig()) {
   if (!auth) return;
   appState.selectedAuthId = auth.id;
@@ -779,8 +815,10 @@ function populateAuthForm(auth = getSelectedAuthConfig()) {
   $("#authNameInput").value = auth.name || "";
   setAuthCategoryValue(auth.category || getAuthCategory(auth.type));
   setSelectValue("#authConfigTypeSelect", normalizeAuthType(auth.type));
+  $("#authUsernameInput").value = auth.username || "";
   $("#authCookieNameInput").value = auth.cookieName || "";
-  $("#authPasswordInput").value = auth.cookieValue || "";
+  $("#authPasswordInput").value = auth.cookieValue || auth.password || "";
+  syncAuthFormByCategory();
   renderAuthConfigs();
 }
 
@@ -790,20 +828,24 @@ function resetAuthForm() {
   $("#authNameInput").value = "自定义 Cookie 认证";
   setAuthCategoryValue("API 认证");
   setSelectValue("#authConfigTypeSelect", "api-cookie");
+  $("#authUsernameInput").value = "";
   $("#authCookieNameInput").value = "OPS_SESSION";
   $("#authPasswordInput").value = "";
+  syncAuthFormByCategory();
 }
 
 function collectAuthForm() {
+  const type = getAuthTypeFromCategory($("#authCategoryInput").value);
+  const secret = $("#authPasswordInput").value;
   return {
     name: $("#authNameInput").value.trim() || "自定义认证配置",
     category: $("#authCategoryInput").value.trim() || "认证配置",
-    type: $("#authConfigTypeSelect").value,
-    username: "",
-    password: $("#authPasswordInput").value,
-    cookieValue: $("#authPasswordInput").value,
+    type,
+    username: type === "db-account-password" ? $("#authUsernameInput").value.trim() : "",
+    password: type === "db-account-password" ? secret : "",
+    cookieValue: type === "api-cookie" ? secret : "",
     loginUrl: "",
-    cookieName: $("#authCookieNameInput").value.trim(),
+    cookieName: type === "api-cookie" ? $("#authCookieNameInput").value.trim() : "",
     tokenHeader: "",
     refreshCycle: "手动"
   };
@@ -843,6 +885,8 @@ function populateSourceForm(source = getSelectedSource()) {
   $("#bodyParamsInput").value = JSON.stringify(source.requestConfig?.body || {}, null, 2);
   setSelectValue("#responseKeepModeSelect", source.responseConfig?.keepMode || source.responseKeepMode || "all");
   $("#responseFilterInput").value = source.responseConfig?.filterCondition || source.responseFilter || "";
+  setSelectValue("#responseFieldKeepModeSelect", source.responseConfig?.fieldKeepMode || "all");
+  appState.responseValueFilters = Array.isArray(source.responseConfig?.valueFilters) ? source.responseConfig.valueFilters : [];
   const parameterConfig = source.parameterConfig || {};
   renderParamSourceSelect(parameterConfig.sourceId || "");
   setSelectValue("#paramSourceTypeSelect", parameterConfig.sourceType || "static");
@@ -873,6 +917,8 @@ function resetSourceForm() {
   $("#bodyParamsInput").value = JSON.stringify({ severity: ["P0", "P1"], includeRecovered: false }, null, 2);
   setSelectValue("#responseKeepModeSelect", "all");
   $("#responseFilterInput").value = "";
+  setSelectValue("#responseFieldKeepModeSelect", "all");
+  appState.responseValueFilters = [];
   renderParamSourceSelect("");
   setSelectValue("#paramSourceTypeSelect", "static");
   updateParamSourceTypeHelp();
@@ -946,6 +992,7 @@ function collectSourceForm() {
       filterCondition: $("#responseFilterInput")?.value.trim() || "",
       fieldKeepMode: $("#responseFieldKeepModeSelect")?.value || "all",
       keepFields: getSelectedValues($("#responseKeepFieldsSelect")),
+      valueFilters: appState.responseValueFilters || [],
       persistMode: $("#responsePersistModeSelect")?.value || "none",
       targetTable: $("#responseTargetTableInput")?.value.trim() || ""
     },
@@ -1372,6 +1419,72 @@ function applyMultiSelectDialog() {
   select.dispatchEvent(new Event("change", { bubbles: true }));
   refreshMultiSelectControl(select);
   closeDialog("#multiSelectModal");
+}
+
+function getSelectedKeepFieldsForValueFilters() {
+  const selected = getSelectedValues($("#responseKeepFieldsSelect"));
+  if (selected.length) return selected;
+  return [...($("#responseKeepFieldsSelect")?.options || [])].map((option) => option.value);
+}
+
+function normalizeValueFiltersForFields(fields = []) {
+  const existing = new Map((appState.responseValueFilters || []).map((filter) => [filter.field, filter]));
+  return fields.map((field) => ({
+    field,
+    matchMode: existing.get(field)?.matchMode || "exact",
+    value: existing.get(field)?.value || "",
+    enabled: existing.get(field)?.enabled !== false
+  }));
+}
+
+function renderValueFilterList() {
+  const fields = getSelectedKeepFieldsForValueFilters();
+  const filters = normalizeValueFiltersForFields(fields);
+  if (!fields.length) {
+    $("#valueFilterList").innerHTML = '<div class="module-status">请先在“保留字段”中选择字段，再配置字段值过滤。</div>';
+    return;
+  }
+  $("#valueFilterList").innerHTML = filters
+    .map(
+      (filter) => `
+        <div class="value-filter-row" data-value-filter-field="${escapeHtml(filter.field)}">
+          <label>
+            <span>字段</span>
+            <input value="${escapeHtml(filter.field)}" readonly />
+          </label>
+          <label>
+            <span>匹配方式</span>
+            <select data-value-filter-mode>
+              <option value="exact" ${filter.matchMode === "exact" ? "selected" : ""}>完整匹配</option>
+              <option value="contains" ${filter.matchMode === "contains" ? "selected" : ""}>模糊包含</option>
+              <option value="startsWith" ${filter.matchMode === "startsWith" ? "selected" : ""}>前缀匹配</option>
+              <option value="endsWith" ${filter.matchMode === "endsWith" ? "selected" : ""}>后缀匹配</option>
+              <option value="regex" ${filter.matchMode === "regex" ? "selected" : ""}>正则匹配</option>
+            </select>
+          </label>
+          <label>
+            <span>匹配值</span>
+            <input data-value-filter-value value="${escapeHtml(filter.value)}" placeholder="为空则不启用该字段过滤" />
+          </label>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function openValueFilterDialog() {
+  renderValueFilterList();
+  openDialog("#valueFilterModal");
+}
+
+function saveValueFilterDialog() {
+  appState.responseValueFilters = $$(".value-filter-row", $("#valueFilterList")).map((row) => ({
+    field: row.dataset.valueFilterField,
+    matchMode: $("[data-value-filter-mode]", row).value,
+    value: $("[data-value-filter-value]", row).value.trim(),
+    enabled: Boolean($("[data-value-filter-value]", row).value.trim())
+  }));
+  closeDialog("#valueFilterModal");
 }
 
 function getFlowRefOptions(type) {
@@ -2827,6 +2940,10 @@ function bindEvents() {
   });
   $("#responseFieldKeepModeSelect").addEventListener("change", updateResponseKeepFieldsState);
   $("#responsePersistModeSelect").addEventListener("change", updateResponsePersistState);
+  $("#configureValueFiltersBtn").addEventListener("click", openValueFilterDialog);
+  $("#saveValueFilterBtn").addEventListener("click", saveValueFilterDialog);
+  $("#cancelValueFilterBtn").addEventListener("click", () => closeDialog("#valueFilterModal"));
+  $("#closeValueFilterBtn").addEventListener("click", () => closeDialog("#valueFilterModal"));
   $("#sourceKindSelect").addEventListener("change", () => {
     updateRequestParamVisibility();
     renderParamFieldSelect();
@@ -2880,6 +2997,7 @@ function bindEvents() {
     }
     renderAuthConfigs();
   });
+  $("#authCategoryInput").addEventListener("change", syncAuthFormByCategory);
   $("#addAuthBtn").addEventListener("click", async () => {
     resetAuthForm();
     openDialog("#authModal");

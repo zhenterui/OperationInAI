@@ -67,6 +67,7 @@ try {
     "responseKeepModeSelect",
     "responseFilterInput",
     "responseFieldSelect",
+    "configureValueFiltersBtn",
     "mapDefaultInput",
     "mapRuleSelect",
     "addMappingBtn",
@@ -161,8 +162,12 @@ try {
       responseConfig: {
         keepMode: "filter",
         filterCondition: "data.metrics[].name == cpu && value >= 90",
-        fieldKeepMode: "selected",
-        keepFields: ["data.metrics[].name", "data.metrics[].value", "data.metrics[].labels.region"]
+        fieldKeepMode: "value-filter",
+        keepFields: ["data.metrics[].name", "data.metrics[].value", "data.metrics[].labels.region"],
+        valueFilters: [
+          { field: "data.metrics[].name", matchMode: "exact", value: "cpu", enabled: true },
+          { field: "data.metrics[].labels.region", matchMode: "contains", value: "cn-", enabled: true }
+        ]
       }
     })
   });

@@ -37,6 +37,7 @@ function toSourcePatch(input = {}) {
       filterCondition: input.responseConfig?.filterCondition || input.responseFilter || "",
       fieldKeepMode: input.responseConfig?.fieldKeepMode || "all",
       keepFields: Array.isArray(input.responseConfig?.keepFields) ? input.responseConfig.keepFields : [],
+      valueFilters: Array.isArray(input.responseConfig?.valueFilters) ? input.responseConfig.valueFilters : [],
       persistMode: input.responseConfig?.persistMode || "none",
       targetTable: input.responseConfig?.targetTable || ""
     },
@@ -248,14 +249,43 @@ function selectKeepFields(records = [], keepFields = [], responsePath = "") {
   });
 }
 
+function matchValueFilterValue(actual, filter) {
+  const left = String(actual ?? "");
+  const right = String(filter.value ?? "");
+  if (!right) return true;
+  if (filter.matchMode === "contains") return left.includes(right);
+  if (filter.matchMode === "startsWith") return left.startsWith(right);
+  if (filter.matchMode === "endsWith") return left.endsWith(right);
+  if (filter.matchMode === "regex") {
+    try {
+      return new RegExp(right).test(left);
+    } catch {
+      return false;
+    }
+  }
+  return left === right;
+}
+
+function matchesValueFilters(record, valueFilters = [], responsePath = "") {
+  const enabledFilters = valueFilters.filter((filter) => filter?.enabled !== false && filter?.field && String(filter.value || "").trim());
+  if (!enabledFilters.length) return true;
+  return enabledFilters.every((filter) => {
+    const values = getValuesByPath(record, stripResponsePrefix(filter.field, responsePath));
+    return values.some((value) => matchValueFilterValue(value, filter));
+  });
+}
+
 function extractResponseRecords(responseBody, config = {}) {
   const responsePath = config.responsePath || "";
   const recordValue = getByPath(responseBody, responsePath);
   const records = Array.isArray(recordValue) ? recordValue : recordValue === undefined ? [] : [recordValue];
-  const filteredRecords = config.keepMode === "filter"
+  const conditionFilteredRecords = config.keepMode === "filter"
     ? records.filter((record) => matchesFilter(record, config.filterCondition, responsePath))
     : records;
-  const selectedRecords = config.fieldKeepMode === "selected"
+  const filteredRecords = config.fieldKeepMode === "value-filter"
+    ? conditionFilteredRecords.filter((record) => matchesValueFilters(record, config.valueFilters, responsePath))
+    : conditionFilteredRecords;
+  const selectedRecords = ["selected", "value-filter"].includes(config.fieldKeepMode)
     ? selectKeepFields(filteredRecords, config.keepFields, responsePath)
     : filteredRecords;
   return {
@@ -343,6 +373,7 @@ export async function testDataSource(input = {}) {
   const filterCondition = config.responseConfig?.filterCondition || config.responseFilter || "";
   const fieldKeepMode = config.responseConfig?.fieldKeepMode || "all";
   const keepFields = Array.isArray(config.responseConfig?.keepFields) ? config.responseConfig.keepFields : [];
+  const valueFilters = Array.isArray(config.responseConfig?.valueFilters) ? config.responseConfig.valueFilters : [];
   const persistMode = config.responseConfig?.persistMode || "none";
   const targetTable = config.responseConfig?.targetTable || "";
   let sourceMode = "mock";
@@ -486,7 +517,8 @@ export async function testDataSource(input = {}) {
     keepMode,
     filterCondition,
     fieldKeepMode,
-    keepFields
+    keepFields,
+    valueFilters
   });
   const recordFields = extraction.recordValue === undefined ? [] : flattenFields(extraction.filteredRecords, normalizeRecordPrefix(responsePath));
 
@@ -506,6 +538,7 @@ export async function testDataSource(input = {}) {
       filterCondition,
       fieldKeepMode,
       keepFields,
+      valueFilters,
       persistMode,
       targetTable,
       parameterConfig: config.parameterConfig || {},

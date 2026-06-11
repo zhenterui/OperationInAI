@@ -531,6 +531,7 @@
                   <select id="responseFieldKeepModeSelect">
                     <option value="all">保留全部字段</option>
                     <option value="selected">只保留指定字段</option>
+                    <option value="value-filter">按字段值过滤</option>
                   </select>
                 </label>
                 <label class="full">
@@ -538,14 +539,18 @@
                   <select id="responseKeepFieldsSelect" multiple></select>
                 </label>
                 <label>
-                  <span>存储策略</span>
+                  <span>值过滤配置</span>
+                  <button class="small-button" id="configureValueFiltersBtn" type="button">配置字段值过滤</button>
+                </label>
+                <label>
+                  <span class="label-with-help">存储策略 <button class="help-dot" type="button" aria-label="存储策略说明">?</button></span>
                   <select id="responsePersistModeSelect">
                     <option value="none">不单独存储</option>
                     <option value="raw-table">存储到原始表</option>
                     <option value="clean-table">存储到清洗表</option>
                     <option value="custom-table">存储到指定表</option>
                   </select>
-                  <small class="field-help">清洗表用于保存当前数据源过滤和字段保留后的结果，业务流中的清洗表用于保存多源汇总清洗后的中间结果。</small>
+                  <small class="select-popover">原始表保存接口/数据库/文件返回的原始记录；清洗表保存过滤、字段保留和规则处理后的中间结果；指定表用于自定义落库目标。</small>
                 </label>
                 <label>
                   <span>目标表名</span>
@@ -958,12 +963,16 @@
               <option value="none">无认证</option>
             </select>
           </label>
-          <label>
+          <label data-auth-field="username">
+            <span>账号</span>
+            <input id="authUsernameInput" value="" />
+          </label>
+          <label data-auth-field="cookie">
             <span>Cookie 名称</span>
             <input id="authCookieNameInput" value="OPS_SESSION" />
           </label>
-          <label class="full">
-            <span>Cookie 值</span>
+          <label class="full" data-auth-field="secret">
+            <span id="authSecretLabel">Cookie 值</span>
             <textarea id="authPasswordInput" rows="4">SESSION=demo_cookie_value</textarea>
           </label>
         </div>
@@ -972,6 +981,26 @@
           <button class="small-button primary" id="saveAuthBtn" value="default">保存认证</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog class="modal value-filter-modal" id="valueFilterModal">
+      <div class="modal-panel">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Value Filters</p>
+            <h2>字段值过滤</h2>
+            <small>对已选择保留的字段设置值过滤，启用的字段条件全部满足时记录会被保留。</small>
+          </div>
+          <button class="icon-button" id="closeValueFilterBtn" type="button" aria-label="关闭">
+            <span class="icon" data-icon="refresh"></span>
+          </button>
+        </div>
+        <div class="value-filter-list" id="valueFilterList"></div>
+        <div class="modal-actions">
+          <button class="small-button" id="cancelValueFilterBtn" type="button">取消</button>
+          <button class="small-button primary" id="saveValueFilterBtn" type="button">确定</button>
+        </div>
+      </div>
     </dialog>
 
     <dialog class="modal" id="ruleModal">
