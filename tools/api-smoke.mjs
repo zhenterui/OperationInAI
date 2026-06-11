@@ -134,6 +134,24 @@ try {
     method: "PUT",
     body: JSON.stringify({ name: "冒烟清洗规则已编辑", type: "normalize", expression: "trim + upper", description: "冒烟测试规则已编辑" })
   });
+  const dictionary = await request("/api/dictionary-sets", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "冒烟产品字典",
+      category: "业务字典",
+      columns: ["产品部", "产品名", "别名列表"],
+      rows: [{ "产品部": "交易产品部", "产品名": "支付网关", "别名列表": "pay-gateway,payment-api" }]
+    })
+  });
+  const updatedDictionary = await request(`/api/dictionary-sets/${dictionary.data.id}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      name: "冒烟产品字典已编辑",
+      category: "业务字典",
+      columns: ["产品部", "产品名", "别名列表"],
+      rows: [{ "产品部": "交易产品部", "产品名": "支付网关", "别名列表": "pay-gateway,payment-api" }]
+    })
+  });
   const flow = await request("/api/business-flows", {
     method: "POST",
     body: JSON.stringify({
@@ -216,6 +234,9 @@ try {
   const deletedRule = await request(`/api/cleaning-rules/${updatedRule.data.id}`, {
     method: "DELETE"
   });
+  const deletedDictionary = await request(`/api/dictionary-sets/${updatedDictionary.data.id}`, {
+    method: "DELETE"
+  });
   const deletedFlow = await request(`/api/business-flows/${updatedFlow.data.id}`, {
     method: "DELETE"
   });
@@ -242,6 +263,8 @@ try {
         deletedMapping: deletedMapping.data.targetField,
         rule: updatedRule.data.name,
         deletedRule: deletedRule.data.name,
+        dictionary: updatedDictionary.data.name,
+        deletedDictionary: deletedDictionary.data.name,
         flow: flowRun.data.business.name,
         flowName: updatedFlow.data.name,
         flowParallel: flowRun.data.executionPlan.parallel,

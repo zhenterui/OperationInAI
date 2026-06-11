@@ -266,12 +266,39 @@ function matchValueFilterValue(actual, filter) {
   return left === right;
 }
 
+function getDictionaryFilterValues(filter = {}) {
+  if (!filter.dictionaryId || !filter.dictionaryColumn) return [];
+  const dictionary = store.dictionarySets.find((item) => item.id === filter.dictionaryId);
+  if (!dictionary) return [];
+  return (dictionary.rows || [])
+    .filter((row) => {
+      if (!filter.dictionaryScopeColumn || !filter.dictionaryScopeValue) return true;
+      return String(row[filter.dictionaryScopeColumn] ?? "") === String(filter.dictionaryScopeValue);
+    })
+    .flatMap((row) =>
+      String(row[filter.dictionaryColumn] ?? "")
+        .split(/[,，;；|]/)
+        .map((value) => value.trim())
+        .filter(Boolean)
+    );
+}
+
+function matchesDictionaryValue(actual, filter = {}) {
+  const values = getDictionaryFilterValues(filter);
+  if (!values.length) return false;
+  return values.some((value) => matchValueFilterValue(actual, { ...filter, value }));
+}
+
 function matchesValueFilters(record, valueFilters = [], responsePath = "") {
-  const enabledFilters = valueFilters.filter((filter) => filter?.enabled !== false && filter?.field && String(filter.value || "").trim());
+  const enabledFilters = valueFilters.filter((filter) =>
+    filter?.enabled !== false &&
+    filter?.field &&
+    (String(filter.value || "").trim() || (filter.dictionaryId && filter.dictionaryColumn))
+  );
   if (!enabledFilters.length) return true;
   return enabledFilters.every((filter) => {
     const values = getValuesByPath(record, stripResponsePrefix(filter.field, responsePath));
-    return values.some((value) => matchValueFilterValue(value, filter));
+    return values.some((value) => (filter.dictionaryId ? matchesDictionaryValue(value, filter) : matchValueFilterValue(value, filter)));
   });
 }
 

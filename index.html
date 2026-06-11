@@ -501,7 +501,7 @@
                   <p class="eyebrow">Field Mapping</p>
                   <h2>当前数据源出参映射</h2>
                 </div>
-                <button class="small-button" id="runSyncBtn">
+                <button class="small-button" id="runSyncBtn" type="button">
                   <span class="icon" data-icon="play"></span>
                   执行同步
                 </button>
@@ -593,7 +593,7 @@
                   <span>规则参数</span>
                   <input id="mapRuleInput" value="" aria-label="规则参数" placeholder="参数/覆盖说明" />
                 </label>
-                <button class="small-button inline-editor-action" id="addMappingBtn">
+                <button class="small-button inline-editor-action" id="addMappingBtn" type="button">
                   <span class="icon" data-icon="plus"></span>
                   添加映射
                 </button>
@@ -637,6 +637,19 @@
                   </button>
                 </div>
                 <div class="mapping-table" id="ruleTable"></div>
+              </article>
+              <article class="surface support-card">
+                <div class="section-head">
+                  <div>
+                    <p class="eyebrow">Dictionary Sets</p>
+                    <h2>字典集</h2>
+                  </div>
+                  <button class="small-button primary" id="addDictionaryBtn">
+                    <span class="icon" data-icon="plus"></span>
+                    新增字典
+                  </button>
+                </div>
+                <div class="auth-config-list" id="dictionarySetList"></div>
               </article>
               </div>
             </details>
@@ -878,6 +891,11 @@
                   <strong>5. 问知识库</strong>
                   <small>进入智能搜索，配置 URL 或本地路径知识源后，通过问题输入触发关键词匹配和提示词回答。</small>
                 </div>
+                <div class="guide-card">
+                  <span class="icon" data-icon="database"></span>
+                  <strong>6. 复用字典集</strong>
+                  <small>在支撑配置库维护产品、部门、版本等列表，字段值过滤和清洗规则可按字典名称与字段列引用。</small>
+                </div>
               </div>
             </article>
 
@@ -889,6 +907,8 @@
                 </div>
               </div>
               <div class="guide-steps">
+                <button class="small-button" data-panel-link="cleaning">支撑配置库</button>
+                <span>→</span>
                 <button class="small-button" data-panel-link="cleaning">数据源配置</button>
                 <span>→</span>
                 <button class="small-button" data-panel-link="cleaning">字段映射与规则</button>
@@ -923,6 +943,13 @@
                   <small>规则表达式格式为 <code>源字段 -&gt; 目标字段 | 动作(参数)</code>。目标字段为空时，默认覆盖原字段。</small>
                   <small>常用动作：<code>trim</code>、<code>lower</code>、<code>upper</code>、<code>enum</code>、<code>default</code>、<code>filter</code>、<code>date</code>、<code>number</code>、<code>enrich</code>。</small>
                   <small>示例：<code>level -&gt; severity | enum(P0=高,P1=中,P2=低)</code>，<code>owner -&gt; owner | default(未分配)</code>。</small>
+                </div>
+                <div class="guide-card expression-guide-card">
+                  <span class="icon" data-icon="database"></span>
+                  <strong>字典集怎么引用</strong>
+                  <small>先在支撑配置库创建字典集，例如 <code>产品列表</code>，表头可写 <code>产品部,产品名,别名列表,版本号</code>。</small>
+                  <small>字段值过滤可选择字典集、匹配列和范围列；范围值为空表示全部范围，逗号分隔的别名会自动拆开匹配。</small>
+                  <small>清洗规则可选择引用字典集，表达式预览会追加 <code>@产品列表.别名列表</code> 方便识别口径。</small>
                 </div>
               </div>
             </article>
@@ -1003,6 +1030,49 @@
       </div>
     </dialog>
 
+    <dialog class="modal" id="dictionaryModal">
+      <form class="modal-panel" method="dialog">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Dictionary Set</p>
+            <h2 id="dictionaryModalTitle">新增字典集</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="关闭">
+            <span class="icon" data-icon="refresh"></span>
+          </button>
+        </div>
+        <div class="config-form">
+          <label>
+            <span>字典名称</span>
+            <input id="dictionaryNameInput" value="产品列表" />
+          </label>
+          <label>
+            <span>字典类别</span>
+            <input id="dictionaryCategoryInput" value="业务字典" />
+          </label>
+          <label class="full">
+            <span>表头字段</span>
+            <input id="dictionaryColumnsInput" value="产品部,产品名,别名列表,版本号" />
+          </label>
+          <label class="full">
+            <span>字典值 JSON</span>
+            <textarea id="dictionaryRowsInput" rows="8">[
+  { "产品部": "交易产品部", "产品名": "支付网关", "别名列表": "pay-gateway,payment-api", "版本号": "v3" }
+]</textarea>
+          </label>
+          <label class="full">
+            <span>说明</span>
+            <textarea id="dictionaryDescInput" rows="3">可被过滤条件、字段值过滤和清洗规则引用。</textarea>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="small-button" value="cancel">取消</button>
+          <button class="small-button danger" id="deleteDictionaryBtn" type="button">删除</button>
+          <button class="small-button primary" id="saveDictionaryBtn" value="default">保存字典</button>
+        </div>
+      </form>
+    </dialog>
+
     <dialog class="modal" id="ruleModal">
       <form class="modal-panel" method="dialog">
         <div class="section-head">
@@ -1057,6 +1127,14 @@
           <label class="full">
             <span>参数配置</span>
             <input id="ruleParamInput" value="trim + lower" placeholder="如 P0=高,P1=中 或 level == P0" />
+          </label>
+          <label>
+            <span>引用字典集</span>
+            <select id="ruleDictionarySelect"></select>
+          </label>
+          <label>
+            <span>字典匹配列</span>
+            <select id="ruleDictionaryColumnSelect"></select>
           </label>
           <label class="full">
             <span>规则表达式预览</span>

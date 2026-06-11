@@ -559,6 +559,7 @@
 
 .support-details .support-grid {
   padding: 0 14px 14px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
 .metric-card {
@@ -967,6 +968,10 @@
   margin-top: 14px;
 }
 
+.source-modal-mapping {
+  margin-top: 16px;
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -1302,7 +1307,7 @@ select[multiple] option {
 
 .value-filter-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) 150px minmax(180px, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
   align-items: end;
   padding: 12px;

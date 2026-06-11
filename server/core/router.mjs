@@ -4,12 +4,14 @@ import {
   createAuthConfig,
   createBusinessFlow,
   createCleaningRule,
+  createDictionarySet,
   createFieldMapping,
   createKnowledgeSource,
   createModelConfig,
   deleteAuthConfig,
   deleteBusinessFlow,
   deleteCleaningRule,
+  deleteDictionarySet,
   deleteFieldMapping,
   deleteModelConfig,
   queryBusiness,
@@ -17,6 +19,7 @@ import {
   updateAuthConfig,
   updateBusinessFlow,
   updateCleaningRule,
+  updateDictionarySet,
   updateFieldMapping,
   updateModelConfig
 } from "../services/config-service.mjs";
@@ -46,6 +49,8 @@ route("GET", "/api/field-mappings", () => store.fieldMappings);
 route("POST", "/api/field-mappings", async ({ request }) => createFieldMapping(await readJson(request)));
 route("GET", "/api/cleaning-rules", () => store.cleaningRules);
 route("POST", "/api/cleaning-rules", async ({ request }) => createCleaningRule(await readJson(request)));
+route("GET", "/api/dictionary-sets", () => store.dictionarySets);
+route("POST", "/api/dictionary-sets", async ({ request }) => createDictionarySet(await readJson(request)));
 route("GET", "/api/model-configs", () => store.modelConfigs.map((item) => ({ ...item, apiKey: "" })));
 route("POST", "/api/model-configs", async ({ request }) => createModelConfig(await readJson(request)));
 route("GET", "/api/businesses", () => store.businesses);
@@ -135,6 +140,23 @@ export async function handleApi(request, response) {
   if (fieldMappingMatch && request.method === "DELETE") {
     try {
       sendJson(response, 200, { data: deleteFieldMapping(fieldMappingMatch[1]) });
+    } catch (error) {
+      sendError(response, error.status || 500, "API request failed", error.message);
+    }
+    return true;
+  }
+  const dictionarySetMatch = parsed.pathname.match(/^\/api\/dictionary-sets\/([^/]+)$/);
+  if (dictionarySetMatch && request.method === "PUT") {
+    try {
+      sendJson(response, 200, { data: updateDictionarySet(dictionarySetMatch[1], await readJson(request)) });
+    } catch (error) {
+      sendError(response, error.status || 500, "API request failed", error.message);
+    }
+    return true;
+  }
+  if (dictionarySetMatch && request.method === "DELETE") {
+    try {
+      sendJson(response, 200, { data: deleteDictionarySet(dictionarySetMatch[1]) });
     } catch (error) {
       sendError(response, error.status || 500, "API request failed", error.message);
     }

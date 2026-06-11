@@ -173,6 +173,64 @@ export function deleteModelConfig(id) {
   return { ...removed, apiKey: "" };
 }
 
+function normalizeDictionaryRows(rows = [], columns = []) {
+  if (!Array.isArray(rows)) return [];
+  return rows.map((row) =>
+    columns.reduce((output, column) => {
+      output[column] = row?.[column] ?? "";
+      return output;
+    }, {})
+  );
+}
+
+export function createDictionarySet(input = {}) {
+  const columns = Array.isArray(input.columns) && input.columns.length ? input.columns : ["名称", "值"];
+  const dictionary = {
+    id: `dict_${Date.now()}`,
+    name: input.name || "自定义字典集",
+    category: input.category || "通用字典",
+    description: input.description || "",
+    columns,
+    rows: normalizeDictionaryRows(input.rows, columns),
+    updatedAt: new Date().toISOString()
+  };
+  store.dictionarySets.unshift(dictionary);
+  return dictionary;
+}
+
+export function updateDictionarySet(id, input = {}) {
+  const index = store.dictionarySets.findIndex((item) => item.id === id);
+  if (index < 0) {
+    const error = new Error("Dictionary set not found");
+    error.status = 404;
+    throw error;
+  }
+  const existing = store.dictionarySets[index];
+  const columns = Array.isArray(input.columns) && input.columns.length ? input.columns : existing.columns;
+  const updated = {
+    ...existing,
+    name: input.name || existing.name,
+    category: input.category || existing.category,
+    description: input.description ?? existing.description,
+    columns,
+    rows: normalizeDictionaryRows(Array.isArray(input.rows) ? input.rows : existing.rows, columns),
+    updatedAt: new Date().toISOString()
+  };
+  store.dictionarySets[index] = updated;
+  return updated;
+}
+
+export function deleteDictionarySet(id) {
+  const index = store.dictionarySets.findIndex((item) => item.id === id);
+  if (index < 0) {
+    const error = new Error("Dictionary set not found");
+    error.status = 404;
+    throw error;
+  }
+  const [removed] = store.dictionarySets.splice(index, 1);
+  return removed;
+}
+
 export function createCleaningRule(input = {}) {
   const rule = {
     id: `rule_${Date.now()}`,

@@ -74,6 +74,9 @@ try {
     "ruleActionSelect",
     "ruleSourceFieldInput",
     "ruleParamInput",
+    "ruleDictionarySelect",
+    "addDictionaryBtn",
+    "dictionarySetList",
     "flowDesigner",
     "flowNodeTypeSelect",
     "flowNodeRefSelect",
@@ -175,6 +178,40 @@ try {
   assert(nestedSingleRecordTest.data.filteredRecordCount === 1, "nested list filter should keep only matching inner item");
   assert(nestedSingleRecordTest.data.recordFields.includes("data.metrics[].labels.region"), "nested dict field should remain selectable after filtering");
   assert(nestedSingleRecordTest.data.selectedRecords[0]["data.metrics[].name"] === "cpu", "selected nested field should be extracted");
+
+  const dictionaryFilterTest = await request("/api/data-sources/test", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E 字典引用过滤",
+      kind: "api",
+      responsePath: "data.products[]",
+      responseBody: {
+        data: {
+          products: [
+            { name: "pay-gateway", dept: "交易产品部" },
+            { name: "unknown-service", dept: "未知产品部" }
+          ]
+        }
+      },
+      responseConfig: {
+        fieldKeepMode: "value-filter",
+        keepFields: ["data.products[].name", "data.products[].dept"],
+        valueFilters: [
+          {
+            field: "data.products[].name",
+            matchMode: "exact",
+            dictionaryId: "dict_product_catalog",
+            dictionaryColumn: "别名列表",
+            dictionaryScopeColumn: "产品部",
+            dictionaryScopeValue: "交易产品部",
+            enabled: true
+          }
+        ]
+      }
+    })
+  });
+  assert(dictionaryFilterTest.data.filteredRecordCount === 1, "dictionary referenced value filter should keep matching product");
+  assert(dictionaryFilterTest.data.selectedRecords[0]["data.products[].name"] === "pay-gateway", "dictionary filter should preserve matching row");
 
   const rule = await request("/api/cleaning-rules", {
     method: "POST",

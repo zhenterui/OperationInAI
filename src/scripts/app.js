@@ -5,6 +5,7 @@ const appState = {
   selectedAuthId: "auth_cookie_ops",
   editingSourceId: "",
   editingAuthId: "",
+  editingDictionaryId: "",
   editingRuleId: "",
   editingMappingId: "",
   selectedFlowId: "",
@@ -113,6 +114,16 @@ function normalizeOpsData() {
   window.opsData.mappings = window.opsData.mappings || [];
   window.opsData.businesses = window.opsData.businesses || [];
   window.opsData.cleaningRules = window.opsData.cleaningRules || [];
+  window.opsData.dictionarySets = window.opsData.dictionarySets || [
+    {
+      id: "dict_product_catalog",
+      name: "产品列表",
+      category: "业务字典",
+      description: "用于过滤条件和清洗规则引用的产品字典。",
+      columns: ["产品部", "产品名", "别名列表", "版本号"],
+      rows: [{ "产品部": "交易产品部", "产品名": "支付网关", "别名列表": "pay-gateway,payment-api", "版本号": "v3" }]
+    }
+  ];
   window.opsData.businessFlows = window.opsData.businessFlows || [];
   window.opsData.modelConfigs = window.opsData.modelConfigs || [
     {
@@ -238,7 +249,7 @@ function renderGroupedConfigList(selector, items, options = {}) {
   container.innerHTML = [...groups.entries()]
     .map(
       ([category, groupItems], index) => `
-        <details class="config-group" ${index === 0 ? "open" : ""}>
+        <details class="config-group" ${(options.isOpen?.(category, groupItems, index) ?? index === 0) ? "open" : ""}>
           <summary>
             <span>${escapeHtml(category)}</span>
             <span class="status-pill">${groupItems.length} 项</span>
@@ -510,6 +521,7 @@ function renderSources() {
   renderGroupedConfigList("#sourceStack", window.opsData.sources, {
     bodyClass: "source-group-body",
     getCategory: (source) => source.category || (source.kind === "database" ? "数据库" : source.kind === "file" ? "本地文件" : "API"),
+    isOpen: (_category, groupItems, index) => groupItems.some((source) => source.id === appState.selectedSourceId) || (!appState.selectedSourceId && index === 0),
     renderItem: (source) => `
         <div class="source-card ${source.id === appState.selectedSourceId ? "selected" : ""}" data-source-id="${escapeHtml(source.id || "")}" role="button" tabindex="0">
           <span class="icon" data-icon="${source.icon}"></span>
@@ -936,9 +948,13 @@ function setSourceFormReadonly(readonly) {
   $$("#sourceModal input, #sourceModal select, #sourceModal textarea").forEach((element) => {
     element.disabled = readonly;
   });
-  $("#testSourceBtn").classList.toggle("hidden", readonly);
+  $("#testSourceBtn").classList.remove("hidden");
+  $("#testSourceBtn").disabled = false;
   $("#saveSourceBtn").classList.toggle("hidden", readonly);
   $("#deleteSourceBtn").classList.toggle("hidden", readonly || appState.sourceDetailMode === "create");
+  $$("#sourceModal #runSyncBtn, #sourceModal #addMappingBtn, #sourceModal [data-mapping-action], #sourceModal #configureValueFiltersBtn").forEach((button) => {
+    button.disabled = readonly || (button.id === "configureValueFiltersBtn" && $("#responseFieldKeepModeSelect")?.value !== "value-filter");
+  });
   refreshMultiSelectControls();
 }
 
@@ -1113,8 +1129,102 @@ function getRuleById(id) {
   return (window.opsData.cleaningRules || []).find((rule) => rule.id === id);
 }
 
+function getDictionarySetById(id) {
+  return (window.opsData.dictionarySets || []).find((dictionary) => dictionary.id === id);
+}
+
 function getMappingById(id) {
   return (window.opsData.fieldMappings || []).find((mapping) => mapping.id === id);
+}
+
+function renderDictionarySets() {
+  renderGroupedConfigList("#dictionarySetList", window.opsData.dictionarySets || [], {
+    bodyClass: "support-group-body",
+    getCategory: (dictionary) => dictionary.category || "字典集",
+    renderItem: (dictionary) => `
+      <div class="support-list-item" data-dictionary-id="${escapeHtml(dictionary.id)}">
+        <div>
+          <strong>${escapeHtml(dictionary.name)}</strong>
+          <small>${escapeHtml((dictionary.columns || []).join(" / "))} · ${(dictionary.rows || []).length} 行</small>
+        </div>
+        <div class="row-actions">
+          <button class="small-button" data-dictionary-action="edit" data-dictionary-id="${escapeHtml(dictionary.id)}">编辑</button>
+          <button class="small-button danger" data-dictionary-action="delete" data-dictionary-id="${escapeHtml(dictionary.id)}">删除</button>
+        </div>
+      </div>
+    `
+  });
+}
+
+function renderDictionarySelectOptions(selector, selectedId = "", emptyText = "不引用字典集") {
+  const select = $(selector);
+  if (!select) return;
+  select.innerHTML = [
+    `<option value="">${escapeHtml(emptyText)}</option>`,
+    ...(window.opsData.dictionarySets || []).map((dictionary) => `<option value="${escapeHtml(dictionary.id)}">${escapeHtml(dictionary.name)}</option>`)
+  ].join("");
+  setSelectValue(selector, selectedId);
+}
+
+function renderDictionaryColumnOptions(selector, dictionaryId, selectedColumn = "", emptyText = "选择字段") {
+  const select = $(selector);
+  if (!select) return;
+  const dictionary = getDictionarySetById(dictionaryId);
+  select.innerHTML = [
+    `<option value="">${escapeHtml(emptyText)}</option>`,
+    ...((dictionary?.columns || []).map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`))
+  ].join("");
+  setSelectValue(selector, selectedColumn);
+}
+
+function parseDictionaryColumns() {
+  return $("#dictionaryColumnsInput").value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseDictionaryRows() {
+  try {
+    const rows = JSON.parse($("#dictionaryRowsInput").value || "[]");
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
+}
+
+function resetDictionaryForm() {
+  appState.editingDictionaryId = "";
+  $("#dictionaryModalTitle").textContent = "新增字典集";
+  $("#dictionaryNameInput").value = "产品列表";
+  $("#dictionaryCategoryInput").value = "业务字典";
+  $("#dictionaryColumnsInput").value = "产品部,产品名,别名列表,版本号";
+  $("#dictionaryRowsInput").value = JSON.stringify([{ "产品部": "交易产品部", "产品名": "支付网关", "别名列表": "pay-gateway,payment-api", "版本号": "v3" }], null, 2);
+  $("#dictionaryDescInput").value = "可被过滤条件、字段值过滤和清洗规则引用。";
+  $("#deleteDictionaryBtn").classList.add("hidden");
+}
+
+function populateDictionaryForm(dictionary) {
+  if (!dictionary) return;
+  appState.editingDictionaryId = dictionary.id;
+  $("#dictionaryModalTitle").textContent = "编辑字典集";
+  $("#dictionaryNameInput").value = dictionary.name || "";
+  $("#dictionaryCategoryInput").value = dictionary.category || "通用字典";
+  $("#dictionaryColumnsInput").value = (dictionary.columns || []).join(",");
+  $("#dictionaryRowsInput").value = JSON.stringify(dictionary.rows || [], null, 2);
+  $("#dictionaryDescInput").value = dictionary.description || "";
+  $("#deleteDictionaryBtn").classList.remove("hidden");
+}
+
+function collectDictionaryForm() {
+  const columns = parseDictionaryColumns();
+  return {
+    name: $("#dictionaryNameInput").value.trim() || "自定义字典集",
+    category: $("#dictionaryCategoryInput").value.trim() || "通用字典",
+    description: $("#dictionaryDescInput").value.trim(),
+    columns,
+    rows: parseDictionaryRows()
+  };
 }
 
 function buildRuleExpression() {
@@ -1122,8 +1232,11 @@ function buildRuleExpression() {
   const targetField = $("#ruleTargetFieldInput")?.value.trim();
   const action = $("#ruleActionSelect")?.value || "trim";
   const param = $("#ruleParamInput")?.value.trim();
+  const dictionary = getDictionarySetById($("#ruleDictionarySelect")?.value);
+  const dictionaryColumn = $("#ruleDictionaryColumnSelect")?.value;
   const output = targetField && targetField !== sourceField ? ` -> ${targetField}` : "";
-  return `${sourceField}${output} | ${action}${param ? `(${param})` : ""}`;
+  const dictionaryRef = dictionary ? ` @${dictionary.name}${dictionaryColumn ? `.${dictionaryColumn}` : ""}` : "";
+  return `${sourceField}${output} | ${action}${param ? `(${param})` : ""}${dictionaryRef}`;
 }
 
 function syncRuleExpressionPreview() {
@@ -1152,6 +1265,8 @@ function populateRuleForm(rule) {
   $("#ruleSourceFieldInput").value = rule.config?.sourceField || "";
   $("#ruleTargetFieldInput").value = rule.config?.targetField || "";
   $("#ruleParamInput").value = rule.config?.param || "";
+  renderDictionarySelectOptions("#ruleDictionarySelect", rule.config?.dictionaryId || "");
+  renderDictionaryColumnOptions("#ruleDictionaryColumnSelect", rule.config?.dictionaryId || "", rule.config?.dictionaryColumn || "");
   $("#ruleExpressionInput").value = rule.expression || "";
   $("#ruleDescInput").value = rule.description || "";
 }
@@ -1166,6 +1281,8 @@ function resetRuleForm() {
   $("#ruleSourceFieldInput").value = "service_name";
   $("#ruleTargetFieldInput").value = "service_name";
   $("#ruleParamInput").value = "trim + lower";
+  renderDictionarySelectOptions("#ruleDictionarySelect");
+  renderDictionaryColumnOptions("#ruleDictionaryColumnSelect", "");
   syncRuleExpressionPreview();
   $("#ruleDescInput").value = "统一服务名格式并去除空值";
 }
@@ -1182,7 +1299,9 @@ function collectRuleForm() {
       action: $("#ruleActionSelect").value,
       sourceField: $("#ruleSourceFieldInput").value.trim(),
       targetField: $("#ruleTargetFieldInput").value.trim(),
-      param: $("#ruleParamInput").value.trim()
+      param: $("#ruleParamInput").value.trim(),
+      dictionaryId: $("#ruleDictionarySelect").value,
+      dictionaryColumn: $("#ruleDictionaryColumnSelect").value
     },
     enabled: true
   };
@@ -1433,6 +1552,10 @@ function normalizeValueFiltersForFields(fields = []) {
     field,
     matchMode: existing.get(field)?.matchMode || "exact",
     value: existing.get(field)?.value || "",
+    dictionaryId: existing.get(field)?.dictionaryId || "",
+    dictionaryColumn: existing.get(field)?.dictionaryColumn || "",
+    dictionaryScopeColumn: existing.get(field)?.dictionaryScopeColumn || "",
+    dictionaryScopeValue: existing.get(field)?.dictionaryScopeValue || "",
     enabled: existing.get(field)?.enabled !== false
   }));
 }
@@ -1440,6 +1563,7 @@ function normalizeValueFiltersForFields(fields = []) {
 function renderValueFilterList() {
   const fields = getSelectedKeepFieldsForValueFilters();
   const filters = normalizeValueFiltersForFields(fields);
+  const dictionaries = window.opsData.dictionarySets || [];
   if (!fields.length) {
     $("#valueFilterList").innerHTML = '<div class="module-status">请先在“保留字段”中选择字段，再配置字段值过滤。</div>';
     return;
@@ -1466,10 +1590,51 @@ function renderValueFilterList() {
             <span>匹配值</span>
             <input data-value-filter-value value="${escapeHtml(filter.value)}" placeholder="为空则不启用该字段过滤" />
           </label>
+          <label>
+            <span>引用字典集</span>
+            <select data-value-filter-dictionary>
+              <option value="">不引用</option>
+              ${dictionaries.map((dictionary) => `<option value="${escapeHtml(dictionary.id)}" ${filter.dictionaryId === dictionary.id ? "selected" : ""}>${escapeHtml(dictionary.name)}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            <span>匹配列</span>
+            <select data-value-filter-dictionary-column></select>
+          </label>
+          <label>
+            <span>范围列</span>
+            <select data-value-filter-scope-column></select>
+          </label>
+          <label>
+            <span>范围值</span>
+            <input data-value-filter-scope-value value="${escapeHtml(filter.dictionaryScopeValue || "")}" placeholder="为空表示全部" />
+          </label>
         </div>
       `
     )
     .join("");
+  $$(".value-filter-row", $("#valueFilterList")).forEach((row, index) => {
+    updateValueFilterDictionaryColumns(row, filters[index]);
+  });
+}
+
+function updateValueFilterDictionaryColumns(row, filter = {}) {
+  const dictionaryId = $("[data-value-filter-dictionary]", row)?.value || filter.dictionaryId || "";
+  const dictionary = getDictionarySetById(dictionaryId);
+  const columnSelect = $("[data-value-filter-dictionary-column]", row);
+  const scopeColumnSelect = $("[data-value-filter-scope-column]", row);
+  const options = [
+    '<option value="">选择列</option>',
+    ...((dictionary?.columns || []).map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`))
+  ].join("");
+  if (columnSelect) {
+    columnSelect.innerHTML = options;
+    columnSelect.value = filter.dictionaryColumn || columnSelect.value || "";
+  }
+  if (scopeColumnSelect) {
+    scopeColumnSelect.innerHTML = ['<option value="">全部范围</option>', ...((dictionary?.columns || []).map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`))].join("");
+    scopeColumnSelect.value = filter.dictionaryScopeColumn || scopeColumnSelect.value || "";
+  }
 }
 
 function openValueFilterDialog() {
@@ -1482,7 +1647,11 @@ function saveValueFilterDialog() {
     field: row.dataset.valueFilterField,
     matchMode: $("[data-value-filter-mode]", row).value,
     value: $("[data-value-filter-value]", row).value.trim(),
-    enabled: Boolean($("[data-value-filter-value]", row).value.trim())
+    dictionaryId: $("[data-value-filter-dictionary]", row).value,
+    dictionaryColumn: $("[data-value-filter-dictionary-column]", row).value,
+    dictionaryScopeColumn: $("[data-value-filter-scope-column]", row).value,
+    dictionaryScopeValue: $("[data-value-filter-scope-value]", row).value.trim(),
+    enabled: Boolean($("[data-value-filter-value]", row).value.trim() || ($("[data-value-filter-dictionary]", row).value && $("[data-value-filter-dictionary-column]", row).value))
   }));
   closeDialog("#valueFilterModal");
 }
@@ -1940,6 +2109,16 @@ function setupBusinessWorkbenchLayout() {
   });
 }
 
+function setupSourceWorkbenchLayout() {
+  const modalPanel = $(".source-modal-panel");
+  const mappingWorkbench = $(".mapping-workbench");
+  const testResult = $("#sourceTestResult");
+  if (!modalPanel || !mappingWorkbench || !testResult || mappingWorkbench.closest("#sourceModal")) return;
+  mappingWorkbench.classList.remove("cleaning-block", "wide");
+  mappingWorkbench.classList.add("source-modal-mapping");
+  testResult.before(mappingWorkbench);
+}
+
 function isBusinessPreviewMode() {
   return appState.businessDetailMode === "preview";
 }
@@ -2098,13 +2277,16 @@ function renderMappings() {
           <span title="${escapeHtml(rule?.description || item.rule || "")}">${escapeHtml(ruleText)}</span>
           <span>${escapeHtml(item.output)}</span>
           <span class="row-actions">
-            <button class="small-button" data-mapping-action="edit" data-mapping-id="${escapeHtml(item.id || "")}" ${item.id ? "" : "disabled"}>编辑</button>
-            <button class="small-button danger" data-mapping-action="delete" data-mapping-id="${escapeHtml(item.id || "")}" ${item.id ? "" : "disabled"}>删除</button>
+            <button class="small-button" type="button" data-mapping-action="edit" data-mapping-id="${escapeHtml(item.id || "")}" ${item.id ? "" : "disabled"}>编辑</button>
+            <button class="small-button danger" type="button" data-mapping-action="delete" data-mapping-id="${escapeHtml(item.id || "")}" ${item.id ? "" : "disabled"}>删除</button>
           </span>
         </div>
       `;
     })
   ].join("");
+  if ($("#sourceModal")?.open) {
+    setSourceFormReadonly(appState.sourceDetailMode === "preview");
+  }
 }
 
 function resetMappingForm() {
@@ -2944,6 +3126,12 @@ function bindEvents() {
   $("#saveValueFilterBtn").addEventListener("click", saveValueFilterDialog);
   $("#cancelValueFilterBtn").addEventListener("click", () => closeDialog("#valueFilterModal"));
   $("#closeValueFilterBtn").addEventListener("click", () => closeDialog("#valueFilterModal"));
+  $("#valueFilterList").addEventListener("change", (event) => {
+    const row = event.target.closest(".value-filter-row");
+    if (row && event.target.matches("[data-value-filter-dictionary]")) {
+      updateValueFilterDictionaryColumns(row);
+    }
+  });
   $("#sourceKindSelect").addEventListener("change", () => {
     updateRequestParamVisibility();
     renderParamFieldSelect();
@@ -2998,6 +3186,68 @@ function bindEvents() {
     renderAuthConfigs();
   });
   $("#authCategoryInput").addEventListener("change", syncAuthFormByCategory);
+  $("#ruleDictionarySelect").addEventListener("change", () => {
+    renderDictionaryColumnOptions("#ruleDictionaryColumnSelect", $("#ruleDictionarySelect").value);
+    syncRuleExpressionPreview();
+  });
+  $("#ruleDictionaryColumnSelect").addEventListener("change", syncRuleExpressionPreview);
+  $("#addDictionaryBtn").addEventListener("click", () => {
+    resetDictionaryForm();
+    openDialog("#dictionaryModal");
+  });
+  $("#saveDictionaryBtn").addEventListener("click", async (event) => {
+    event.preventDefault();
+    const payload = collectDictionaryForm();
+    const editingId = appState.editingDictionaryId;
+    try {
+      const saved = await apiRequest(editingId ? `/api/dictionary-sets/${encodeURIComponent(editingId)}` : "/api/dictionary-sets", {
+        method: editingId ? "PUT" : "POST",
+        body: JSON.stringify(payload)
+      });
+      if (editingId) {
+        window.opsData.dictionarySets = (window.opsData.dictionarySets || []).map((item) => (item.id === saved.id ? saved : item));
+      } else {
+        window.opsData.dictionarySets.unshift(saved);
+      }
+    } catch {
+      const localDictionary = { id: editingId || `local_dict_${Date.now()}`, ...payload };
+      if (editingId) {
+        window.opsData.dictionarySets = (window.opsData.dictionarySets || []).map((item) => (item.id === editingId ? { ...item, ...localDictionary } : item));
+      } else {
+        window.opsData.dictionarySets.unshift(localDictionary);
+      }
+    }
+    renderDictionarySets();
+    closeDialog("#dictionaryModal");
+  });
+  $("#deleteDictionaryBtn").addEventListener("click", async () => {
+    const dictionary = getDictionarySetById(appState.editingDictionaryId);
+    if (!dictionary) return;
+    try {
+      await apiRequest(`/api/dictionary-sets/${encodeURIComponent(dictionary.id)}`, { method: "DELETE" });
+    } catch {
+      // Local fallback.
+    }
+    window.opsData.dictionarySets = (window.opsData.dictionarySets || []).filter((item) => item.id !== dictionary.id);
+    renderDictionarySets();
+    closeDialog("#dictionaryModal");
+  });
+  $("#dictionarySetList").addEventListener("click", (event) => {
+    const dictionaryId = event.target.dataset.dictionaryId;
+    const action = event.target.dataset.dictionaryAction;
+    if (!dictionaryId || !action) return;
+    const dictionary = getDictionarySetById(dictionaryId);
+    if (!dictionary) return;
+    if (action === "edit") {
+      populateDictionaryForm(dictionary);
+      openDialog("#dictionaryModal");
+      return;
+    }
+    if (action === "delete") {
+      appState.editingDictionaryId = dictionary.id;
+      $("#deleteDictionaryBtn").click();
+    }
+  });
   $("#addAuthBtn").addEventListener("click", async () => {
     resetAuthForm();
     openDialog("#authModal");
@@ -3474,7 +3724,9 @@ async function boot() {
   renderSourceTestResult();
   renderMappings();
   renderRuleTable();
+  renderDictionarySets();
   setupBusinessWorkbenchLayout();
+  setupSourceWorkbenchLayout();
   renderFlowControls();
   renderFlowTable();
   renderFlowOutput();

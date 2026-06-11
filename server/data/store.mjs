@@ -352,6 +352,20 @@ export const store = {
       updatedAt: now()
     }
   ],
+  dictionarySets: [
+    {
+      id: "dict_product_catalog",
+      name: "产品列表",
+      category: "业务字典",
+      description: "用于按产品部、产品名、别名和版本号匹配数据源过滤和清洗规则。",
+      columns: ["产品部", "产品名", "别名列表", "版本号"],
+      rows: [
+        { "产品部": "交易产品部", "产品名": "支付网关", "别名列表": "pay-gateway,payment-api", "版本号": "v3" },
+        { "产品部": "订单产品部", "产品名": "订单中心", "别名列表": "order-center,order-api", "版本号": "v2" }
+      ],
+      updatedAt: now()
+    }
+  ],
   syncLogs: [],
   analysisResults: []
 };
@@ -381,6 +395,7 @@ export function getBootstrapData() {
     cleaningRules: store.cleaningRules,
     businessFlows: store.businessFlows,
     modelConfigs: store.modelConfigs,
+    dictionarySets: store.dictionarySets,
     signals: store.signals,
     knowledge: store.knowledge
   };
