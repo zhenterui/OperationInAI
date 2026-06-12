@@ -463,6 +463,13 @@
   { "from": "owner", "to": "query.owner" }
 ]</textarea>
                 </label>
+                <label class="full">
+                  <span>占位符变量 JSON</span>
+                  <textarea id="paramPlaceholderInput" rows="4">[
+  { "name": "start_time", "source": "mapping", "from": "context.start_time" },
+  { "name": "env", "source": "custom", "value": "prod" }
+]</textarea>
+                </label>
                 <label>
                   <span>调用方式</span>
                   <select id="paramIterationModeSelect">
@@ -590,8 +597,22 @@
                   <select id="mapRuleSelect" aria-label="清洗规则"></select>
                 </label>
                 <label>
+                  <span>转换方式</span>
+                  <select id="mapTransformModeSelect" aria-label="转换方式">
+                    <option value="none">不转换</option>
+                    <option value="dedupe">去重</option>
+                    <option value="merge">合并</option>
+                    <option value="extract">截取/提取</option>
+                    <option value="combine">组合字段</option>
+                  </select>
+                </label>
+                <label>
                   <span>规则参数</span>
                   <input id="mapRuleInput" value="" aria-label="规则参数" placeholder="参数/覆盖说明" />
+                </label>
+                <label>
+                  <span>转换参数</span>
+                  <input id="mapTransformParamInput" value="" aria-label="转换参数" placeholder="合并分隔符、正则或 {{field}} 模板" />
                 </label>
                 <button class="small-button inline-editor-action" id="addMappingBtn" type="button">
                   <span class="icon" data-icon="plus"></span>
@@ -1052,7 +1073,7 @@
           </label>
           <label class="full">
             <span>表头字段</span>
-            <input id="dictionaryColumnsInput" value="产品部,产品名,别名列表,版本号" />
+            <input id="dictionaryColumnsInput" value="产品部,产品名,别名列表,版本号" readonly placeholder="根据下方 JSON 自动生成" />
           </label>
           <label class="full">
             <span>字典值 JSON</span>

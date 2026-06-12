@@ -35,7 +35,7 @@ http://localhost:4173/
 字典集由三部分组成：
 
 - 字典名称：供其他模块引用时选择，例如“产品列表”。
-- 表头字段：用英文逗号或中文逗号分隔，例如 `产品部,产品名,别名列表,版本号`。
+- 表头字段：根据字典值 JSON 自动生成，例如 `产品部,产品名,别名列表,版本号`。
 - 字典值 JSON：数组形式，每一行是一条字典记录。
 
 产品列表示例：
@@ -48,6 +48,11 @@ http://localhost:4173/
 ```
 
 字段值过滤和清洗规则可以引用字典集。比如在字段值过滤中选择“产品列表”的“别名列表”作为匹配列，并把范围列设为“产品部”、范围值设为“交易产品部”，系统就只会用交易产品部下的产品别名参与匹配。匹配列中的逗号、分号或竖线分隔值会被自动拆开参与匹配。
+
+字段值过滤有两种字典匹配方向：
+
+- 字段值在字典列中：例如字段值 `pay-gateway` 命中“产品列表 / 别名列表”中的任意别名。
+- 字典值在字段内容中：例如字段内容 `支付网关 pay-gateway v3 告警` 包含字典列中的 `pay-gateway`。
 
 ### 数据源配置
 
@@ -78,6 +83,26 @@ API 数据源的“测试联通”规则：
 - 业务流上下文：使用 `context.start_time`、`context.end_time`、`context.businessName` 等上下文字段驱动调用。
 
 勾选“来源字段”后点击“生成入参与过滤”，系统会自动生成入参字段映射 JSON 和建议过滤条件，用户再按实际接口调整即可。
+
+入参字段映射 JSON 表示“来源字段如何写入请求入参”：
+
+```json
+[
+  { "from": "service_id", "to": "body.serviceId" },
+  { "from": "owner", "to": "query.owner" }
+]
+```
+
+占位符变量 JSON 用于替换 Query/Header/Body 中的 `{{变量名}}`：
+
+```json
+[
+  { "name": "start_time", "source": "mapping", "from": "context.start_time" },
+  { "name": "env", "source": "custom", "value": "prod" }
+]
+```
+
+其中 `source=custom` 会直接使用 `value`；`source=mapping` 表示变量值来自业务流上下文、上游数据源或数据库记录字段，测试接口会保留可追踪占位符，真实编排执行时再按来源逐条填充。
 
 ### 字段映射
 
@@ -127,6 +152,8 @@ field <= value
 field contains value
 field in [a,b,c]
 field exists
+field in dict(字典名称.字段名)
+field contains dict(字典名称.字段名)
 ```
 
 支持 `&&` 和 `||` 组合：
@@ -135,6 +162,8 @@ field exists
 level in [P0,P1] && duration > 300
 name == cpu || name == mem
 owner exists && status != closed
+name in dict(产品列表.别名列表 where 产品部=交易产品部)
+title contains dict(产品列表.别名列表)
 ```
 
 嵌套数组和单条对象内嵌 list/dict 的写法：
@@ -202,6 +231,18 @@ occurTime -> event_time | date(YYYY-MM-DD HH:mm:ss)
 duration -> impact_minutes | number(seconds_to_minutes)
 service_id -> owner | enrich(cmdb.service_id=service_id)
 ```
+
+### 字段映射转换
+
+数据源返回值进入目标字段前，可以在字段映射中配置转换方式：
+
+- 不转换：直接取源字段值，多个值保留为数组。
+- 去重：对多值去重后合并，转换参数可填写分隔符。
+- 合并：把多值按分隔符合成一个字符串。
+- 截取/提取：转换参数填写正则表达式，命中时取第一个分组，否则取完整匹配。
+- 组合字段：转换参数填写模板，例如 `{{service.name}}-{{level}}`。
+
+这些转换会在测试联通结果中展示“字段映射与转换后的样本”，用于确认去重、合并、截取和组合是否符合预期。
 
 规则字段含义：
 

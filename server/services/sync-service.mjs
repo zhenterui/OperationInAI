@@ -48,6 +48,7 @@ function toSourcePatch(input = {}) {
       filterCondition: input.parameterConfig?.filterCondition || "",
       query: input.parameterConfig?.query || "",
       mappings: Array.isArray(input.parameterConfig?.mappings) ? input.parameterConfig.mappings : [],
+      placeholders: Array.isArray(input.parameterConfig?.placeholders) ? input.parameterConfig.placeholders : [],
       iterationMode: input.parameterConfig?.iterationMode || "single",
       strategy: input.parameterConfig?.strategy || ""
     },
@@ -217,6 +218,18 @@ function evaluateSingleFilter(record, condition = "", responsePath = "") {
       .filter((item) => item !== "");
     return values.some((value) => expected.includes(normalizeComparable(value)));
   }
+  const dictInMatch = text.match(/^(.+?)\s+in\s+dict\((.+)\)$/i);
+  if (dictInMatch) {
+    const values = getValuesByPath(record, stripResponsePrefix(dictInMatch[1], responsePath));
+    const dictionaryValues = getDictionaryValuesFromRef(dictInMatch[2]);
+    return values.some((value) => matchesDictionaryValue(value, { dictionaryValues, dictionaryMatchMode: "field-in-dictionary" }));
+  }
+  const dictContainsMatch = text.match(/^(.+?)\s+contains\s+dict\((.+)\)$/i);
+  if (dictContainsMatch) {
+    const values = getValuesByPath(record, stripResponsePrefix(dictContainsMatch[1], responsePath));
+    const dictionaryValues = getDictionaryValuesFromRef(dictContainsMatch[2]);
+    return values.some((value) => matchesDictionaryValue(value, { dictionaryValues, dictionaryMatchMode: "dictionary-in-field" }));
+  }
   const match = text.match(/^(.+?)\s*(==|!=|>=|<=|>|<|contains)\s*(.+)$/i);
   if (!match) return true;
   const [, field, operator, expected] = match;
@@ -266,7 +279,34 @@ function matchValueFilterValue(actual, filter) {
   return left === right;
 }
 
+function splitDictionaryCell(value) {
+  return String(value ?? "")
+    .split(/[,，;；|]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function getDictionaryByIdOrName(idOrName = "") {
+  const key = String(idOrName || "").trim();
+  return store.dictionarySets.find((item) => item.id === key || item.name === key);
+}
+
+function getDictionaryValuesFromRef(ref = "") {
+  const [target, scope] = String(ref).split(/\s+where\s+|\s*\|\s*/i);
+  const [dictionaryName, column] = target.split(".");
+  const dictionary = getDictionaryByIdOrName(dictionaryName);
+  if (!dictionary || !column) return [];
+  const [scopeColumn, scopeValue] = scope ? scope.split("=").map((item) => item?.trim()) : [];
+  return (dictionary.rows || [])
+    .filter((row) => {
+      if (!scopeColumn || !scopeValue) return true;
+      return String(row[scopeColumn] ?? "") === unquoteValue(scopeValue);
+    })
+    .flatMap((row) => splitDictionaryCell(row[column]));
+}
+
 function getDictionaryFilterValues(filter = {}) {
+  if (Array.isArray(filter.dictionaryValues)) return filter.dictionaryValues;
   if (!filter.dictionaryId || !filter.dictionaryColumn) return [];
   const dictionary = store.dictionarySets.find((item) => item.id === filter.dictionaryId);
   if (!dictionary) return [];
@@ -276,16 +316,17 @@ function getDictionaryFilterValues(filter = {}) {
       return String(row[filter.dictionaryScopeColumn] ?? "") === String(filter.dictionaryScopeValue);
     })
     .flatMap((row) =>
-      String(row[filter.dictionaryColumn] ?? "")
-        .split(/[,，;；|]/)
-        .map((value) => value.trim())
-        .filter(Boolean)
+      splitDictionaryCell(row[filter.dictionaryColumn])
     );
 }
 
 function matchesDictionaryValue(actual, filter = {}) {
   const values = getDictionaryFilterValues(filter);
   if (!values.length) return false;
+  if (filter.dictionaryMatchMode === "dictionary-in-field") {
+    const text = String(actual ?? "");
+    return values.some((value) => value && text.includes(String(value)));
+  }
   return values.some((value) => matchValueFilterValue(actual, { ...filter, value }));
 }
 
@@ -345,13 +386,79 @@ function appendQueryParams(url, queryParams = {}) {
   return parsed.toString();
 }
 
+function buildPlaceholderValues(parameterConfig = {}) {
+  return (parameterConfig.placeholders || []).reduce((output, item) => {
+    if (!item?.name) return output;
+    output[item.name] = item.source === "custom" ? item.value ?? "" : `{{${item.from || item.name}}}`;
+    return output;
+  }, {});
+}
+
+function applyPlaceholders(value, placeholderValues = {}) {
+  if (typeof value === "string") {
+    return value.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (match, key) =>
+      Object.prototype.hasOwnProperty.call(placeholderValues, key) ? String(placeholderValues[key]) : match
+    );
+  }
+  if (Array.isArray(value)) return value.map((item) => applyPlaceholders(item, placeholderValues));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, applyPlaceholders(child, placeholderValues)]));
+  }
+  return value;
+}
+
+function renderTemplate(template = "", record = {}, responsePath = "") {
+  return String(template || "").replace(/\{\{\s*([^}]+)\s*\}\}/g, (_match, field) => {
+    const values = getValuesByPath(record, stripResponsePrefix(field.trim(), responsePath));
+    return values.length > 1 ? [...new Set(values.map((item) => String(item)))].join(",") : values[0] ?? "";
+  });
+}
+
+function applyMappingTransform(values = [], mapping = {}, record = {}, responsePath = "") {
+  const normalizedValues = values.flat().filter((value) => value !== undefined && value !== null && value !== "");
+  const mode = mapping.transformMode || "none";
+  const param = mapping.transformParam || "";
+  if (mode === "combine") {
+    return renderTemplate(param || mapping.sourceField || "", record, responsePath) || mapping.defaultValue || "";
+  }
+  if (!normalizedValues.length) return mapping.defaultValue ?? "";
+  if (mode === "dedupe") {
+    return [...new Set(normalizedValues.map((value) => String(value)))].join(param || ",");
+  }
+  if (mode === "merge") {
+    return normalizedValues.map((value) => String(value)).join(param || ",");
+  }
+  if (mode === "extract") {
+    try {
+      const match = String(normalizedValues[0]).match(new RegExp(param));
+      return match ? match[1] || match[0] : mapping.defaultValue ?? "";
+    } catch {
+      return mapping.defaultValue ?? "";
+    }
+  }
+  return normalizedValues.length > 1 ? normalizedValues : normalizedValues[0];
+}
+
+function applyFieldMappings(records = [], mappings = [], responsePath = "") {
+  if (!mappings.length) return [];
+  return records.map((record) =>
+    mappings.reduce((output, mapping) => {
+      const localField = stripResponsePrefix(mapping.sourceField, responsePath);
+      const values = getValuesByPath(record, localField);
+      output[mapping.targetField] = applyMappingTransform(values, mapping, record, responsePath);
+      return output;
+    }, {})
+  );
+}
+
 async function fetchRealSource(config = {}) {
   const sourceUrl = normalizeSourceUrl(config.type);
   if (!sourceUrl || (config.kind || "api") !== "api") return null;
   const method = String(config.method || config.requestConfig?.method || "GET").toUpperCase();
-  const queryParams = config.queryParams || config.requestConfig?.queryParams || {};
-  const headers = { ...(config.headers || config.requestConfig?.headers || {}) };
-  const body = config.body || config.requestConfig?.body || {};
+  const placeholderValues = buildPlaceholderValues(config.parameterConfig || {});
+  const queryParams = applyPlaceholders(config.queryParams || config.requestConfig?.queryParams || {}, placeholderValues);
+  const headers = { ...applyPlaceholders(config.headers || config.requestConfig?.headers || {}, placeholderValues) };
+  const body = applyPlaceholders(config.body || config.requestConfig?.body || {}, placeholderValues);
   const authConfig = store.authConfigs.find((item) => item.id === config.authConfigId);
   if (authConfig?.cookieName && authConfig?.cookieValue) {
     headers.Cookie = `${authConfig.cookieName}=${authConfig.cookieValue}`;
@@ -403,6 +510,10 @@ export async function testDataSource(input = {}) {
   const valueFilters = Array.isArray(config.responseConfig?.valueFilters) ? config.responseConfig.valueFilters : [];
   const persistMode = config.responseConfig?.persistMode || "none";
   const targetTable = config.responseConfig?.targetTable || "";
+  const placeholderValues = buildPlaceholderValues(config.parameterConfig || {});
+  const resolvedQueryParams = applyPlaceholders(config.queryParams || config.requestConfig?.queryParams || {}, placeholderValues);
+  const resolvedHeaders = applyPlaceholders(config.headers || config.requestConfig?.headers || {}, placeholderValues);
+  const resolvedBody = applyPlaceholders(config.body || config.requestConfig?.body || {}, placeholderValues);
   let sourceMode = "mock";
   let status = 200;
   let durationMs = 186;
@@ -548,6 +659,8 @@ export async function testDataSource(input = {}) {
     valueFilters
   });
   const recordFields = extraction.recordValue === undefined ? [] : flattenFields(extraction.filteredRecords, normalizeRecordPrefix(responsePath));
+  const sourceMappings = (store.fieldMappings || []).filter((mapping) => mapping.sourceId === (config.id || config.sourceId));
+  const mappedRecords = applyFieldMappings(extraction.filteredRecords, sourceMappings, responsePath);
 
   return {
     ok: status >= 200 && status < 400,
@@ -569,9 +682,10 @@ export async function testDataSource(input = {}) {
       persistMode,
       targetTable,
       parameterConfig: config.parameterConfig || {},
-      queryParams: config.queryParams || config.requestConfig?.queryParams || {},
-      headers: config.headers || config.requestConfig?.headers || {},
-      body: config.body || config.requestConfig?.body || {},
+      placeholderValues,
+      queryParams: resolvedQueryParams,
+      headers: resolvedHeaders,
+      body: resolvedBody,
       pagination: config.pagination || config.requestConfig?.pagination || ""
     },
     responseBody,
@@ -579,7 +693,8 @@ export async function testDataSource(input = {}) {
     recordFields,
     recordCount: extraction.recordCount,
     filteredRecordCount: extraction.filteredRecordCount,
-    selectedRecords: extraction.selectedRecords.slice(0, 10)
+    selectedRecords: extraction.selectedRecords.slice(0, 10),
+    mappedRecords: mappedRecords.slice(0, 10)
   };
 }
 

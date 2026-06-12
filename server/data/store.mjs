@@ -44,6 +44,10 @@ export const store = {
           { from: "service_id", to: "body.serviceId" },
           { from: "owner", to: "query.owner" }
         ],
+        placeholders: [
+          { name: "start_time", source: "mapping", from: "context.start_time" },
+          { name: "end_time", source: "mapping", from: "context.end_time" }
+        ],
         iterationMode: "per-record",
         strategy: "concurrency=5; retries=2; continueOnError=true"
       },
@@ -162,11 +166,11 @@ export const store = {
     }
   ],
   fieldMappings: [
-    { id: "map_alarm_name", sourceId: "src_alarm_api", sourceField: "alarmName", targetField: "event_name", type: "字符串", defaultValue: "未命名事件", rule: "空值过滤 + trim", output: "内部业务库" },
-    { id: "map_alarm_level", sourceId: "src_alarm_api", sourceField: "level", targetField: "severity", type: "枚举", defaultValue: "P2", rule: "P0/P1/P2 -> 高/中/低", output: "内部业务库" },
-    { id: "map_alarm_time", sourceId: "src_alarm_api", sourceField: "occurTime", targetField: "event_time", type: "时间", defaultValue: "", rule: "UTC+8 标准化", output: "内部业务库" },
-    { id: "map_cmdb_owner", sourceId: "src_cmdb_pg", sourceField: "service.owner", targetField: "owner", type: "字符串", defaultValue: "未分配", rule: "CMDB 关联补齐", output: "内部业务库" },
-    { id: "map_inspection_duration", sourceId: "src_inspection_xlsx", sourceField: "duration", targetField: "impact_minutes", type: "数字", defaultValue: "0", rule: "秒转分钟", output: "内部业务库" }
+    { id: "map_alarm_name", sourceId: "src_alarm_api", sourceField: "alarmName", targetField: "event_name", type: "字符串", defaultValue: "未命名事件", rule: "空值过滤 + trim", transformMode: "none", transformParam: "", output: "内部业务库" },
+    { id: "map_alarm_level", sourceId: "src_alarm_api", sourceField: "level", targetField: "severity", type: "枚举", defaultValue: "P2", rule: "P0/P1/P2 -> 高/中/低", transformMode: "none", transformParam: "", output: "内部业务库" },
+    { id: "map_alarm_time", sourceId: "src_alarm_api", sourceField: "occurTime", targetField: "event_time", type: "时间", defaultValue: "", rule: "UTC+8 标准化", transformMode: "none", transformParam: "", output: "内部业务库" },
+    { id: "map_cmdb_owner", sourceId: "src_cmdb_pg", sourceField: "service.owner", targetField: "owner", type: "字符串", defaultValue: "未分配", rule: "CMDB 关联补齐", transformMode: "none", transformParam: "", output: "内部业务库" },
+    { id: "map_inspection_duration", sourceId: "src_inspection_xlsx", sourceField: "duration", targetField: "impact_minutes", type: "数字", defaultValue: "0", rule: "秒转分钟", transformMode: "none", transformParam: "", output: "内部业务库" }
   ],
   cleaningRules: [
     {

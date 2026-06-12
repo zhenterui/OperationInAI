@@ -11,6 +11,8 @@ export function createFieldMapping(input = {}) {
     ruleId: input.ruleId || "",
     ruleParam: input.ruleParam || "",
     rule: input.rule || "trim",
+    transformMode: input.transformMode || "none",
+    transformParam: input.transformParam || "",
     output: input.output || "内部业务库"
   };
   store.fieldMappings.push(mapping);
@@ -35,6 +37,8 @@ export function updateFieldMapping(id, input = {}) {
     ruleId: input.ruleId ?? existing.ruleId ?? "",
     ruleParam: input.ruleParam ?? existing.ruleParam ?? "",
     rule: input.rule || existing.rule,
+    transformMode: input.transformMode || existing.transformMode || "none",
+    transformParam: input.transformParam ?? existing.transformParam ?? "",
     output: input.output || existing.output,
     updatedAt: new Date().toISOString()
   };
@@ -183,15 +187,21 @@ function normalizeDictionaryRows(rows = [], columns = []) {
   );
 }
 
+function inferDictionaryColumns(rows = []) {
+  if (!Array.isArray(rows)) return [];
+  return [...new Set(rows.flatMap((row) => Object.keys(row || {})))];
+}
+
 export function createDictionarySet(input = {}) {
-  const columns = Array.isArray(input.columns) && input.columns.length ? input.columns : ["名称", "值"];
+  const rows = Array.isArray(input.rows) ? input.rows : [];
+  const columns = Array.isArray(input.columns) && input.columns.length ? input.columns : inferDictionaryColumns(rows);
   const dictionary = {
     id: `dict_${Date.now()}`,
     name: input.name || "自定义字典集",
     category: input.category || "通用字典",
     description: input.description || "",
-    columns,
-    rows: normalizeDictionaryRows(input.rows, columns),
+    columns: columns.length ? columns : ["名称", "值"],
+    rows: normalizeDictionaryRows(rows, columns.length ? columns : ["名称", "值"]),
     updatedAt: new Date().toISOString()
   };
   store.dictionarySets.unshift(dictionary);
@@ -206,14 +216,15 @@ export function updateDictionarySet(id, input = {}) {
     throw error;
   }
   const existing = store.dictionarySets[index];
-  const columns = Array.isArray(input.columns) && input.columns.length ? input.columns : existing.columns;
+  const rows = Array.isArray(input.rows) ? input.rows : existing.rows;
+  const columns = Array.isArray(input.columns) && input.columns.length ? input.columns : inferDictionaryColumns(rows);
   const updated = {
     ...existing,
     name: input.name || existing.name,
     category: input.category || existing.category,
     description: input.description ?? existing.description,
-    columns,
-    rows: normalizeDictionaryRows(Array.isArray(input.rows) ? input.rows : existing.rows, columns),
+    columns: columns.length ? columns : existing.columns,
+    rows: normalizeDictionaryRows(rows, columns.length ? columns : existing.columns),
     updatedAt: new Date().toISOString()
   };
   store.dictionarySets[index] = updated;

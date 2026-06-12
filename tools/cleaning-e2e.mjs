@@ -70,6 +70,8 @@ try {
     "configureValueFiltersBtn",
     "mapDefaultInput",
     "mapRuleSelect",
+    "mapTransformModeSelect",
+    "mapTransformParamInput",
     "addMappingBtn",
     "ruleActionSelect",
     "ruleSourceFieldInput",
@@ -77,6 +79,7 @@ try {
     "ruleDictionarySelect",
     "addDictionaryBtn",
     "dictionarySetList",
+    "paramPlaceholderInput",
     "flowDesigner",
     "flowNodeTypeSelect",
     "flowNodeRefSelect",
@@ -213,6 +216,59 @@ try {
   assert(dictionaryFilterTest.data.filteredRecordCount === 1, "dictionary referenced value filter should keep matching product");
   assert(dictionaryFilterTest.data.selectedRecords[0]["data.products[].name"] === "pay-gateway", "dictionary filter should preserve matching row");
 
+  const dictionaryContainsTest = await request("/api/data-sources/test", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E 字典反向包含过滤",
+      kind: "api",
+      responsePath: "data.products[]",
+      responseBody: {
+        data: {
+          products: [
+            { title: "支付网关 pay-gateway v3 告警" },
+            { title: "未知服务告警" }
+          ]
+        }
+      },
+      responseConfig: {
+        fieldKeepMode: "value-filter",
+        keepFields: ["data.products[].title"],
+        valueFilters: [
+          {
+            field: "data.products[].title",
+            dictionaryId: "dict_product_catalog",
+            dictionaryColumn: "别名列表",
+            dictionaryMatchMode: "dictionary-in-field",
+            enabled: true
+          }
+        ]
+      }
+    })
+  });
+  assert(dictionaryContainsTest.data.filteredRecordCount === 1, "dictionary value should match inside field content");
+
+  const dictionaryExpressionTest = await request("/api/data-sources/test", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E 字典表达式过滤",
+      kind: "api",
+      responsePath: "data.products[]",
+      responseBody: {
+        data: {
+          products: [
+            { name: "pay-gateway" },
+            { name: "unknown-service" }
+          ]
+        }
+      },
+      responseConfig: {
+        keepMode: "filter",
+        filterCondition: "name in dict(产品列表.别名列表 where 产品部=交易产品部)"
+      }
+    })
+  });
+  assert(dictionaryExpressionTest.data.filteredRecordCount === 1, "filter condition should support dictionary membership");
+
   const rule = await request("/api/cleaning-rules", {
     method: "POST",
     body: JSON.stringify({
@@ -239,6 +295,8 @@ try {
       defaultValue: "unknown",
       ruleId: rule.data.id,
       ruleParam: "trim",
+      transformMode: "none",
+      transformParam: "",
       rule: rule.data.expression,
       output: "内部业务库"
     })
@@ -256,12 +314,20 @@ try {
       defaultValue: "0",
       ruleId: rule.data.id,
       ruleParam: "toNumber",
+      transformMode: "extract",
+      transformParam: "\\d+",
       rule: "数值转换",
       output: "内部业务库"
     })
   });
   assert(updatedMapping.data.targetField === "queue_lag", "mapping edit should update target field");
   assert(updatedMapping.data.defaultValue === "0", "mapping edit should update default value");
+  const transformTest = await request("/api/data-sources/test", {
+    method: "POST",
+    body: JSON.stringify({ sourceId: source.data.id, ...source.data })
+  });
+  assert(transformTest.data.mappedRecords.length > 0, "source test should return mapped records");
+  assert(transformTest.data.mappedRecords[0].queue_lag !== undefined, "mapped records should include transformed target field");
 
   const deletedMapping = await request(`/api/field-mappings/${updatedMapping.data.id}`, {
     method: "DELETE"

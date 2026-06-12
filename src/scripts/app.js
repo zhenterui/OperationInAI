@@ -690,6 +690,15 @@ function autoGenerateParamMapping() {
     to: `${targetScope}.${field.replace(/^context\./, "").replace(/[^a-zA-Z0-9_]/g, "_")}`
   }));
   $("#paramMappingInput").value = JSON.stringify(mappings, null, 2);
+  const placeholders = effectiveFields
+    .filter((field) => /^context\.|start|end|time|env|tenant/i.test(field))
+    .map((field) => ({
+      name: field.replace(/^context\./, "").replace(/[^a-zA-Z0-9_]/g, "_"),
+      source: field.startsWith("context.") ? "mapping" : "custom",
+      from: field.startsWith("context.") ? field : "",
+      value: field.startsWith("context.") ? "" : field
+    }));
+  $("#paramPlaceholderInput").value = JSON.stringify(placeholders, null, 2);
   const sourceType = $("#paramSourceTypeSelect").value;
   const filter = $("#paramFilterInput").value.trim();
   if (sourceType === "database") {
@@ -750,6 +759,12 @@ function updateResponsePersistState() {
   }
 }
 
+function formatJsonPreview(value, maxLength = 12000) {
+  const text = JSON.stringify(value, null, 2) ?? "";
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}\n... 已截断预览 ${text.length - maxLength} 个字符，避免页面卡顿`;
+}
+
 function renderSourceTestResult(result) {
   if (!result) {
     $("#sourceTestResult").innerHTML = '<div class="module-status">配置入参后点击“测试联通”，这里会显示返回状态、响应字段和响应体。</div>';
@@ -758,6 +773,7 @@ function renderSourceTestResult(result) {
   }
   const displayFields = result.recordFields?.length ? result.recordFields : result.fields;
   const uniqueFields = [...new Set((displayFields || []).filter(Boolean))];
+  const previewFields = uniqueFields.slice(0, 300);
   $("#sourceTestResult").innerHTML = `
     <div class="test-summary">
       <span class="status-pill ${result.ok === false ? "danger" : "ok"}">HTTP ${escapeHtml(result.status)}</span>
@@ -773,11 +789,13 @@ function renderSourceTestResult(result) {
       ${result.error ? `<span class="status-pill danger">${escapeHtml(result.error)}</span>` : ""}
     </div>
     <div class="field-chip-list">
-      ${uniqueFields.map((field) => `<button class="field-chip" data-response-field="${escapeHtml(field)}">${escapeHtml(field)}</button>`).join("")}
+      ${previewFields.map((field) => `<button class="field-chip" data-response-field="${escapeHtml(field)}">${escapeHtml(field)}</button>`).join("")}
+      ${uniqueFields.length > previewFields.length ? `<span class="status-pill">另有 ${uniqueFields.length - previewFields.length} 个字段未展开</span>` : ""}
     </div>
-    ${result.selectedRecords?.length ? `<div class="module-status">过滤/字段保留后的样本</div><pre class="response-preview">${escapeHtml(JSON.stringify(result.selectedRecords, null, 2))}</pre>` : ""}
+    ${result.selectedRecords?.length ? `<div class="module-status">过滤/字段保留后的样本</div><pre class="response-preview">${escapeHtml(formatJsonPreview(result.selectedRecords, 8000))}</pre>` : ""}
+    ${result.mappedRecords?.length ? `<div class="module-status">字段映射与转换后的样本</div><pre class="response-preview">${escapeHtml(formatJsonPreview(result.mappedRecords, 8000))}</pre>` : ""}
     <div class="module-status">原始响应体</div>
-    <pre class="response-preview">${escapeHtml(JSON.stringify(result.responseBody, null, 2))}</pre>
+    <pre class="response-preview">${escapeHtml(formatJsonPreview(result.responseBody))}</pre>
   `;
   renderResponseFieldOptions(uniqueFields);
   renderResponseKeepFieldOptions(getSelectedValues($("#responseKeepFieldsSelect")));
@@ -907,6 +925,7 @@ function populateSourceForm(source = getSelectedSource()) {
   $("#paramFilterInput").value = parameterConfig.filterCondition || "";
   $("#paramQueryInput").value = parameterConfig.query || "";
   $("#paramMappingInput").value = JSON.stringify(parameterConfig.mappings || [], null, 2);
+  $("#paramPlaceholderInput").value = JSON.stringify(parameterConfig.placeholders || [], null, 2);
   setSelectValue("#paramIterationModeSelect", parameterConfig.iterationMode || "single");
   $("#paramStrategyInput").value = parameterConfig.strategy || "concurrency=5; retries=2; continueOnError=true";
   if ($("#mappingSourceSelect").options.length) {
@@ -938,6 +957,10 @@ function resetSourceForm() {
   $("#paramFilterInput").value = "";
   $("#paramQueryInput").value = "";
   $("#paramMappingInput").value = "[]";
+  $("#paramPlaceholderInput").value = JSON.stringify([
+    { name: "start_time", source: "mapping", from: "context.start_time" },
+    { name: "end_time", source: "mapping", from: "context.end_time" }
+  ], null, 2);
   setSelectValue("#paramIterationModeSelect", "single");
   $("#paramStrategyInput").value = "concurrency=5; retries=2; continueOnError=true";
   appState.lastSourceTest = null;
@@ -1019,6 +1042,7 @@ function collectSourceForm() {
       filterCondition: $("#paramFilterInput").value.trim(),
       query: $("#paramQueryInput").value.trim(),
       mappings: parseJsonInput("#paramMappingInput", []),
+      placeholders: parseJsonInput("#paramPlaceholderInput", []),
       iterationMode: $("#paramIterationModeSelect").value,
       strategy: $("#paramStrategyInput").value.trim()
     },
@@ -1178,6 +1202,11 @@ function renderDictionaryColumnOptions(selector, dictionaryId, selectedColumn = 
 }
 
 function parseDictionaryColumns() {
+  const inferred = inferDictionaryColumns(parseDictionaryRows());
+  if (inferred.length) {
+    $("#dictionaryColumnsInput").value = inferred.join(",");
+    return inferred;
+  }
   return $("#dictionaryColumnsInput").value
     .split(",")
     .map((item) => item.trim())
@@ -1193,6 +1222,18 @@ function parseDictionaryRows() {
   }
 }
 
+function inferDictionaryColumns(rows = []) {
+  if (!Array.isArray(rows)) return [];
+  return [...new Set(rows.flatMap((row) => Object.keys(row || {})))];
+}
+
+function syncDictionaryColumnsFromRows() {
+  const columns = inferDictionaryColumns(parseDictionaryRows());
+  if (columns.length) {
+    $("#dictionaryColumnsInput").value = columns.join(",");
+  }
+}
+
 function resetDictionaryForm() {
   appState.editingDictionaryId = "";
   $("#dictionaryModalTitle").textContent = "新增字典集";
@@ -1200,6 +1241,7 @@ function resetDictionaryForm() {
   $("#dictionaryCategoryInput").value = "业务字典";
   $("#dictionaryColumnsInput").value = "产品部,产品名,别名列表,版本号";
   $("#dictionaryRowsInput").value = JSON.stringify([{ "产品部": "交易产品部", "产品名": "支付网关", "别名列表": "pay-gateway,payment-api", "版本号": "v3" }], null, 2);
+  syncDictionaryColumnsFromRows();
   $("#dictionaryDescInput").value = "可被过滤条件、字段值过滤和清洗规则引用。";
   $("#deleteDictionaryBtn").classList.add("hidden");
 }
@@ -1212,6 +1254,7 @@ function populateDictionaryForm(dictionary) {
   $("#dictionaryCategoryInput").value = dictionary.category || "通用字典";
   $("#dictionaryColumnsInput").value = (dictionary.columns || []).join(",");
   $("#dictionaryRowsInput").value = JSON.stringify(dictionary.rows || [], null, 2);
+  syncDictionaryColumnsFromRows();
   $("#dictionaryDescInput").value = dictionary.description || "";
   $("#deleteDictionaryBtn").classList.remove("hidden");
 }
@@ -1554,6 +1597,7 @@ function normalizeValueFiltersForFields(fields = []) {
     value: existing.get(field)?.value || "",
     dictionaryId: existing.get(field)?.dictionaryId || "",
     dictionaryColumn: existing.get(field)?.dictionaryColumn || "",
+    dictionaryMatchMode: existing.get(field)?.dictionaryMatchMode || "field-in-dictionary",
     dictionaryScopeColumn: existing.get(field)?.dictionaryScopeColumn || "",
     dictionaryScopeValue: existing.get(field)?.dictionaryScopeValue || "",
     enabled: existing.get(field)?.enabled !== false
@@ -1600,6 +1644,13 @@ function renderValueFilterList() {
           <label>
             <span>匹配列</span>
             <select data-value-filter-dictionary-column></select>
+          </label>
+          <label>
+            <span>字典匹配</span>
+            <select data-value-filter-dictionary-match>
+              <option value="field-in-dictionary" ${filter.dictionaryMatchMode === "field-in-dictionary" ? "selected" : ""}>字段值在字典列中</option>
+              <option value="dictionary-in-field" ${filter.dictionaryMatchMode === "dictionary-in-field" ? "selected" : ""}>字典值在字段内容中</option>
+            </select>
           </label>
           <label>
             <span>范围列</span>
@@ -1649,6 +1700,7 @@ function saveValueFilterDialog() {
     value: $("[data-value-filter-value]", row).value.trim(),
     dictionaryId: $("[data-value-filter-dictionary]", row).value,
     dictionaryColumn: $("[data-value-filter-dictionary-column]", row).value,
+    dictionaryMatchMode: $("[data-value-filter-dictionary-match]", row).value,
     dictionaryScopeColumn: $("[data-value-filter-scope-column]", row).value,
     dictionaryScopeValue: $("[data-value-filter-scope-value]", row).value.trim(),
     enabled: Boolean($("[data-value-filter-value]", row).value.trim() || ($("[data-value-filter-dictionary]", row).value && $("[data-value-filter-dictionary-column]", row).value))
@@ -2257,9 +2309,11 @@ function renderMappings() {
     type: row[2],
     defaultValue: row.length > 5 ? row[3] : "",
     rule: row.length > 5 ? row[4] : row[3],
-    output: row.length > 5 ? row[5] : row[4]
+    output: row.length > 5 ? row[5] : row[4],
+    transformMode: "none",
+    transformParam: ""
   }));
-  const header = ["源字段", "目标字段", "类型", "默认值", "清洗规则", "输出目标", "操作"];
+  const header = ["源字段", "目标字段", "类型", "默认值", "清洗规则", "转换", "输出目标", "操作"];
   const items = mappings.length ? mappings : fallbackRows;
   $("#mappingTable").innerHTML = [
     `<div class="mapping-row header">${header.map((cell) => `<span>${escapeHtml(cell)}</span>`).join("")}</div>`,
@@ -2275,6 +2329,7 @@ function renderMappings() {
           <span>${escapeHtml(item.type)}</span>
           <span>${escapeHtml(item.defaultValue || "-")}</span>
           <span title="${escapeHtml(rule?.description || item.rule || "")}">${escapeHtml(ruleText)}</span>
+          <span>${escapeHtml(item.transformMode && item.transformMode !== "none" ? `${item.transformMode}${item.transformParam ? ` / ${item.transformParam}` : ""}` : "-")}</span>
           <span>${escapeHtml(item.output)}</span>
           <span class="row-actions">
             <button class="small-button" type="button" data-mapping-action="edit" data-mapping-id="${escapeHtml(item.id || "")}" ${item.id ? "" : "disabled"}>编辑</button>
@@ -2297,6 +2352,8 @@ function resetMappingForm() {
   $("#mapDefaultInput").value = "";
   renderMappingRuleSelect();
   $("#mapRuleInput").value = "";
+  setSelectValue("#mapTransformModeSelect", "none");
+  $("#mapTransformParamInput").value = "";
   $("#addMappingBtn").innerHTML = '<span class="icon" data-icon="plus"></span> 添加映射';
   renderIcons();
 }
@@ -2310,6 +2367,8 @@ function populateMappingForm(mapping) {
   $("#mapDefaultInput").value = mapping.defaultValue || "";
   renderMappingRuleSelect(mapping.ruleId || "");
   $("#mapRuleInput").value = mapping.ruleParam || mapping.rule || "";
+  setSelectValue("#mapTransformModeSelect", mapping.transformMode || "none");
+  $("#mapTransformParamInput").value = mapping.transformParam || "";
   $("#addMappingBtn").innerHTML = '<span class="icon" data-icon="plus"></span> 保存映射';
   renderIcons();
 }
@@ -3195,6 +3254,7 @@ function bindEvents() {
     resetDictionaryForm();
     openDialog("#dictionaryModal");
   });
+  $("#dictionaryRowsInput").addEventListener("input", syncDictionaryColumnsFromRows);
   $("#saveDictionaryBtn").addEventListener("click", async (event) => {
     event.preventDefault();
     const payload = collectDictionaryForm();
@@ -3499,6 +3559,8 @@ function bindEvents() {
       ruleId: $("#mapRuleSelect").value,
       ruleParam: $("#mapRuleInput").value,
       rule: selectedRule?.expression || $("#mapRuleInput").value || "未配置规则",
+      transformMode: $("#mapTransformModeSelect").value,
+      transformParam: $("#mapTransformParamInput").value.trim(),
       output: "内部业务库"
     };
     const editingId = appState.editingMappingId;
