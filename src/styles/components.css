@@ -1461,9 +1461,9 @@ textarea {
 }
 
 .mapping-row {
-  min-width: 1160px;
+  min-width: 1040px;
   display: grid;
-  grid-template-columns: 1.15fr 0.95fr 0.6fr 0.7fr 1.05fr 0.9fr 0.78fr 128px;
+  grid-template-columns: 1.2fr 1fr 0.65fr 0.75fr 1.15fr 0.78fr 128px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);
 }

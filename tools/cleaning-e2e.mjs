@@ -70,11 +70,8 @@ try {
     "configureValueFiltersBtn",
     "mapDefaultInput",
     "mapRuleSelect",
-    "mapTransformModeSelect",
-    "mapTransformParamInput",
     "addMappingBtn",
     "ruleActionSelect",
-    "ruleSourceFieldInput",
     "ruleParamInput",
     "ruleDictionarySelect",
     "addDictionaryBtn",
@@ -278,9 +275,21 @@ try {
       description: "把接口等级转换成业务展示等级",
       config: {
         action: "enum",
-        sourceField: "data.items[].level",
-        targetField: "severity",
         param: "P0=高,P1=中,P2=低"
+      }
+    })
+  });
+
+  const extractRule = await request("/api/cleaning-rules", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E 正则提取数字",
+      type: "normalize",
+      expression: "extract(\\d+)",
+      description: "从输入内容中提取第一个数字片段",
+      config: {
+        action: "extract",
+        param: "\\d+"
       }
     })
   });
@@ -294,9 +303,7 @@ try {
       type: "字符串",
       defaultValue: "unknown",
       ruleId: rule.data.id,
-      ruleParam: "trim",
-      transformMode: "none",
-      transformParam: "",
+      ruleParam: "",
       rule: rule.data.expression,
       output: "内部业务库"
     })
@@ -312,11 +319,9 @@ try {
       targetField: "queue_lag",
       type: "数字",
       defaultValue: "0",
-      ruleId: rule.data.id,
-      ruleParam: "toNumber",
-      transformMode: "extract",
-      transformParam: "\\d+",
-      rule: "数值转换",
+      ruleId: extractRule.data.id,
+      ruleParam: "",
+      rule: extractRule.data.expression,
       output: "内部业务库"
     })
   });
@@ -327,7 +332,7 @@ try {
     body: JSON.stringify({ sourceId: source.data.id, ...source.data })
   });
   assert(transformTest.data.mappedRecords.length > 0, "source test should return mapped records");
-  assert(transformTest.data.mappedRecords[0].queue_lag !== undefined, "mapped records should include transformed target field");
+  assert(transformTest.data.mappedRecords[0].queue_lag !== undefined, "mapped records should include cleaned target field");
 
   const deletedMapping = await request(`/api/field-mappings/${updatedMapping.data.id}`, {
     method: "DELETE"
@@ -400,6 +405,7 @@ try {
   assert(flowRun.data.executionPlan.join === 1, "flow graph should support join nodes");
 
   await request(`/api/cleaning-rules/${rule.data.id}`, { method: "DELETE" });
+  await request(`/api/cleaning-rules/${extractRule.data.id}`, { method: "DELETE" });
   const deletedFlow = await request(`/api/business-flows/${updatedFlow.data.id}`, { method: "DELETE" });
   await request(`/api/data-sources/${source.data.id}`, { method: "DELETE" });
   await request(`/api/auth-configs/${auth.data.id}`, { method: "DELETE" });

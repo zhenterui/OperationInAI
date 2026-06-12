@@ -11,8 +11,6 @@ export function createFieldMapping(input = {}) {
     ruleId: input.ruleId || "",
     ruleParam: input.ruleParam || "",
     rule: input.rule || "trim",
-    transformMode: input.transformMode || "none",
-    transformParam: input.transformParam || "",
     output: input.output || "内部业务库"
   };
   store.fieldMappings.push(mapping);
@@ -37,8 +35,6 @@ export function updateFieldMapping(id, input = {}) {
     ruleId: input.ruleId ?? existing.ruleId ?? "",
     ruleParam: input.ruleParam ?? existing.ruleParam ?? "",
     rule: input.rule || existing.rule,
-    transformMode: input.transformMode || existing.transformMode || "none",
-    transformParam: input.transformParam ?? existing.transformParam ?? "",
     output: input.output || existing.output,
     updatedAt: new Date().toISOString()
   };

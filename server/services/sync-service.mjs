@@ -414,21 +414,44 @@ function renderTemplate(template = "", record = {}, responsePath = "") {
   });
 }
 
-function applyMappingTransform(values = [], mapping = {}, record = {}, responsePath = "") {
+function parseEnumMap(param = "") {
+  return String(param || "")
+    .split(/[,，;]/)
+    .map((item) => item.split("="))
+    .filter(([key]) => key !== undefined && key !== "")
+    .reduce((output, [key, value]) => {
+      output[unquoteValue(key)] = unquoteValue(value ?? "");
+      return output;
+    }, {});
+}
+
+function normalizeMappedValues(values = []) {
   const normalizedValues = values.flat().filter((value) => value !== undefined && value !== null && value !== "");
-  const mode = mapping.transformMode || "none";
-  const param = mapping.transformParam || "";
-  if (mode === "combine") {
+  return normalizedValues;
+}
+
+function finalizeRuleOutput(values = [], defaultValue = "") {
+  if (!values.length) return defaultValue ?? "";
+  return values.length > 1 ? values : values[0];
+}
+
+function applyCleaningRule(values = [], mapping = {}, record = {}, responsePath = "") {
+  const normalizedValues = normalizeMappedValues(values);
+  const rule = store.cleaningRules.find((item) => item.id === mapping.ruleId);
+  const action = rule?.config?.action || "";
+  const param = rule?.config?.param || mapping.ruleParam || "";
+  if (!rule || !action) return finalizeRuleOutput(normalizedValues, mapping.defaultValue);
+  if (action === "combine") {
     return renderTemplate(param || mapping.sourceField || "", record, responsePath) || mapping.defaultValue || "";
   }
-  if (!normalizedValues.length) return mapping.defaultValue ?? "";
-  if (mode === "dedupe") {
+  if (!normalizedValues.length) return action === "default" ? param || mapping.defaultValue || "" : mapping.defaultValue ?? "";
+  if (action === "dedupe") {
     return [...new Set(normalizedValues.map((value) => String(value)))].join(param || ",");
   }
-  if (mode === "merge") {
+  if (action === "merge") {
     return normalizedValues.map((value) => String(value)).join(param || ",");
   }
-  if (mode === "extract") {
+  if (action === "extract") {
     try {
       const match = String(normalizedValues[0]).match(new RegExp(param));
       return match ? match[1] || match[0] : mapping.defaultValue ?? "";
@@ -436,7 +459,26 @@ function applyMappingTransform(values = [], mapping = {}, record = {}, responseP
       return mapping.defaultValue ?? "";
     }
   }
-  return normalizedValues.length > 1 ? normalizedValues : normalizedValues[0];
+  const enumMap = action === "enum" ? parseEnumMap(param) : {};
+  const cleaned = normalizedValues.map((value) => {
+    const text = String(value ?? "");
+    if (action === "trim") return text.trim();
+    if (action === "lower") return text.toLowerCase();
+    if (action === "upper") return text.toUpperCase();
+    if (action === "enum") return enumMap[text] ?? value;
+    if (action === "default") return text ? value : param || mapping.defaultValue || "";
+    if (action === "number") {
+      const numeric = Number(value);
+      if (Number.isNaN(numeric)) return mapping.defaultValue ?? "";
+      return param === "seconds_to_minutes" ? Math.round(numeric / 60) : numeric;
+    }
+    if (action === "date") {
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? value : date.toISOString();
+    }
+    return value;
+  });
+  return finalizeRuleOutput(cleaned, mapping.defaultValue);
 }
 
 function applyFieldMappings(records = [], mappings = [], responsePath = "") {
@@ -445,7 +487,7 @@ function applyFieldMappings(records = [], mappings = [], responsePath = "") {
     mappings.reduce((output, mapping) => {
       const localField = stripResponsePrefix(mapping.sourceField, responsePath);
       const values = getValuesByPath(record, localField);
-      output[mapping.targetField] = applyMappingTransform(values, mapping, record, responsePath);
+      output[mapping.targetField] = applyCleaningRule(values, mapping, record, responsePath);
       return output;
     }, {})
   );

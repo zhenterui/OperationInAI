@@ -113,7 +113,8 @@ try {
       sourceField: "smoke.raw",
       targetField: "smoke_clean",
       defaultValue: "unknown",
-      ruleParam: "trim"
+      ruleId: "rule_alarm_normalize",
+      ruleParam: ""
     })
   });
   const updatedMapping = await request(`/api/field-mappings/${mapping.data.id}`, {
@@ -123,7 +124,8 @@ try {
       sourceField: "smoke.raw.edited",
       targetField: "smoke_clean_edited",
       defaultValue: "edited_default",
-      ruleParam: "trim + lower"
+      ruleId: "rule_alarm_normalize",
+      ruleParam: ""
     })
   });
   const rule = await request("/api/cleaning-rules", {

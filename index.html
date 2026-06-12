@@ -596,24 +596,6 @@
                   <span>清洗规则</span>
                   <select id="mapRuleSelect" aria-label="清洗规则"></select>
                 </label>
-                <label>
-                  <span>转换方式</span>
-                  <select id="mapTransformModeSelect" aria-label="转换方式">
-                    <option value="none">不转换</option>
-                    <option value="dedupe">去重</option>
-                    <option value="merge">合并</option>
-                    <option value="extract">截取/提取</option>
-                    <option value="combine">组合字段</option>
-                  </select>
-                </label>
-                <label>
-                  <span>规则参数</span>
-                  <input id="mapRuleInput" value="" aria-label="规则参数" placeholder="参数/覆盖说明" />
-                </label>
-                <label>
-                  <span>转换参数</span>
-                  <input id="mapTransformParamInput" value="" aria-label="转换参数" placeholder="合并分隔符、正则或 {{field}} 模板" />
-                </label>
                 <button class="small-button inline-editor-action" id="addMappingBtn" type="button">
                   <span class="icon" data-icon="plus"></span>
                   添加映射
@@ -1131,23 +1113,19 @@
               <option value="upper">转大写</option>
               <option value="enum">枚举转换</option>
               <option value="default">空值默认</option>
+              <option value="dedupe">多值去重</option>
+              <option value="merge">多值合并</option>
+              <option value="extract">正则提取</option>
+              <option value="combine">模板组合</option>
               <option value="filter">条件过滤</option>
               <option value="date">时间格式化</option>
               <option value="number">数值转换</option>
               <option value="enrich">关联补齐</option>
             </select>
           </label>
-          <label>
-            <span>作用字段</span>
-            <input id="ruleSourceFieldInput" value="service_name" placeholder="如 data.items[].service.name" />
-          </label>
-          <label>
-            <span>输出字段</span>
-            <input id="ruleTargetFieldInput" value="service_name" placeholder="可为空，默认覆盖原字段" />
-          </label>
           <label class="full">
             <span>参数配置</span>
-            <input id="ruleParamInput" value="trim + lower" placeholder="如 P0=高,P1=中 或 level == P0" />
+            <input id="ruleParamInput" value="" placeholder="如 P0=高,P1=中、分隔符、正则、{{field}} 模板" />
           </label>
           <label>
             <span>引用字典集</span>
@@ -1159,11 +1137,11 @@
           </label>
           <label class="full">
             <span>规则表达式预览</span>
-            <input id="ruleExpressionInput" value="service_name trim + lower" readonly />
+            <input id="ruleExpressionInput" value="trim" readonly />
           </label>
           <label class="full">
             <span>规则说明</span>
-            <textarea id="ruleDescInput" rows="3">统一服务名格式并去除空值</textarea>
+            <textarea id="ruleDescInput" rows="3">对字段输入值执行清洗处理，字段映射会自动把源字段作为输入、目标字段作为输出。</textarea>
           </label>
         </div>
         <div class="modal-actions">

@@ -793,7 +793,7 @@ function renderSourceTestResult(result) {
       ${uniqueFields.length > previewFields.length ? `<span class="status-pill">另有 ${uniqueFields.length - previewFields.length} 个字段未展开</span>` : ""}
     </div>
     ${result.selectedRecords?.length ? `<div class="module-status">过滤/字段保留后的样本</div><pre class="response-preview">${escapeHtml(formatJsonPreview(result.selectedRecords, 8000))}</pre>` : ""}
-    ${result.mappedRecords?.length ? `<div class="module-status">字段映射与转换后的样本</div><pre class="response-preview">${escapeHtml(formatJsonPreview(result.mappedRecords, 8000))}</pre>` : ""}
+    ${result.mappedRecords?.length ? `<div class="module-status">字段映射与清洗后的样本</div><pre class="response-preview">${escapeHtml(formatJsonPreview(result.mappedRecords, 8000))}</pre>` : ""}
     <div class="module-status">原始响应体</div>
     <pre class="response-preview">${escapeHtml(formatJsonPreview(result.responseBody))}</pre>
   `;
@@ -1271,15 +1271,12 @@ function collectDictionaryForm() {
 }
 
 function buildRuleExpression() {
-  const sourceField = $("#ruleSourceFieldInput")?.value.trim() || "field";
-  const targetField = $("#ruleTargetFieldInput")?.value.trim();
   const action = $("#ruleActionSelect")?.value || "trim";
   const param = $("#ruleParamInput")?.value.trim();
   const dictionary = getDictionarySetById($("#ruleDictionarySelect")?.value);
   const dictionaryColumn = $("#ruleDictionaryColumnSelect")?.value;
-  const output = targetField && targetField !== sourceField ? ` -> ${targetField}` : "";
   const dictionaryRef = dictionary ? ` @${dictionary.name}${dictionaryColumn ? `.${dictionaryColumn}` : ""}` : "";
-  return `${sourceField}${output} | ${action}${param ? `(${param})` : ""}${dictionaryRef}`;
+  return `${action}${param ? `(${param})` : ""}${dictionaryRef}`;
 }
 
 function syncRuleExpressionPreview() {
@@ -1305,8 +1302,6 @@ function populateRuleForm(rule) {
   $("#ruleCategoryInput").value = rule.category || rule.type || "清洗规则";
   setSelectValue("#ruleTypeSelect", rule.type || "mapping");
   setSelectValue("#ruleActionSelect", rule.config?.action || "trim");
-  $("#ruleSourceFieldInput").value = rule.config?.sourceField || "";
-  $("#ruleTargetFieldInput").value = rule.config?.targetField || "";
   $("#ruleParamInput").value = rule.config?.param || "";
   renderDictionarySelectOptions("#ruleDictionarySelect", rule.config?.dictionaryId || "");
   renderDictionaryColumnOptions("#ruleDictionaryColumnSelect", rule.config?.dictionaryId || "", rule.config?.dictionaryColumn || "");
@@ -1321,13 +1316,11 @@ function resetRuleForm() {
   $("#ruleCategoryInput").value = "字段标准化";
   setSelectValue("#ruleTypeSelect", "normalize");
   setSelectValue("#ruleActionSelect", "trim");
-  $("#ruleSourceFieldInput").value = "service_name";
-  $("#ruleTargetFieldInput").value = "service_name";
-  $("#ruleParamInput").value = "trim + lower";
+  $("#ruleParamInput").value = "";
   renderDictionarySelectOptions("#ruleDictionarySelect");
   renderDictionaryColumnOptions("#ruleDictionaryColumnSelect", "");
   syncRuleExpressionPreview();
-  $("#ruleDescInput").value = "统一服务名格式并去除空值";
+  $("#ruleDescInput").value = "对字段输入值执行清洗处理，字段映射会自动把源字段作为输入、目标字段作为输出。";
 }
 
 function collectRuleForm() {
@@ -1340,8 +1333,6 @@ function collectRuleForm() {
     description: $("#ruleDescInput").value.trim() || "用户自定义清洗规则",
     config: {
       action: $("#ruleActionSelect").value,
-      sourceField: $("#ruleSourceFieldInput").value.trim(),
-      targetField: $("#ruleTargetFieldInput").value.trim(),
       param: $("#ruleParamInput").value.trim(),
       dictionaryId: $("#ruleDictionarySelect").value,
       dictionaryColumn: $("#ruleDictionaryColumnSelect").value
@@ -2309,11 +2300,9 @@ function renderMappings() {
     type: row[2],
     defaultValue: row.length > 5 ? row[3] : "",
     rule: row.length > 5 ? row[4] : row[3],
-    output: row.length > 5 ? row[5] : row[4],
-    transformMode: "none",
-    transformParam: ""
+    output: row.length > 5 ? row[5] : row[4]
   }));
-  const header = ["源字段", "目标字段", "类型", "默认值", "清洗规则", "转换", "输出目标", "操作"];
+  const header = ["源字段", "目标字段", "类型", "默认值", "清洗规则", "输出目标", "操作"];
   const items = mappings.length ? mappings : fallbackRows;
   $("#mappingTable").innerHTML = [
     `<div class="mapping-row header">${header.map((cell) => `<span>${escapeHtml(cell)}</span>`).join("")}</div>`,
@@ -2329,7 +2318,6 @@ function renderMappings() {
           <span>${escapeHtml(item.type)}</span>
           <span>${escapeHtml(item.defaultValue || "-")}</span>
           <span title="${escapeHtml(rule?.description || item.rule || "")}">${escapeHtml(ruleText)}</span>
-          <span>${escapeHtml(item.transformMode && item.transformMode !== "none" ? `${item.transformMode}${item.transformParam ? ` / ${item.transformParam}` : ""}` : "-")}</span>
           <span>${escapeHtml(item.output)}</span>
           <span class="row-actions">
             <button class="small-button" type="button" data-mapping-action="edit" data-mapping-id="${escapeHtml(item.id || "")}" ${item.id ? "" : "disabled"}>编辑</button>
@@ -2351,9 +2339,6 @@ function resetMappingForm() {
   setSelectValue("#mapTypeSelect", "字符串");
   $("#mapDefaultInput").value = "";
   renderMappingRuleSelect();
-  $("#mapRuleInput").value = "";
-  setSelectValue("#mapTransformModeSelect", "none");
-  $("#mapTransformParamInput").value = "";
   $("#addMappingBtn").innerHTML = '<span class="icon" data-icon="plus"></span> 添加映射';
   renderIcons();
 }
@@ -2366,9 +2351,6 @@ function populateMappingForm(mapping) {
   setSelectValue("#mapTypeSelect", mapping.type || "字符串");
   $("#mapDefaultInput").value = mapping.defaultValue || "";
   renderMappingRuleSelect(mapping.ruleId || "");
-  $("#mapRuleInput").value = mapping.ruleParam || mapping.rule || "";
-  setSelectValue("#mapTransformModeSelect", mapping.transformMode || "none");
-  $("#mapTransformParamInput").value = mapping.transformParam || "";
   $("#addMappingBtn").innerHTML = '<span class="icon" data-icon="plus"></span> 保存映射';
   renderIcons();
 }
@@ -3210,7 +3192,7 @@ function bindEvents() {
     autoGenerateParamMapping();
     renderIcons();
   });
-  ["#ruleTypeSelect", "#ruleActionSelect", "#ruleSourceFieldInput", "#ruleTargetFieldInput", "#ruleParamInput"].forEach((selector) => {
+  ["#ruleTypeSelect", "#ruleActionSelect", "#ruleParamInput"].forEach((selector) => {
     $(selector)?.addEventListener("input", syncRuleExpressionPreview);
     $(selector)?.addEventListener("change", syncRuleExpressionPreview);
   });
@@ -3557,10 +3539,8 @@ function bindEvents() {
       type: $("#mapTypeSelect").value,
       defaultValue: $("#mapDefaultInput").value,
       ruleId: $("#mapRuleSelect").value,
-      ruleParam: $("#mapRuleInput").value,
-      rule: selectedRule?.expression || $("#mapRuleInput").value || "未配置规则",
-      transformMode: $("#mapTransformModeSelect").value,
-      transformParam: $("#mapTransformParamInput").value.trim(),
+      ruleParam: "",
+      rule: selectedRule?.expression || "未配置规则",
       output: "内部业务库"
     };
     const editingId = appState.editingMappingId;
