@@ -8,20 +8,24 @@ import {
   createFieldMapping,
   createKnowledgeSource,
   createModelConfig,
+  createStorageConfig,
   deleteAuthConfig,
   deleteBusinessFlow,
   deleteCleaningRule,
   deleteDictionarySet,
   deleteFieldMapping,
   deleteModelConfig,
+  deleteStorageConfig,
   queryBusiness,
   runBusinessFlow,
+  switchStorageConfig,
   updateAuthConfig,
   updateBusinessFlow,
   updateCleaningRule,
   updateDictionarySet,
   updateFieldMapping,
-  updateModelConfig
+  updateModelConfig,
+  updateStorageConfig
 } from "../services/config-service.mjs";
 import { answerQuestion } from "../services/search-service.mjs";
 import { createDataSource, deleteDataSource, listSyncLogs, runSync, testDataSource, updateDataSource } from "../services/sync-service.mjs";
@@ -53,6 +57,9 @@ route("GET", "/api/dictionary-sets", () => store.dictionarySets);
 route("POST", "/api/dictionary-sets", async ({ request }) => createDictionarySet(await readJson(request)));
 route("GET", "/api/model-configs", () => store.modelConfigs.map((item) => ({ ...item, apiKey: "" })));
 route("POST", "/api/model-configs", async ({ request }) => createModelConfig(await readJson(request)));
+route("GET", "/api/storage-configs", () => store.storageConfigs.map((item) => ({ ...item, password: "" })));
+route("POST", "/api/storage-configs", async ({ request }) => createStorageConfig(await readJson(request)));
+route("POST", "/api/storage-configs/switch", async ({ request }) => switchStorageConfig(await readJson(request)));
 route("GET", "/api/businesses", () => store.businesses);
 route("POST", "/api/businesses/query", async ({ request }) => queryBusiness(await readJson(request)));
 route("GET", "/api/business-flows", () => store.businessFlows);
@@ -174,6 +181,23 @@ export async function handleApi(request, response) {
   if (modelConfigMatch && request.method === "DELETE") {
     try {
       sendJson(response, 200, { data: deleteModelConfig(modelConfigMatch[1]) });
+    } catch (error) {
+      sendError(response, error.status || 500, "API request failed", error.message);
+    }
+    return true;
+  }
+  const storageConfigMatch = parsed.pathname.match(/^\/api\/storage-configs\/([^/]+)$/);
+  if (storageConfigMatch && request.method === "PUT") {
+    try {
+      sendJson(response, 200, { data: updateStorageConfig(storageConfigMatch[1], await readJson(request)) });
+    } catch (error) {
+      sendError(response, error.status || 500, "API request failed", error.message);
+    }
+    return true;
+  }
+  if (storageConfigMatch && request.method === "DELETE") {
+    try {
+      sendJson(response, 200, { data: deleteStorageConfig(storageConfigMatch[1]) });
     } catch (error) {
       sendError(response, error.status || 500, "API request failed", error.message);
     }

@@ -370,6 +370,26 @@ export const store = {
       updatedAt: now()
     }
   ],
+  storageConfigs: [
+    {
+      id: "storage_local_default",
+      name: "默认本地存储",
+      category: "系统默认",
+      type: "local",
+      database: "local-json",
+      host: "当前工作目录",
+      port: "",
+      username: "",
+      password: "",
+      passwordMasked: "",
+      status: "默认启用",
+      readonly: true,
+      active: true,
+      updatedAt: now()
+    }
+  ],
+  currentStorageId: "storage_local_default",
+  storageMigrationLogs: [],
   syncLogs: [],
   analysisResults: []
 };
@@ -400,6 +420,9 @@ export function getBootstrapData() {
     businessFlows: store.businessFlows,
     modelConfigs: store.modelConfigs,
     dictionarySets: store.dictionarySets,
+    storageConfigs: store.storageConfigs.map((item) => ({ ...item, active: item.id === store.currentStorageId, password: "" })),
+    currentStorageId: store.currentStorageId,
+    storageMigrationLogs: store.storageMigrationLogs,
     signals: store.signals,
     knowledge: store.knowledge
   };

@@ -1121,6 +1121,51 @@
   line-height: 1.5;
 }
 
+.flow-context-guide {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(48, 232, 199, 0.2);
+  border-radius: var(--radius);
+  background: rgba(48, 232, 199, 0.05);
+}
+
+.flow-context-guide strong {
+  color: #e8fff9;
+}
+
+.flow-context-guide small {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.context-token-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.context-token {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  padding: 7px 9px;
+  border: 1px solid rgba(48, 232, 199, 0.22);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.context-token code {
+  color: #e8fff9;
+  font-size: 12px;
+}
+
+.context-token small {
+  white-space: nowrap;
+}
+
 .inline-editor-action {
   align-self: end;
 }
@@ -1335,18 +1380,24 @@ select[multiple] option {
 }
 
 .value-filter-modal .modal-panel {
-  width: min(860px, calc(100vw - 28px));
+  width: min(1120px, calc(100vw - 28px));
+  max-height: min(84vh, 760px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
 }
 
 .value-filter-list {
   display: grid;
   gap: 10px;
   margin-top: 14px;
+  padding-right: 4px;
+  overflow: auto;
 }
 
 .value-filter-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 10px;
   align-items: end;
   padding: 12px;
@@ -1363,6 +1414,13 @@ select[multiple] option {
 .value-filter-row span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.value-filter-modal .modal-actions {
+  position: sticky;
+  bottom: 0;
+  padding-top: 12px;
+  background: rgba(8, 24, 30, 0.96);
 }
 
 .preset-picker {

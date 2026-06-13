@@ -446,6 +446,13 @@
                   <span>来源对象</span>
                   <select id="paramSourceSelect" multiple></select>
                 </label>
+                <div class="flow-context-guide full hidden" id="flowContextGuide" aria-label="业务流上下文字段说明">
+                  <div>
+                    <strong>业务流上下文是什么？</strong>
+                    <small>它是业务流每次运行时自动带上的公共变量，适合给 API 入参提供时间窗口、业务名称、批次号、租户和环境。</small>
+                  </div>
+                  <div class="context-token-list" id="flowContextTokenList"></div>
+                </div>
                 <label class="full">
                   <span>来源字段勾选</span>
                   <select id="paramFieldSelect" multiple></select>
@@ -669,6 +676,19 @@
                   </button>
                 </div>
                 <div class="auth-config-list" id="dictionarySetList"></div>
+              </article>
+              <article class="surface support-card">
+                <div class="section-head">
+                  <div>
+                    <p class="eyebrow">Storage</p>
+                    <h2>存储配置</h2>
+                  </div>
+                  <button class="small-button primary" id="addStorageConfigBtn">
+                    <span class="icon" data-icon="plus"></span>
+                    新增数据库存储
+                  </button>
+                </div>
+                <div class="auth-config-list" id="storageConfigList"></div>
               </article>
               </div>
             </details>
@@ -1061,6 +1081,94 @@
           <button class="small-button primary" id="saveValueFilterBtn" type="button">确定</button>
         </div>
       </div>
+    </dialog>
+
+    <dialog class="modal" id="storageConfigModal">
+      <form class="modal-panel" method="dialog">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Storage Config</p>
+            <h2 id="storageConfigModalTitle">新增数据库存储</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="关闭">
+            <span class="icon" data-icon="refresh"></span>
+          </button>
+        </div>
+        <div class="config-form">
+          <label>
+            <span>配置名称</span>
+            <input id="storageNameInput" value="业务数据库存储" />
+          </label>
+          <label>
+            <span>数据库类型</span>
+            <select id="storageDatabaseSelect">
+              <option value="postgresql">PostgreSQL</option>
+              <option value="mysql">MySQL</option>
+              <option value="mariadb">MariaDB</option>
+              <option value="sqlserver">SQL Server</option>
+              <option value="oracle">Oracle</option>
+            </select>
+          </label>
+          <label>
+            <span>地址</span>
+            <input id="storageHostInput" value="127.0.0.1" placeholder="如 127.0.0.1 或 db.ops.local" />
+          </label>
+          <label>
+            <span>端口</span>
+            <input id="storagePortInput" value="5432" placeholder="如 5432" />
+          </label>
+          <label>
+            <span>用户名</span>
+            <input id="storageUsernameInput" value="" />
+          </label>
+          <label>
+            <span>密码</span>
+            <input id="storagePasswordInput" type="password" value="" placeholder="编辑时留空表示不修改" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="small-button" value="cancel">取消</button>
+          <button class="small-button danger" id="deleteStorageConfigBtn" type="button">删除</button>
+          <button class="small-button primary" id="saveStorageConfigBtn" value="default">保存存储配置</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="storageSwitchModal">
+      <form class="modal-panel" method="dialog">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Storage Switch</p>
+            <h2>切换当前存储</h2>
+            <small id="storageSwitchSummary">选择切换策略后再启用目标存储。</small>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="关闭">
+            <span class="icon" data-icon="refresh"></span>
+          </button>
+        </div>
+        <div class="config-form">
+          <label>
+            <span>目标存储</span>
+            <input id="storageSwitchTargetInput" value="" readonly />
+          </label>
+          <label>
+            <span>旧数据处理</span>
+            <select id="storageMigrationPolicySelect">
+              <option value="copy-config">复制配置数据</option>
+              <option value="copy-all">复制全部数据</option>
+              <option value="switch-only">仅切换，不复制旧数据</option>
+            </select>
+          </label>
+          <label class="full">
+            <span>策略说明</span>
+            <textarea id="storageMigrationPolicyDesc" rows="4" readonly></textarea>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="small-button" value="cancel">取消</button>
+          <button class="small-button primary" id="confirmStorageSwitchBtn" value="default">确认切换</button>
+        </div>
+      </form>
     </dialog>
 
     <dialog class="modal" id="dictionaryModal">

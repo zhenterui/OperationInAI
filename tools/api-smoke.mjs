@@ -213,6 +213,35 @@ try {
       apiKey: "smoke-api-key-edited"
     })
   });
+  const storageConfig = await request("/api/storage-configs", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Smoke PostgreSQL Storage",
+      database: "postgresql",
+      host: "127.0.0.1",
+      port: "5432",
+      username: "ops_user",
+      password: "ops-secret"
+    })
+  });
+  const updatedStorageConfig = await request(`/api/storage-configs/${storageConfig.data.id}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      name: "Smoke PostgreSQL Storage Edited",
+      database: "postgresql",
+      host: "db.ops.local",
+      port: "5432",
+      username: "ops_reader",
+      password: ""
+    })
+  });
+  const storageSwitchToDb = await request("/api/storage-configs/switch", {
+    method: "POST",
+    body: JSON.stringify({
+      targetStorageId: updatedStorageConfig.data.id,
+      migrationPolicy: "copy-all"
+    })
+  });
   const analysis = await request("/api/analysis/run", {
     method: "POST",
     body: JSON.stringify({
@@ -243,6 +272,16 @@ try {
     method: "DELETE"
   });
   const deletedModelConfig = await request(`/api/model-configs/${updatedModelConfig.data.id}`, {
+    method: "DELETE"
+  });
+  const storageSwitchToLocal = await request("/api/storage-configs/switch", {
+    method: "POST",
+    body: JSON.stringify({
+      targetStorageId: "storage_local_default",
+      migrationPolicy: "copy-config"
+    })
+  });
+  const deletedStorageConfig = await request(`/api/storage-configs/${updatedStorageConfig.data.id}`, {
     method: "DELETE"
   });
 
@@ -276,6 +315,12 @@ try {
         modelConfig: updatedModelConfig.data.name,
         modelConfigMasked: updatedModelConfig.data.apiKeyMasked,
         deletedModelConfig: deletedModelConfig.data.name,
+        storageConfig: updatedStorageConfig.data.name,
+        storagePasswordReturned: updatedStorageConfig.data.password === "" ? "masked" : "plain",
+        storageSwitchToDb: storageSwitchToDb.data.currentStorageId,
+        storageSwitchToLocal: storageSwitchToLocal.data.currentStorageId,
+        storageMigrationPolicy: storageSwitchToDb.data.migration.migrationPolicy,
+        deletedStorageConfig: deletedStorageConfig.data.name,
         syncStatus: sync.data.status,
         analysisSections: analysis.data.sections.length,
         analysisBusinesses: analysis.data.businessNames.length,

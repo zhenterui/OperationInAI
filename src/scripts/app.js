@@ -8,6 +8,7 @@ const appState = {
   editingDictionaryId: "",
   editingRuleId: "",
   editingMappingId: "",
+  editingStorageConfigId: "",
   selectedFlowId: "",
   selectedFlowNodeId: "",
   businessDetailMode: "list",
@@ -144,6 +145,24 @@ function normalizeOpsData() {
       rows: [{ "产品部": "交易产品部", "产品名": "支付网关", "别名列表": "pay-gateway,payment-api", "版本号": "v3" }]
     }
   ];
+  window.opsData.storageConfigs = window.opsData.storageConfigs || [
+    {
+      id: "storage_local_default",
+      name: "默认本地存储",
+      category: "系统默认",
+      type: "local",
+      database: "local-json",
+      host: "当前工作目录",
+      port: "",
+      username: "",
+      password: "",
+      passwordMasked: "",
+      status: "默认启用",
+      readonly: true
+    }
+  ];
+  window.opsData.currentStorageId = window.opsData.currentStorageId || window.opsData.storageConfigs.find((item) => item.active)?.id || "storage_local_default";
+  window.opsData.storageMigrationLogs = window.opsData.storageMigrationLogs || [];
   window.opsData.businessFlows = window.opsData.businessFlows || [];
   window.opsData.modelConfigs = window.opsData.modelConfigs || [
     {
@@ -195,10 +214,19 @@ const paramSourceTypeTips = {
   static: "固定入参：直接使用 Query/Header/Body 中配置的值。",
   database: "数据库查询：先查出记录，再按字段映射逐条或批量调用。",
   source: "上游数据源：用另一个数据源输出字段驱动当前调用。",
-  flow: "业务流上下文：使用时间窗口、租户、批次号等共享变量。",
+  flow: "业务流上下文：使用业务流运行时自动生成的公共变量，例如开始时间、结束时间、业务名称、批次号、租户和环境。",
   dictionary: "字典集：从自定义字典列取值，可用于产品、部门、环境等枚举入参。",
   "flow-node": "业务节点输出：从当前业务流中一个或多个上游节点取字段，适合并发分支汇聚后调用。"
 };
+
+const flowContextFields = [
+  { value: "context.start_time", label: "开始时间", desc: "本次业务流时间窗口的开始时间，常用于 startTime、beginTime。" },
+  { value: "context.end_time", label: "结束时间", desc: "本次业务流时间窗口的结束时间，常用于 endTime、finishTime。" },
+  { value: "context.businessName", label: "业务名称", desc: "当前业务配置的名称，常用于业务标识或查询过滤。" },
+  { value: "context.batchId", label: "运行批次号", desc: "本次业务流运行的批次标识，常用于链路追踪和幂等。" },
+  { value: "context.tenant", label: "租户", desc: "当前业务或运行环境所属租户。" },
+  { value: "context.env", label: "环境", desc: "当前运行环境，例如 prod、test、dev。" }
+];
 
 const flowNodeTypeLabels = {
   context: "上下文",
@@ -694,7 +722,7 @@ function getFlowNodeFieldCandidates(nodeRef) {
   const node = (appState.flowNodes || []).find((item) => item.id === nodeId);
   if (!node) return [];
   if (node.type === "context") {
-    return ["context.start_time", "context.end_time", "context.businessName", "context.batchId", "context.tenant", "context.env"];
+    return flowContextFields.map((field) => field.value);
   }
   if (node.type === "source") {
     const nodeLabel = (node.name || getFlowRefLabel(node.type, node.refId) || "source").replace(/\s+/g, "_");
@@ -710,7 +738,7 @@ function getFlowNodeFieldCandidates(nodeRef) {
 function getParamFieldCandidates() {
   const sourceType = $("#paramSourceTypeSelect")?.value || "static";
   if (sourceType === "flow") {
-    return ["context.start_time", "context.end_time", "context.businessName", "context.batchId", "context.tenant", "context.env"];
+    return flowContextFields.map((field) => field.value);
   }
   if (sourceType === "static") {
     return ["start_time", "end_time", "severity", "owner", "env"];
@@ -725,13 +753,34 @@ function getParamFieldCandidates() {
   return selectedSources.flatMap((source) => getSourceFieldCandidates(source));
 }
 
+function getParamFieldLabel(field) {
+  const contextField = flowContextFields.find((item) => item.value === field);
+  return contextField ? `${contextField.value} · ${contextField.label}` : field;
+}
+
+function renderFlowContextGuide() {
+  const guide = $("#flowContextGuide");
+  const list = $("#flowContextTokenList");
+  if (!guide || !list) return;
+  list.innerHTML = flowContextFields
+    .map(
+      (field) => `
+        <span class="context-token" title="${escapeHtml(field.desc)}">
+          <code>${escapeHtml(field.value)}</code>
+          <small>${escapeHtml(field.label)}</small>
+        </span>
+      `
+    )
+    .join("");
+}
+
 function renderParamFieldSelect(selectedFields = []) {
   const fields = getParamFieldCandidates();
   const selected = new Set(selectedFields.filter((field) => fields.includes(field)));
   $("#paramFieldSelect").innerHTML = fields
     .map((field, index) => {
       const checked = selected.size ? selected.has(field) : index < Math.min(fields.length, 3);
-      return `<option value="${escapeHtml(field)}" ${checked ? "selected" : ""}>${escapeHtml(field)}</option>`;
+      return `<option value="${escapeHtml(field)}" ${checked ? "selected" : ""}>${escapeHtml(getParamFieldLabel(field))}</option>`;
     })
     .join("");
   refreshMultiSelectControl($("#paramFieldSelect"));
@@ -751,6 +800,8 @@ function updateParamSourceTypeHelp() {
   if ($("#paramSourceTypeHelp")) {
     $("#paramSourceTypeHelp").textContent = paramSourceTypeTips[value] || paramSourceTypeTips.static;
   }
+  $("#flowContextGuide")?.classList.toggle("hidden", value !== "flow");
+  renderFlowContextGuide();
   const queryLabel = $("#paramQueryInput")?.closest("label")?.querySelector("span");
   const sourceLabel = $("#paramSourceSelect")?.closest("label")?.querySelector("span");
   const filter = $("#paramFilterInput");
@@ -771,7 +822,7 @@ function updateParamSourceTypeHelp() {
       value === "database"
         ? "来源 SQL"
         : value === "flow"
-          ? "上下文过滤条件"
+          ? "上下文使用说明"
           : value === "source"
             ? "上游过滤条件"
             : value === "dictionary"
@@ -785,7 +836,7 @@ function updateParamSourceTypeHelp() {
       value === "database"
         ? "如 env == prod，SQL 可自动建议 where 条件"
         : value === "flow"
-          ? "如 context.env == prod"
+          ? "如 context.env == prod。常用字段：context.start_time、context.end_time、context.businessName"
           : value === "source"
             ? "如 level == P0 或 service.owner != ''"
             : value === "dictionary"
@@ -828,7 +879,7 @@ function autoGenerateParamMapping() {
   } else if (sourceType === "source") {
     $("#paramQueryInput").value = filter || (effectiveFields.includes("level") ? "level == 'P0' || level == 'P1'" : "保留上游输出记录");
   } else if (sourceType === "flow") {
-    $("#paramQueryInput").value = filter || "context.start_time && context.end_time";
+    $("#paramQueryInput").value = filter || "可勾选 context.start_time、context.end_time 等字段，然后生成入参映射；这些值由业务流运行时自动提供。";
   } else if (sourceType === "dictionary") {
     $("#paramQueryInput").value = filter || "使用所选字典集字段作为入参，可在过滤条件中限定字典行";
   } else if (sourceType === "flow-node") {
@@ -1293,6 +1344,10 @@ function getDictionarySetById(id) {
   return (window.opsData.dictionarySets || []).find((dictionary) => dictionary.id === id);
 }
 
+function getStorageConfigById(id) {
+  return (window.opsData.storageConfigs || []).find((config) => config.id === id);
+}
+
 function getMappingById(id) {
   return (window.opsData.fieldMappings || []).find((mapping) => mapping.id === id);
 }
@@ -1314,6 +1369,129 @@ function renderDictionarySets() {
       </div>
     `
   });
+}
+
+function renderStorageConfigs() {
+  const configs = window.opsData.storageConfigs || [];
+  const currentStorageId = window.opsData.currentStorageId || configs.find((config) => config.active)?.id || "storage_local_default";
+  const hasDatabaseStorage = configs.some((config) => config.type === "database");
+  const addButton = $("#addStorageConfigBtn");
+  if (addButton) {
+    addButton.disabled = hasDatabaseStorage;
+    addButton.title = hasDatabaseStorage ? "当前仅支持配置 1 个数据库存储" : "";
+  }
+  renderGroupedConfigList("#storageConfigList", configs, {
+    bodyClass: "support-group-body",
+    getCategory: (config) => config.category || (config.type === "local" ? "系统默认" : "数据库存储"),
+    renderItem: (config) => {
+      const active = config.id === currentStorageId || config.active;
+      return `
+      <div class="support-list-item" data-storage-id="${escapeHtml(config.id)}">
+        <div>
+          <strong>${escapeHtml(config.name)} ${active ? '<span class="status-pill ok">当前使用</span>' : ""}</strong>
+          <small>${escapeHtml(config.type === "local" ? "本地存储" : `${config.database}://${config.host || "-"}${config.port ? `:${config.port}` : ""}`)} · ${escapeHtml(config.status || "-")}</small>
+        </div>
+        <div class="row-actions">
+          <button class="small-button" data-storage-action="switch" data-storage-id="${escapeHtml(config.id)}" ${active ? "disabled" : ""}>设为当前</button>
+          <button class="small-button" data-storage-action="edit" data-storage-id="${escapeHtml(config.id)}" ${config.readonly ? "disabled" : ""}>编辑</button>
+          <button class="small-button danger" data-storage-action="delete" data-storage-id="${escapeHtml(config.id)}" ${config.readonly || active ? "disabled" : ""}>删除</button>
+        </div>
+      </div>
+    `;
+    }
+  });
+}
+
+function syncStorageDefaultPort() {
+  const defaults = {
+    postgresql: "5432",
+    mysql: "3306",
+    mariadb: "3306",
+    sqlserver: "1433",
+    oracle: "1521"
+  };
+  const portInput = $("#storagePortInput");
+  const database = $("#storageDatabaseSelect")?.value || "postgresql";
+  if (portInput && !portInput.value.trim()) {
+    portInput.value = defaults[database] || "";
+  }
+}
+
+function resetStorageConfigForm() {
+  appState.editingStorageConfigId = "";
+  $("#storageConfigModalTitle").textContent = "新增数据库存储";
+  $("#storageNameInput").value = "业务数据库存储";
+  setSelectValue("#storageDatabaseSelect", "postgresql");
+  $("#storageHostInput").value = "127.0.0.1";
+  $("#storagePortInput").value = "5432";
+  $("#storageUsernameInput").value = "";
+  $("#storagePasswordInput").value = "";
+  $("#storagePasswordInput").placeholder = "请输入数据库密码";
+  $("#deleteStorageConfigBtn").classList.add("hidden");
+}
+
+function populateStorageConfigForm(config) {
+  if (!config || config.readonly) return;
+  appState.editingStorageConfigId = config.id;
+  $("#storageConfigModalTitle").textContent = "编辑数据库存储";
+  $("#storageNameInput").value = config.name || "";
+  setSelectValue("#storageDatabaseSelect", config.database || "postgresql");
+  $("#storageHostInput").value = config.host || "";
+  $("#storagePortInput").value = config.port || "";
+  $("#storageUsernameInput").value = config.username || "";
+  $("#storagePasswordInput").value = "";
+  $("#storagePasswordInput").placeholder = config.passwordMasked ? "已配置，留空表示不修改" : "请输入数据库密码";
+  $("#deleteStorageConfigBtn").classList.remove("hidden");
+}
+
+function collectStorageConfigForm() {
+  return {
+    name: $("#storageNameInput").value.trim() || "数据库存储",
+    category: "数据库存储",
+    type: "database",
+    database: $("#storageDatabaseSelect").value,
+    host: $("#storageHostInput").value.trim(),
+    port: $("#storagePortInput").value.trim(),
+    username: $("#storageUsernameInput").value.trim(),
+    password: $("#storagePasswordInput").value
+  };
+}
+
+function getStorageMigrationPolicyDesc(policy = "copy-config") {
+  if (policy === "switch-only") {
+    return "仅把当前存储指向目标存储，不复制旧数据。旧数据仍留在原存储中；切换后如果目标存储为空，页面可能只看到目标存储中的新数据。";
+  }
+  if (policy === "copy-all") {
+    return "复制配置数据、业务数据、同步日志、分析结果和知识源索引等全部数据。当前版本会记录迁移计划；接入真实数据库适配器后可执行实际迁移。";
+  }
+  return "复制数据源、认证、字段映射、清洗规则、字典集、业务流和模型配置等配置数据；业务运行数据和历史日志仍留在旧存储。推荐用于首次从本地切到数据库。";
+}
+
+function openStorageSwitchModal(config) {
+  if (!config) return;
+  $("#storageSwitchModal").dataset.targetStorageId = config.id;
+  const current = getStorageConfigById(window.opsData.currentStorageId) || (window.opsData.storageConfigs || []).find((item) => item.active);
+  $("#storageSwitchTargetInput").value = `${config.name} (${config.type === "local" ? "本地存储" : config.database})`;
+  $("#storageSwitchSummary").textContent = `当前：${current?.name || "-"}，目标：${config.name}`;
+  setSelectValue("#storageMigrationPolicySelect", "copy-config");
+  $("#storageMigrationPolicyDesc").value = getStorageMigrationPolicyDesc("copy-config");
+  openDialog("#storageSwitchModal");
+}
+
+function applyStorageSwitchResult(result = {}) {
+  if (Array.isArray(result.storageConfigs)) {
+    window.opsData.storageConfigs = result.storageConfigs;
+  } else {
+    window.opsData.storageConfigs = (window.opsData.storageConfigs || []).map((config) => ({
+      ...config,
+      active: config.id === result.currentStorageId
+    }));
+  }
+  window.opsData.currentStorageId = result.currentStorageId || window.opsData.currentStorageId;
+  if (result.migration) {
+    window.opsData.storageMigrationLogs = [result.migration, ...(window.opsData.storageMigrationLogs || [])];
+  }
+  renderStorageConfigs();
 }
 
 function renderDictionarySelectOptions(selector, selectedId = "", emptyText = "不引用字典集") {
@@ -1729,11 +1907,20 @@ function normalizeValueFiltersForFields(fields = []) {
     field,
     matchMode: existing.get(field)?.matchMode || "exact",
     value: existing.get(field)?.value || "",
+    preRuleId: existing.get(field)?.preRuleId || "",
+    extractMode: existing.get(field)?.extractMode || "none",
+    splitDelimiter: existing.get(field)?.splitDelimiter || "|",
+    splitIndex: existing.get(field)?.splitIndex || "",
+    extractRegex: existing.get(field)?.extractRegex || "",
     dictionaryId: existing.get(field)?.dictionaryId || "",
     dictionaryColumn: existing.get(field)?.dictionaryColumn || "",
     dictionaryMatchMode: existing.get(field)?.dictionaryMatchMode || "field-in-dictionary",
     dictionaryScopeColumn: existing.get(field)?.dictionaryScopeColumn || "",
     dictionaryScopeValue: existing.get(field)?.dictionaryScopeValue || "",
+    outputMode: existing.get(field)?.outputMode || "original",
+    aggregateOutput: Boolean(existing.get(field)?.aggregateOutput),
+    aggregateSeparator: existing.get(field)?.aggregateSeparator || ",",
+    uniqueOutput: existing.get(field)?.uniqueOutput !== false,
     enabled: existing.get(field)?.enabled !== false
   }));
 }
@@ -1742,6 +1929,7 @@ function renderValueFilterList() {
   const fields = getSelectedKeepFieldsForValueFilters();
   const filters = normalizeValueFiltersForFields(fields);
   const dictionaries = window.opsData.dictionarySets || [];
+  const rules = window.opsData.cleaningRules || [];
   if (!fields.length) {
     $("#valueFilterList").innerHTML = '<div class="module-status">请先在“保留字段”中选择字段，再配置字段值过滤。</div>';
     return;
@@ -1800,7 +1988,73 @@ function renderValueFilterList() {
     .join("");
   $$(".value-filter-row", $("#valueFilterList")).forEach((row, index) => {
     updateValueFilterDictionaryColumns(row, filters[index]);
+    enhanceValueFilterRow(row, filters[index]);
   });
+}
+
+function enhanceValueFilterRow(row, filter = {}) {
+  if (!row || row.dataset.enhancedOutputFilter === "true") return;
+  row.dataset.enhancedOutputFilter = "true";
+  const rules = window.opsData.cleaningRules || [];
+  row.insertAdjacentHTML(
+    "beforeend",
+    `
+      <label>
+        <span>过滤前清洗规则</span>
+        <select data-value-filter-rule>
+          <option value="">不使用规则</option>
+          ${rules.map((rule) => `<option value="${escapeHtml(rule.id)}" ${filter.preRuleId === rule.id ? "selected" : ""}>${escapeHtml(rule.name)}</option>`).join("")}
+        </select>
+      </label>
+      <label>
+        <span>过滤取值方式</span>
+        <select data-value-filter-extract-mode>
+          <option value="none" ${filter.extractMode === "none" ? "selected" : ""}>直接使用字段值</option>
+          <option value="split" ${filter.extractMode === "split" ? "selected" : ""}>按分隔符取片段</option>
+          <option value="regex" ${filter.extractMode === "regex" ? "selected" : ""}>按正则提取</option>
+        </select>
+      </label>
+      <label>
+        <span>分隔符</span>
+        <input data-value-filter-split-delimiter value="${escapeHtml(filter.splitDelimiter || "|")}" placeholder="如 |" />
+      </label>
+      <label>
+        <span>片段序号</span>
+        <input data-value-filter-split-index value="${escapeHtml(filter.splitIndex || "")}" placeholder="从 1 开始，如 2" />
+      </label>
+      <label>
+        <span>提取正则</span>
+        <input data-value-filter-regex value="${escapeHtml(filter.extractRegex || "")}" placeholder="如 ^[^|]+\\|([^|]+)\\|" />
+      </label>
+      <label>
+        <span>命中后输出</span>
+        <select data-value-filter-output-mode>
+          <option value="original" ${(filter.outputMode || "original") === "original" ? "selected" : ""}>保留原字段值</option>
+          <option value="matched-fragment" ${filter.outputMode === "matched-fragment" ? "selected" : ""}>只保留命中内容</option>
+          <option value="filter-value" ${filter.outputMode === "filter-value" ? "selected" : ""}>保留过滤取值</option>
+        </select>
+      </label>
+      <label>
+        <span>聚合输出</span>
+        <select data-value-filter-aggregate>
+          <option value="false" ${filter.aggregateOutput ? "" : "selected"}>不聚合</option>
+          <option value="true" ${filter.aggregateOutput ? "selected" : ""}>命中记录合并为一个值</option>
+        </select>
+      </label>
+      <label>
+        <span>聚合分隔符</span>
+        <input data-value-filter-aggregate-separator value="${escapeHtml(filter.aggregateSeparator || ",")}" placeholder="如 ," />
+      </label>
+      <label>
+        <span>重复值处理</span>
+        <select data-value-filter-unique>
+          <option value="true" ${filter.uniqueOutput === false ? "" : "selected"}>自动去重</option>
+          <option value="false" ${filter.uniqueOutput === false ? "selected" : ""}>保留重复</option>
+        </select>
+      </label>
+    `
+  );
+  syncValueFilterRowVisibility(row);
 }
 
 function updateValueFilterDictionaryColumns(row, filter = {}) {
@@ -1822,6 +2076,32 @@ function updateValueFilterDictionaryColumns(row, filter = {}) {
   }
 }
 
+function toggleValueFilterControl(row, selector, visible) {
+  const control = $(selector, row);
+  const label = control?.closest("label");
+  if (!control || !label) return;
+  label.classList.toggle("hidden", !visible);
+  control.disabled = !visible;
+}
+
+function syncValueFilterRowVisibility(row) {
+  if (!row) return;
+  const extractMode = $("[data-value-filter-extract-mode]", row)?.value || "none";
+  const hasDictionary = Boolean($("[data-value-filter-dictionary]", row)?.value);
+  const hasScopeColumn = Boolean($("[data-value-filter-scope-column]", row)?.value);
+  const shouldAggregate = ($("[data-value-filter-aggregate]", row)?.value || "false") === "true";
+  toggleValueFilterControl(row, "[data-value-filter-split-delimiter]", extractMode === "split");
+  toggleValueFilterControl(row, "[data-value-filter-split-index]", extractMode === "split");
+  toggleValueFilterControl(row, "[data-value-filter-regex]", extractMode === "regex");
+  toggleValueFilterControl(row, "[data-value-filter-value]", !hasDictionary);
+  toggleValueFilterControl(row, "[data-value-filter-dictionary-column]", hasDictionary);
+  toggleValueFilterControl(row, "[data-value-filter-dictionary-match]", hasDictionary);
+  toggleValueFilterControl(row, "[data-value-filter-scope-column]", hasDictionary);
+  toggleValueFilterControl(row, "[data-value-filter-scope-value]", hasDictionary && hasScopeColumn);
+  toggleValueFilterControl(row, "[data-value-filter-aggregate-separator]", shouldAggregate);
+  toggleValueFilterControl(row, "[data-value-filter-unique]", shouldAggregate);
+}
+
 function openValueFilterDialog() {
   renderValueFilterList();
   openDialog("#valueFilterModal");
@@ -1832,11 +2112,20 @@ function saveValueFilterDialog() {
     field: row.dataset.valueFilterField,
     matchMode: $("[data-value-filter-mode]", row).value,
     value: $("[data-value-filter-value]", row).value.trim(),
+    preRuleId: $("[data-value-filter-rule]", row)?.value || "",
+    extractMode: $("[data-value-filter-extract-mode]", row)?.value || "none",
+    splitDelimiter: $("[data-value-filter-split-delimiter]", row)?.value || "|",
+    splitIndex: $("[data-value-filter-split-index]", row)?.value.trim() || "",
+    extractRegex: $("[data-value-filter-regex]", row)?.value.trim() || "",
     dictionaryId: $("[data-value-filter-dictionary]", row).value,
     dictionaryColumn: $("[data-value-filter-dictionary-column]", row).value,
     dictionaryMatchMode: $("[data-value-filter-dictionary-match]", row).value,
     dictionaryScopeColumn: $("[data-value-filter-scope-column]", row).value,
     dictionaryScopeValue: $("[data-value-filter-scope-value]", row).value.trim(),
+    outputMode: $("[data-value-filter-output-mode]", row)?.value || "original",
+    aggregateOutput: ($("[data-value-filter-aggregate]", row)?.value || "false") === "true",
+    aggregateSeparator: $("[data-value-filter-aggregate-separator]", row)?.value || ",",
+    uniqueOutput: ($("[data-value-filter-unique]", row)?.value || "true") === "true",
     enabled: Boolean($("[data-value-filter-value]", row).value.trim() || ($("[data-value-filter-dictionary]", row).value && $("[data-value-filter-dictionary-column]", row).value))
   }));
   closeDialog("#valueFilterModal");
@@ -3315,6 +3604,14 @@ function bindEvents() {
     if (row && event.target.matches("[data-value-filter-dictionary]")) {
       updateValueFilterDictionaryColumns(row);
     }
+    if (
+      row &&
+      event.target.matches(
+        "[data-value-filter-dictionary], [data-value-filter-extract-mode], [data-value-filter-scope-column], [data-value-filter-aggregate]"
+      )
+    ) {
+      syncValueFilterRowVisibility(row);
+    }
   });
   $("#sourceKindSelect").addEventListener("change", () => {
     updateRequestParamVisibility();
@@ -3431,6 +3728,112 @@ function bindEvents() {
     if (action === "delete") {
       appState.editingDictionaryId = dictionary.id;
       $("#deleteDictionaryBtn").click();
+    }
+  });
+  $("#addStorageConfigBtn").addEventListener("click", () => {
+    resetStorageConfigForm();
+    openDialog("#storageConfigModal");
+  });
+  $("#storageDatabaseSelect").addEventListener("change", () => {
+    $("#storagePortInput").value = "";
+    syncStorageDefaultPort();
+  });
+  $("#storageMigrationPolicySelect").addEventListener("change", () => {
+    $("#storageMigrationPolicyDesc").value = getStorageMigrationPolicyDesc($("#storageMigrationPolicySelect").value);
+  });
+  $("#confirmStorageSwitchBtn").addEventListener("click", async (event) => {
+    event.preventDefault();
+    const targetStorageId = $("#storageSwitchModal").dataset.targetStorageId;
+    const migrationPolicy = $("#storageMigrationPolicySelect").value;
+    try {
+      const result = await apiRequest("/api/storage-configs/switch", {
+        method: "POST",
+        body: JSON.stringify({ targetStorageId, migrationPolicy })
+      });
+      applyStorageSwitchResult(result);
+    } catch {
+      const target = getStorageConfigById(targetStorageId);
+      const current = getStorageConfigById(window.opsData.currentStorageId);
+      const migration = {
+        id: `local_storage_migration_${Date.now()}`,
+        fromStorageId: current?.id || "",
+        fromStorageName: current?.name || "",
+        toStorageId: target?.id || targetStorageId,
+        toStorageName: target?.name || "",
+        migrationPolicy,
+        status: migrationPolicy === "switch-only" ? "switched-without-copy" : "local-plan-recorded",
+        message: getStorageMigrationPolicyDesc(migrationPolicy),
+        createdAt: new Date().toISOString()
+      };
+      applyStorageSwitchResult({ currentStorageId: targetStorageId, migration });
+    }
+    closeDialog("#storageSwitchModal");
+  });
+  $("#saveStorageConfigBtn").addEventListener("click", async (event) => {
+    event.preventDefault();
+    const payload = collectStorageConfigForm();
+    const editingId = appState.editingStorageConfigId;
+    try {
+      const saved = await apiRequest(editingId ? `/api/storage-configs/${encodeURIComponent(editingId)}` : "/api/storage-configs", {
+        method: editingId ? "PUT" : "POST",
+        body: JSON.stringify(payload)
+      });
+      window.opsData.storageConfigs = window.opsData.storageConfigs || [];
+      if (editingId) {
+        window.opsData.storageConfigs = window.opsData.storageConfigs.map((item) => (item.id === saved.id ? saved : item));
+      } else {
+        window.opsData.storageConfigs.push(saved);
+      }
+    } catch {
+      const localStorageConfig = {
+        id: editingId || `local_storage_${Date.now()}`,
+        ...payload,
+        password: "",
+        passwordMasked: payload.password ? "******" : "",
+        status: payload.host ? "本地已配置" : "待配置",
+        readonly: false
+      };
+      window.opsData.storageConfigs = window.opsData.storageConfigs || [];
+      if (editingId) {
+        window.opsData.storageConfigs = window.opsData.storageConfigs.map((item) => (item.id === editingId ? { ...item, ...localStorageConfig } : item));
+      } else if (!window.opsData.storageConfigs.some((item) => item.type === "database")) {
+        window.opsData.storageConfigs.push(localStorageConfig);
+      }
+    }
+    renderStorageConfigs();
+    closeDialog("#storageConfigModal");
+  });
+  $("#deleteStorageConfigBtn").addEventListener("click", async () => {
+    const config = getStorageConfigById(appState.editingStorageConfigId);
+    if (!config || config.readonly) return;
+    try {
+      await apiRequest(`/api/storage-configs/${encodeURIComponent(config.id)}`, { method: "DELETE" });
+    } catch {
+      // Local fallback.
+    }
+    window.opsData.storageConfigs = (window.opsData.storageConfigs || []).filter((item) => item.id !== config.id);
+    renderStorageConfigs();
+    closeDialog("#storageConfigModal");
+  });
+  $("#storageConfigList").addEventListener("click", (event) => {
+    const storageId = event.target.dataset.storageId;
+    const action = event.target.dataset.storageAction;
+    if (!storageId || !action) return;
+    const config = getStorageConfigById(storageId);
+    if (!config) return;
+    if (action === "switch") {
+      openStorageSwitchModal(config);
+      return;
+    }
+    if (config.readonly) return;
+    if (action === "edit") {
+      populateStorageConfigForm(config);
+      openDialog("#storageConfigModal");
+      return;
+    }
+    if (action === "delete") {
+      appState.editingStorageConfigId = config.id;
+      $("#deleteStorageConfigBtn").click();
     }
   });
   $("#addAuthBtn").addEventListener("click", async () => {
@@ -3910,6 +4313,7 @@ async function boot() {
   renderMappings();
   renderRuleTable();
   renderDictionarySets();
+  renderStorageConfigs();
   setupBusinessWorkbenchLayout();
   setupSourceWorkbenchLayout();
   renderFlowControls();

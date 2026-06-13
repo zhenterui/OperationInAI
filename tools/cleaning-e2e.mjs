@@ -266,6 +266,103 @@ try {
   });
   assert(dictionaryExpressionTest.data.filteredRecordCount === 1, "filter condition should support dictionary membership");
 
+  const productAliasDictionary = await request("/api/dictionary-sets", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E Product Alias Catalog",
+      category: "E2E",
+      description: "Dictionary used by value filter transform and aggregation tests.",
+      columns: ["Dept", "Product", "Aliases", "Version"],
+      rows: [
+        { Dept: "App", Product: "ROMAConnect", Aliases: "ROMAConnect,ServiceStage", Version: "2.x" }
+      ]
+    })
+  });
+
+  const transformedOriginalOutputTest = await request("/api/data-sources/test", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E transformed value filter keeps original output",
+      kind: "api",
+      responsePath: "data.items[]",
+      responseBody: {
+        data: {
+          items: [
+            { value: "应用服务|ROMAConnect|2.2.0", time: "2026-06-13T10:00:00Z" },
+            { value: "应用服务|ROMAConnect|2.3.0", time: "2026-06-13T10:01:00Z" },
+            { value: "应用服务|ServiceStage|2.2.0", time: "2026-06-13T10:02:00Z" },
+            { value: "应用服务|Unknown|1.0.0", time: "2026-06-13T10:03:00Z" }
+          ]
+        }
+      },
+      responseConfig: {
+        fieldKeepMode: "value-filter",
+        keepFields: ["data.items[].value"],
+        valueFilters: [
+          {
+            field: "data.items[].value",
+            extractMode: "split",
+            splitDelimiter: "|",
+            splitIndex: "2",
+            dictionaryId: productAliasDictionary.data.id,
+            dictionaryColumn: "Aliases",
+            dictionaryMatchMode: "field-in-dictionary",
+            outputMode: "original",
+            aggregateOutput: true,
+            aggregateSeparator: ",",
+            enabled: true
+          }
+        ]
+      }
+    })
+  });
+  assert(transformedOriginalOutputTest.data.filteredRecordCount === 3, "transformed dictionary filter should keep matching records");
+  assert(
+    transformedOriginalOutputTest.data.selectedRecords[0]["data.items[].value"] === "应用服务|ROMAConnect|2.2.0,应用服务|ROMAConnect|2.3.0,应用服务|ServiceStage|2.2.0",
+    "transformed dictionary filter should aggregate original output values"
+  );
+
+  const transformedMatchedOutputTest = await request("/api/data-sources/test", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E transformed value filter keeps matched fragment",
+      kind: "api",
+      responsePath: "data.items[]",
+      responseBody: {
+        data: {
+          items: [
+            { value: "应用服务|ROMAConnect|2.2.0" },
+            { value: "应用服务|ROMAConnect|2.3.0" },
+            { value: "应用服务|ServiceStage|2.2.0" }
+          ]
+        }
+      },
+      responseConfig: {
+        fieldKeepMode: "value-filter",
+        keepFields: ["data.items[].value"],
+        valueFilters: [
+          {
+            field: "data.items[].value",
+            extractMode: "split",
+            splitDelimiter: "|",
+            splitIndex: "2",
+            dictionaryId: productAliasDictionary.data.id,
+            dictionaryColumn: "Aliases",
+            dictionaryMatchMode: "field-in-dictionary",
+            outputMode: "matched-fragment",
+            aggregateOutput: true,
+            aggregateSeparator: ",",
+            enabled: true
+          }
+        ]
+      }
+    })
+  });
+  assert(
+    transformedMatchedOutputTest.data.selectedRecords[0]["data.items[].value"] === "ROMAConnect,ServiceStage",
+    "transformed dictionary filter should optionally aggregate only matched fragments"
+  );
+
   const rule = await request("/api/cleaning-rules", {
     method: "POST",
     body: JSON.stringify({
@@ -406,6 +503,7 @@ try {
 
   await request(`/api/cleaning-rules/${rule.data.id}`, { method: "DELETE" });
   await request(`/api/cleaning-rules/${extractRule.data.id}`, { method: "DELETE" });
+  await request(`/api/dictionary-sets/${productAliasDictionary.data.id}`, { method: "DELETE" });
   const deletedFlow = await request(`/api/business-flows/${updatedFlow.data.id}`, { method: "DELETE" });
   await request(`/api/data-sources/${source.data.id}`, { method: "DELETE" });
   await request(`/api/auth-configs/${auth.data.id}`, { method: "DELETE" });

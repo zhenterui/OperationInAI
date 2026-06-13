@@ -331,16 +331,129 @@ function matchesDictionaryValue(actual, filter = {}) {
   return values.some((value) => matchValueFilterValue(actual, { ...filter, value }));
 }
 
+function hasValueFilterCriterion(filter = {}) {
+  return Boolean(
+    String(filter.value || "").trim() ||
+    (filter.dictionaryId && filter.dictionaryColumn) ||
+    Array.isArray(filter.dictionaryValues)
+  );
+}
+
+function applyFilterValueRule(value, filter = {}, record = {}, responsePath = "") {
+  if (!filter.preRuleId) return [value];
+  const output = applyCleaningRule([value], { ruleId: filter.preRuleId, defaultValue: "" }, record, responsePath);
+  return Array.isArray(output) ? output : [output];
+}
+
+function transformFilterCandidate(value, filter = {}, record = {}, responsePath = "") {
+  const mode = filter.extractMode || filter.transformMode || "none";
+  const values = applyFilterValueRule(value, filter, record, responsePath);
+  return values.flatMap((item) => {
+    const text = String(item ?? "");
+    if (mode === "split") {
+      const delimiter = filter.splitDelimiter || "|";
+      const parts = text.split(delimiter).map((part) => part.trim());
+      const index = Number(filter.splitIndex || filter.extractIndex || 0);
+      if (Number.isFinite(index) && index > 0) return [parts[index - 1] ?? ""];
+      return parts;
+    }
+    if (mode === "regex") {
+      try {
+        const match = text.match(new RegExp(filter.extractRegex || filter.regex || ""));
+        return match ? [match[1] || match[0]] : [];
+      } catch {
+        return [];
+      }
+    }
+    return [item];
+  }).filter((item) => item !== undefined && item !== null && item !== "");
+}
+
+function getDictionaryMatchDetails(original, candidates = [], filter = {}) {
+  const dictionaryValues = getDictionaryFilterValues(filter);
+  if (!dictionaryValues.length) return [];
+  return candidates.flatMap((candidate) => {
+    const candidateText = String(candidate ?? "");
+    if (filter.dictionaryMatchMode === "dictionary-in-field") {
+      return dictionaryValues
+        .filter((value) => value && candidateText.includes(String(value)))
+        .map((value) => ({ original, candidate, matched: value }));
+    }
+    return dictionaryValues
+      .filter((value) => matchValueFilterValue(candidate, { ...filter, value }))
+      .map(() => ({ original, candidate, matched: candidate }));
+  });
+}
+
+function getValueFilterMatchDetails(record, filter = {}, responsePath = "") {
+  const values = getValuesByPath(record, stripResponsePrefix(filter.field, responsePath));
+  return values.flatMap((original) => {
+    const candidates = transformFilterCandidate(original, filter, record, responsePath);
+    if (filter.dictionaryId || Array.isArray(filter.dictionaryValues)) {
+      return getDictionaryMatchDetails(original, candidates, filter);
+    }
+    return candidates
+      .filter((candidate) => matchValueFilterValue(candidate, filter))
+      .map((candidate) => ({ original, candidate, matched: candidate }));
+  });
+}
+
 function matchesValueFilters(record, valueFilters = [], responsePath = "") {
   const enabledFilters = valueFilters.filter((filter) =>
     filter?.enabled !== false &&
     filter?.field &&
-    (String(filter.value || "").trim() || (filter.dictionaryId && filter.dictionaryColumn))
+    hasValueFilterCriterion(filter)
   );
   if (!enabledFilters.length) return true;
-  return enabledFilters.every((filter) => {
-    const values = getValuesByPath(record, stripResponsePrefix(filter.field, responsePath));
-    return values.some((value) => (filter.dictionaryId ? matchesDictionaryValue(value, filter) : matchValueFilterValue(value, filter)));
+  return enabledFilters.every((filter) => getValueFilterMatchDetails(record, filter, responsePath).length > 0);
+}
+
+function getValueFilterOutputValues(record, filter = {}, responsePath = "") {
+  const details = getValueFilterMatchDetails(record, filter, responsePath);
+  const outputMode = filter.outputMode || "original";
+  if (outputMode === "matched-fragment") return details.map((item) => item.matched);
+  if (outputMode === "filter-value") return details.map((item) => item.candidate);
+  return details.map((item) => item.original);
+}
+
+function composeFilterOutputValues(values = [], filter = {}) {
+  const items = filter.uniqueOutput === false
+    ? values.map((value) => String(value ?? "")).filter(Boolean)
+    : uniqueValues(values);
+  if (filter.aggregateOutput) return items.join(filter.aggregateSeparator ?? ",");
+  return items.length > 1 ? items : items[0] ?? "";
+}
+
+function selectValueFilteredFields(records = [], keepFields = [], valueFilters = [], responsePath = "") {
+  const activeFilters = valueFilters.filter((filter) =>
+    filter?.enabled !== false &&
+    filter?.field &&
+    hasValueFilterCriterion(filter)
+  );
+  const filterByField = new Map(activeFilters.map((filter) => [normalizePathPrefix(filter.field), filter]));
+  if (activeFilters.some((filter) => filter.aggregateOutput)) {
+    const fields = keepFields.length ? keepFields : activeFilters.map((filter) => filter.field);
+    return [
+      fields.reduce((output, field) => {
+        const filter = filterByField.get(normalizePathPrefix(field));
+        if (filter) {
+          const values = records.flatMap((record) => getValueFilterOutputValues(record, filter, responsePath));
+          output[field] = composeFilterOutputValues(values, filter);
+          return output;
+        }
+        const values = records.flatMap((record) => getValuesByPath(record, stripResponsePrefix(field, responsePath)));
+        output[field] = values.length > 1 ? uniqueValues(values) : values[0] ?? "";
+        return output;
+      }, {})
+    ];
+  }
+  return records.map((record) => {
+    const output = keepFields.length ? selectKeepFields([record], keepFields, responsePath)[0] : { ...record };
+    activeFilters.forEach((filter) => {
+      if (keepFields.length && !keepFields.includes(filter.field)) return;
+      output[filter.field] = composeFilterOutputValues(getValueFilterOutputValues(record, filter, responsePath), filter);
+    });
+    return output;
   });
 }
 
@@ -354,9 +467,11 @@ function extractResponseRecords(responseBody, config = {}) {
   const filteredRecords = config.fieldKeepMode === "value-filter"
     ? conditionFilteredRecords.filter((record) => matchesValueFilters(record, config.valueFilters, responsePath))
     : conditionFilteredRecords;
-  const selectedRecords = ["selected", "value-filter"].includes(config.fieldKeepMode)
-    ? selectKeepFields(filteredRecords, config.keepFields, responsePath)
-    : filteredRecords;
+  const selectedRecords = config.fieldKeepMode === "value-filter"
+    ? selectValueFilteredFields(filteredRecords, config.keepFields, config.valueFilters, responsePath)
+    : config.fieldKeepMode === "selected"
+      ? selectKeepFields(filteredRecords, config.keepFields, responsePath)
+      : filteredRecords;
   return {
     recordValue,
     records,

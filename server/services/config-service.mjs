@@ -173,6 +173,162 @@ export function deleteModelConfig(id) {
   return { ...removed, apiKey: "" };
 }
 
+function maskStoragePassword(value = "") {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length <= 4) return "******";
+  return `${text.slice(0, 2)}****${text.slice(-2)}`;
+}
+
+function sanitizeStorageConfig(config = {}) {
+  return { ...config, active: config.id === store.currentStorageId, password: "" };
+}
+
+export function createStorageConfig(input = {}) {
+  const existingDatabaseStorage = store.storageConfigs.find((item) => item.type === "database");
+  if (existingDatabaseStorage) {
+    const error = new Error("Only one database storage config is supported");
+    error.status = 400;
+    throw error;
+  }
+  const password = input.password || "";
+  const config = {
+    id: `storage_${Date.now()}`,
+    name: input.name || "数据库存储",
+    category: input.category || "数据库存储",
+    type: "database",
+    database: input.database || "postgresql",
+    host: input.host || "127.0.0.1",
+    port: input.port || "5432",
+    username: input.username || "",
+    password,
+    passwordMasked: maskStoragePassword(password),
+    status: input.host ? "已配置" : "待配置",
+    readonly: false,
+    active: false,
+    updatedAt: new Date().toISOString()
+  };
+  store.storageConfigs.push(config);
+  return sanitizeStorageConfig(config);
+}
+
+export function updateStorageConfig(id, input = {}) {
+  const index = store.storageConfigs.findIndex((item) => item.id === id);
+  if (index < 0) {
+    const error = new Error("Storage config not found");
+    error.status = 404;
+    throw error;
+  }
+  const existing = store.storageConfigs[index];
+  if (existing.readonly) {
+    const error = new Error("Default local storage config cannot be edited");
+    error.status = 400;
+    throw error;
+  }
+  const password = input.password ? input.password : existing.password || "";
+  const updated = {
+    ...existing,
+    name: input.name || existing.name,
+    category: input.category || existing.category || "数据库存储",
+    type: "database",
+    database: input.database || existing.database || "postgresql",
+    host: input.host ?? existing.host,
+    port: input.port ?? existing.port,
+    username: input.username ?? existing.username,
+    password,
+    passwordMasked: maskStoragePassword(password),
+    status: input.host || existing.host ? "已配置" : "待配置",
+    updatedAt: new Date().toISOString()
+  };
+  store.storageConfigs[index] = updated;
+  return sanitizeStorageConfig(updated);
+}
+
+export function deleteStorageConfig(id) {
+  const index = store.storageConfigs.findIndex((item) => item.id === id);
+  if (index < 0) {
+    const error = new Error("Storage config not found");
+    error.status = 404;
+    throw error;
+  }
+  if (store.storageConfigs[index].readonly) {
+    const error = new Error("Default local storage config cannot be deleted");
+    error.status = 400;
+    throw error;
+  }
+  if (store.currentStorageId === id) {
+    const error = new Error("Active storage config cannot be deleted");
+    error.status = 400;
+    throw error;
+  }
+  const [removed] = store.storageConfigs.splice(index, 1);
+  return sanitizeStorageConfig(removed);
+}
+
+function getStorageDataScope(policy = "copy-config") {
+  const configCounts = {
+    authConfigs: store.authConfigs.length,
+    dataSources: store.dataSources.length,
+    fieldMappings: store.fieldMappings.length,
+    cleaningRules: store.cleaningRules.length,
+    dictionarySets: store.dictionarySets.length,
+    businessFlows: store.businessFlows.length,
+    modelConfigs: store.modelConfigs.length
+  };
+  const businessCounts = {
+    businesses: store.businesses.length,
+    syncLogs: store.syncLogs.length,
+    analysisResults: store.analysisResults.length,
+    knowledge: store.knowledge.length
+  };
+  if (policy === "switch-only") return {};
+  if (policy === "copy-all") return { ...configCounts, ...businessCounts };
+  return configCounts;
+}
+
+export function switchStorageConfig(input = {}) {
+  const targetId = input.targetStorageId || input.storageId;
+  const target = store.storageConfigs.find((item) => item.id === targetId);
+  if (!target) {
+    const error = new Error("Target storage config not found");
+    error.status = 404;
+    throw error;
+  }
+  const previous = store.storageConfigs.find((item) => item.id === store.currentStorageId) || store.storageConfigs[0];
+  const migrationPolicy = input.migrationPolicy || "copy-config";
+  const migrationLog = {
+    id: `storage_migration_${Date.now()}`,
+    fromStorageId: previous?.id || "",
+    fromStorageName: previous?.name || "",
+    toStorageId: target.id,
+    toStorageName: target.name,
+    migrationPolicy,
+    dataScope: getStorageDataScope(migrationPolicy),
+    status: migrationPolicy === "switch-only" ? "switched-without-copy" : "migration-plan-recorded",
+    message:
+      migrationPolicy === "switch-only"
+        ? "已切换当前存储，旧存储中的数据不会自动复制。"
+        : migrationPolicy === "copy-all"
+          ? "已记录全量数据复制计划；接入数据库适配器后可执行真实迁移。"
+          : "已记录配置数据复制计划；业务运行数据仍保留在旧存储。",
+    createdAt: new Date().toISOString()
+  };
+  store.currentStorageId = target.id;
+  store.storageConfigs = store.storageConfigs.map((item) => ({
+    ...item,
+    active: item.id === target.id,
+    status: item.id === target.id ? "当前使用" : item.status === "当前使用" ? "已配置" : item.status
+  }));
+  store.storageMigrationLogs.unshift(migrationLog);
+  return {
+    currentStorageId: store.currentStorageId,
+    currentStorage: sanitizeStorageConfig(store.storageConfigs.find((item) => item.id === store.currentStorageId)),
+    previousStorage: sanitizeStorageConfig(previous),
+    migration: migrationLog,
+    storageConfigs: store.storageConfigs.map(sanitizeStorageConfig)
+  };
+}
+
 function normalizeDictionaryRows(rows = [], columns = []) {
   if (!Array.isArray(rows)) return [];
   return rows.map((row) =>
