@@ -61,7 +61,23 @@ const popularModelPresets = [
   { id: "preset_gemini_flash", name: "Gemini Flash", category: "美国热门模型", vendor: "gemini", model: "gemini-1.5-flash", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" }
 ];
 
-const dictionaryCategories = ["业务字典", "组织字典", "环境字典", "状态枚举", "技术字典", "通用字典"];
+const placeholderConfigExample = [
+  { name: "start_time", source: "mapping", from: "context.start_time" },
+  { name: "env", source: "custom", value: "prod" }
+];
+
+function getPlaceholderConfigExample() {
+  return JSON.stringify(placeholderConfigExample, null, 2);
+}
+
+function formatOptionalJsonArray(value) {
+  return Array.isArray(value) && value.length ? JSON.stringify(value, null, 2) : "";
+}
+
+function syncPlaceholderTextareaHint() {
+  const input = $("#paramPlaceholderInput");
+  if (input) input.placeholder = getPlaceholderConfigExample();
+}
 
 async function apiRequest(path, options = {}) {
   const response = await fetch(path, {
@@ -700,7 +716,8 @@ function autoGenerateParamMapping() {
       from: field.startsWith("context.") ? field : "",
       value: field.startsWith("context.") ? "" : field
     }));
-  $("#paramPlaceholderInput").value = JSON.stringify(placeholders, null, 2);
+  $("#paramPlaceholderInput").value = formatOptionalJsonArray(placeholders);
+  syncPlaceholderTextareaHint();
   const sourceType = $("#paramSourceTypeSelect").value;
   const filter = $("#paramFilterInput").value.trim();
   if (sourceType === "database") {
@@ -927,7 +944,8 @@ function populateSourceForm(source = getSelectedSource()) {
   $("#paramFilterInput").value = parameterConfig.filterCondition || "";
   $("#paramQueryInput").value = parameterConfig.query || "";
   $("#paramMappingInput").value = JSON.stringify(parameterConfig.mappings || [], null, 2);
-  $("#paramPlaceholderInput").value = JSON.stringify(parameterConfig.placeholders || [], null, 2);
+  $("#paramPlaceholderInput").value = formatOptionalJsonArray(parameterConfig.placeholders || []);
+  syncPlaceholderTextareaHint();
   setSelectValue("#paramIterationModeSelect", parameterConfig.iterationMode || "single");
   $("#paramStrategyInput").value = parameterConfig.strategy || "concurrency=5; retries=2; continueOnError=true";
   if ($("#mappingSourceSelect").options.length) {
@@ -959,10 +977,8 @@ function resetSourceForm() {
   $("#paramFilterInput").value = "";
   $("#paramQueryInput").value = "";
   $("#paramMappingInput").value = "[]";
-  $("#paramPlaceholderInput").value = JSON.stringify([
-    { name: "start_time", source: "mapping", from: "context.start_time" },
-    { name: "end_time", source: "mapping", from: "context.end_time" }
-  ], null, 2);
+  $("#paramPlaceholderInput").value = getPlaceholderConfigExample();
+  syncPlaceholderTextareaHint();
   setSelectValue("#paramIterationModeSelect", "single");
   $("#paramStrategyInput").value = "concurrency=5; retries=2; continueOnError=true";
   appState.lastSourceTest = null;
@@ -1166,7 +1182,7 @@ function getMappingById(id) {
 function renderDictionarySets() {
   renderGroupedConfigList("#dictionarySetList", window.opsData.dictionarySets || [], {
     bodyClass: "support-group-body",
-    getCategory: (dictionary) => dictionary.category || "字典集",
+    getCategory: (dictionary) => dictionary.category || "未分组",
     renderItem: (dictionary) => `
       <div class="support-list-item" data-dictionary-id="${escapeHtml(dictionary.id)}">
         <div>
@@ -1204,9 +1220,9 @@ function renderDictionaryColumnOptions(selector, dictionaryId, selectedColumn = 
 }
 
 function setDictionaryCategoryValue(value = "业务字典") {
-  const select = $("#dictionaryCategoryInput");
-  if (!select) return;
-  select.value = dictionaryCategories.includes(value) ? value : "通用字典";
+  const input = $("#dictionaryCategoryInput");
+  if (!input) return;
+  input.value = value || "业务字典";
 }
 
 function parseDictionaryColumns() {
@@ -1259,7 +1275,7 @@ function populateDictionaryForm(dictionary) {
   appState.editingDictionaryId = dictionary.id;
   $("#dictionaryModalTitle").textContent = "编辑字典集";
   $("#dictionaryNameInput").value = dictionary.name || "";
-  setDictionaryCategoryValue(dictionary.category || "通用字典");
+  setDictionaryCategoryValue(dictionary.category || "未分组");
   $("#dictionaryColumnsInput").value = (dictionary.columns || []).join(",");
   $("#dictionaryRowsInput").value = JSON.stringify(dictionary.rows || [], null, 2);
   syncDictionaryColumnsFromRows();
@@ -1271,7 +1287,7 @@ function collectDictionaryForm() {
   const columns = parseDictionaryColumns();
   return {
     name: $("#dictionaryNameInput").value.trim() || "自定义字典集",
-    category: $("#dictionaryCategoryInput").value.trim() || "通用字典",
+    category: $("#dictionaryCategoryInput").value.trim() || "未分组",
     description: $("#dictionaryDescInput").value.trim(),
     columns,
     rows: parseDictionaryRows()
@@ -3482,7 +3498,7 @@ function bindEvents() {
     try {
       const result = await apiRequest("/api/sync-jobs/run", {
         method: "POST",
-        body: JSON.stringify({ sourceId: appState.selectedSourceId })
+        body: JSON.stringify({ sourceId: appState.selectedSourceId, ...collectSourceForm() })
       });
       $("#runSyncBtn").innerHTML = `<span class="icon" data-icon="refresh"></span> ${result.cleanedRows} 行完成`;
       await refreshSyncLogs();
@@ -3490,7 +3506,7 @@ function bindEvents() {
       renderOverview();
       renderSources();
     } catch (error) {
-      $("#runSyncBtn").innerHTML = `<span class="icon" data-icon="refresh"></span> 同步完成`;
+      $("#runSyncBtn").innerHTML = `<span class="icon" data-icon="refresh"></span> 同步失败，重试`;
     }
     renderIcons();
   });

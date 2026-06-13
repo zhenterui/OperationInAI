@@ -740,25 +740,29 @@ export async function testDataSource(input = {}) {
   };
 }
 
-export function runSync(payload = {}) {
+export async function runSync(payload = {}) {
   const sourceId = payload.sourceId || store.dataSources[0]?.id;
   const source = store.dataSources.find((item) => item.id === sourceId) || store.dataSources[0];
-  const matchedRows = store.businesses.reduce((sum, business) => sum + business.rows.length, 0);
-  const cleanedRows = Math.max(0, matchedRows - 1);
+  const startedAt = new Date().toISOString();
+  const result = await testDataSource({ sourceId, ...payload });
+  const fetchedRows = Number(result.recordCount ?? result.filteredRecordCount ?? 0);
+  const cleanedRows = Number(result.filteredRecordCount ?? fetchedRows);
+  const failedRows = result.ok ? 0 : Math.max(1, fetchedRows - cleanedRows);
+  const sourceModeText = result.sourceMode === "real" ? "实际请求" : "模拟响应";
   const log = {
     id: `sync_${Date.now()}`,
     sourceId: source?.id,
     sourceName: source?.name || "未知数据源",
-    status: "success",
-    fetchedRows: matchedRows + 3,
+    status: result.ok ? "success" : "warning",
+    fetchedRows,
     cleanedRows,
-    failedRows: 1,
-    durationMs: 842,
-    startedAt: new Date().toISOString(),
-    message: "已完成采集、字段映射、时间标准化和业务库写入"
+    failedRows,
+    durationMs: result.durationMs,
+    startedAt,
+    message: `已按当前数据源完成${sourceModeText}、响应解析、字段保留/过滤和映射预处理`
   };
   store.syncLogs.unshift(log);
-  store.metrics[1] = { ...store.metrics[1], value: "99.4%", delta: "刚刚完成同步" };
+  store.metrics[1] = { ...store.metrics[1], value: result.ok ? "99.4%" : "需关注", delta: `${source?.name || "数据源"} 刚刚同步` };
   return log;
 }
 

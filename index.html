@@ -464,11 +464,19 @@
 ]</textarea>
                 </label>
                 <label class="full">
-                  <span>占位符变量 JSON</span>
-                  <textarea id="paramPlaceholderInput" rows="4">[
+                  <span class="label-with-help">
+                    占位符变量 JSON
+                    <button class="help-dot" type="button" aria-label="占位符变量填写说明">?</button>
+                  </span>
+                  <textarea id="paramPlaceholderInput" rows="4" placeholder='[
+  { "name": "start_time", "source": "mapping", "from": "context.start_time" },
+  { "name": "env", "source": "custom", "value": "prod" }
+]'>[
   { "name": "start_time", "source": "mapping", "from": "context.start_time" },
   { "name": "env", "source": "custom", "value": "prod" }
 ]</textarea>
+                  <small class="field-help">用于替换 Query、Header、Body 里的 {{变量名}}；为空表示不启用。</small>
+                  <small class="select-popover">格式为 JSON 数组。source=custom 时填写 value 固定值；source=mapping 时用 from 指向 context、上游数据源或数据库字段。</small>
                 </label>
                 <label>
                   <span>调用方式</span>
@@ -508,11 +516,12 @@
                   <p class="eyebrow">Field Mapping</p>
                   <h2>当前数据源出参映射</h2>
                 </div>
-                <button class="small-button" id="runSyncBtn" type="button">
+                <button class="small-button" id="runSyncBtn" type="button" title="按当前选中的数据源配置发起一次采集，解析响应、应用字段保留/过滤/映射，并生成同步日志。">
                   <span class="icon" data-icon="play"></span>
-                  执行同步
+                  同步当前数据源
                 </button>
               </div>
+              <p class="field-help">同步会使用下方选中的当前数据源，结果以测试响应解析后的记录数为准，并写入右侧同步日志。</p>
               <div class="filter-row compact">
                 <label>
                   <span>当前数据源</span>
@@ -1050,16 +1059,9 @@
             <input id="dictionaryNameInput" value="产品列表" />
           </label>
           <label>
-            <span>字典类别</span>
-            <select id="dictionaryCategoryInput">
-              <option value="业务字典">业务字典</option>
-              <option value="组织字典">组织字典</option>
-              <option value="环境字典">环境字典</option>
-              <option value="状态枚举">状态枚举</option>
-              <option value="技术字典">技术字典</option>
-              <option value="通用字典">通用字典</option>
-            </select>
-            <small class="field-help">用于按类别分组展示和折叠管理，便于后续按业务口径筛选引用。</small>
+            <span>字典分组</span>
+            <input id="dictionaryCategoryInput" value="业务字典" placeholder="如：业务字典、产品字典、团队字典" />
+            <small class="field-help">仅用于分组展示和折叠管理，可按你的业务口径自定义。</small>
           </label>
           <label class="full">
             <span>表头字段</span>
