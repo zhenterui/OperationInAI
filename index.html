@@ -437,12 +437,14 @@
                     <option value="database" title="先查询数据库记录，再用记录字段作为本次 API 入参。">数据库查询</option>
                     <option value="source" title="使用另一个数据源的输出字段驱动当前数据源调用。">上游数据源</option>
                     <option value="flow" title="使用整条业务流共享的时间窗口、租户、批次号等变量。">业务流上下文</option>
+                    <option value="dictionary" title="使用自定义字典集中的列值作为入参。">字典集</option>
+                    <option value="flow-node" title="使用业务流中一个或多个上游节点的输出字段作为入参，适合并发分支汇聚后的调用。">业务节点输出</option>
                   </select>
                   <small class="select-popover" id="paramSourceTypeHelp"></small>
                 </label>
                 <label>
-                  <span>来源数据源</span>
-                  <select id="paramSourceSelect"></select>
+                  <span>来源对象</span>
+                  <select id="paramSourceSelect" multiple></select>
                 </label>
                 <label class="full">
                   <span>来源字段勾选</span>
@@ -466,17 +468,22 @@
                 <label class="full">
                   <span class="label-with-help">
                     占位符变量 JSON
-                    <button class="help-dot" type="button" aria-label="占位符变量填写说明">?</button>
+                    <button
+                      class="help-dot"
+                      type="button"
+                      aria-label="占位符变量填写说明"
+                      data-tooltip="用于替换 Query、Header、Body 中的 {{变量名}}。source 可填 custom、mapping、dictionary。dictionary 用 from 指向 字典名.字段名；多个字典值默认逗号拼接，可用 mode=array 保留数组、first 取首个、newline 换行、template 按模板组合，separator 可自定义分隔符。多个并发上游请选“业务节点输出”。为空表示不启用。"
+                    >?</button>
                   </span>
                   <textarea id="paramPlaceholderInput" rows="4" placeholder='[
   { "name": "start_time", "source": "mapping", "from": "context.start_time" },
-  { "name": "env", "source": "custom", "value": "prod" }
+  { "name": "env", "source": "custom", "value": "prod" },
+  { "name": "product", "source": "dictionary", "from": "产品列表.产品名", "mode": "array" }
 ]'>[
   { "name": "start_time", "source": "mapping", "from": "context.start_time" },
-  { "name": "env", "source": "custom", "value": "prod" }
+  { "name": "env", "source": "custom", "value": "prod" },
+  { "name": "product", "source": "dictionary", "from": "产品列表.产品名", "mode": "array" }
 ]</textarea>
-                  <small class="field-help">用于替换 Query、Header、Body 里的 {{变量名}}；为空表示不启用。</small>
-                  <small class="select-popover">格式为 JSON 数组。source=custom 时填写 value 固定值；source=mapping 时用 from 指向 context、上游数据源或数据库字段。</small>
                 </label>
                 <label>
                   <span>调用方式</span>
@@ -963,6 +970,13 @@
                   <small>字段值过滤可选择字典集、匹配列和范围列；范围值为空表示全部范围，逗号分隔的别名会自动拆开匹配。</small>
                   <small>清洗规则可选择引用字典集，表达式预览会追加 <code>@产品列表.别名列表</code> 方便识别口径。</small>
                 </div>
+                <div class="guide-card expression-guide-card">
+                  <span class="icon" data-icon="file"></span>
+                  <strong>字典占位符多值组合</strong>
+                  <small><code>source=dictionary</code> 时，<code>from</code> 写 <code>产品列表.产品名</code>。多个值默认按英文逗号拼接。</small>
+                  <small><code>mode=array</code> 保留数组，适合 JSON Body；<code>mode=first</code> 取首个；<code>mode=newline</code> 换行拼接。</small>
+                  <small><code>mode=template</code> 可写 <code>template: "product={{value}}"</code>，配合 <code>separator</code> 控制每项之间的分隔符。</small>
+                </div>
               </div>
             </article>
           </div>
@@ -1061,7 +1075,6 @@
           <label>
             <span>字典分组</span>
             <input id="dictionaryCategoryInput" value="业务字典" placeholder="如：业务字典、产品字典、团队字典" />
-            <small class="field-help">仅用于分组展示和折叠管理，可按你的业务口径自定义。</small>
           </label>
           <label class="full">
             <span>表头字段</span>

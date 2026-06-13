@@ -82,6 +82,8 @@ API 数据源的“测试联通”规则：
 - 数据库查询：选择数据库来源，勾选字段后可生成 SQL 和字段映射。
 - 上游数据源：选择上游数据源，系统根据该数据源字段映射或样例字段提供候选字段。
 - 业务流上下文：使用 `context.start_time`、`context.end_time`、`context.businessName` 等上下文字段驱动调用。
+- 字典集：选择一个或多个自定义字典集，使用 `字典名称.字段名` 作为入参来源，例如 `产品列表.产品名`。
+- 业务节点输出：选择当前业务流中的一个或多个上游节点，字段会带节点名前缀，适合一个数据源在调用前依赖多个并发节点的输出。
 
 勾选“来源字段”后点击“生成入参与过滤”，系统会自动生成入参字段映射 JSON 和建议过滤条件，用户再按实际接口调整即可。
 
@@ -99,13 +101,23 @@ API 数据源的“测试联通”规则：
 ```json
 [
   { "name": "start_time", "source": "mapping", "from": "context.start_time" },
-  { "name": "env", "source": "custom", "value": "prod" }
+  { "name": "env", "source": "custom", "value": "prod" },
+  { "name": "product", "source": "dictionary", "from": "产品列表.产品名", "mode": "array" }
 ]
 ```
 
 其中 `source=custom` 会直接使用 `value`；`source=mapping` 表示变量值来自业务流上下文、上游数据源或数据库记录字段，测试接口会保留可追踪占位符，真实编排执行时再按来源逐条填充。
+`source=dictionary` 表示变量值来自字典集，`from` 写成 `字典名称.字段名`，例如 `产品列表.产品名`。
 
-页面中的占位符变量输入框可为空；为空表示不启用占位符替换。鼠标移到问号或字段区域时会显示同样的 JSON 填写格式说明。
+字典列存在多个值时，可用以下方式组合：
+
+- `mode=join`：默认方式，按 `separator` 拼接；未配置 `separator` 时使用英文逗号。
+- `mode=array`：保留为数组，适合 JSON Body 中的列表字段。
+- `mode=first`：只取第一个字典值。
+- `mode=newline`：按换行拼接。
+- `mode=template`：用 `template` 对每个值渲染，例如 `product={{value}}`；可配 `asArray=true` 返回数组。
+
+页面中的占位符变量输入框可为空；为空表示不启用占位符替换。鼠标移到问号时会显示 JSON 填写格式和字段含义说明。
 
 ### 字段映射
 

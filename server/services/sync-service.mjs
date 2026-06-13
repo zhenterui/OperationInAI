@@ -44,6 +44,7 @@ function toSourcePatch(input = {}) {
     parameterConfig: {
       sourceType: input.parameterConfig?.sourceType || "static",
       sourceId: input.parameterConfig?.sourceId || "",
+      sourceIds: Array.isArray(input.parameterConfig?.sourceIds) ? input.parameterConfig.sourceIds : [],
       selectedFields: Array.isArray(input.parameterConfig?.selectedFields) ? input.parameterConfig.selectedFields : [],
       filterCondition: input.parameterConfig?.filterCondition || "",
       query: input.parameterConfig?.query || "",
@@ -386,16 +387,49 @@ function appendQueryParams(url, queryParams = {}) {
   return parsed.toString();
 }
 
+function uniqueValues(values = []) {
+  return [...new Set(values.map((value) => String(value ?? "")).filter(Boolean))];
+}
+
+function composeDictionaryPlaceholder(values = [], config = {}) {
+  const items = config.unique === false ? values.map((value) => String(value ?? "")).filter(Boolean) : uniqueValues(values);
+  const mode = config.mode || "join";
+  if (mode === "array") return items;
+  if (mode === "first") return items[0] || "";
+  if (mode === "newline") return items.join("\n");
+  if (mode === "template") {
+    const template = config.template || "{{value}}";
+    const rendered = items.map((value, index) =>
+      template
+        .replace(/\{\{\s*value\s*\}\}/g, value)
+        .replace(/\{\{\s*index\s*\}\}/g, String(index))
+        .replace(/\{\{\s*index1\s*\}\}/g, String(index + 1))
+    );
+    return config.asArray ? rendered : rendered.join(config.separator ?? ",");
+  }
+  return items.join(config.separator ?? ",");
+}
+
 function buildPlaceholderValues(parameterConfig = {}) {
   return (parameterConfig.placeholders || []).reduce((output, item) => {
     if (!item?.name) return output;
-    output[item.name] = item.source === "custom" ? item.value ?? "" : `{{${item.from || item.name}}}`;
+    if (item.source === "custom") {
+      output[item.name] = item.value ?? "";
+    } else if (item.source === "dictionary") {
+      output[item.name] = composeDictionaryPlaceholder(getDictionaryValuesFromRef(item.from || item.ref || ""), item);
+    } else {
+      output[item.name] = `{{${item.from || item.name}}}`;
+    }
     return output;
   }, {});
 }
 
 function applyPlaceholders(value, placeholderValues = {}) {
   if (typeof value === "string") {
+    const exactMatch = value.match(/^\{\{\s*([\w.-]+)\s*\}\}$/);
+    if (exactMatch && Object.prototype.hasOwnProperty.call(placeholderValues, exactMatch[1])) {
+      return placeholderValues[exactMatch[1]];
+    }
     return value.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (match, key) =>
       Object.prototype.hasOwnProperty.call(placeholderValues, key) ? String(placeholderValues[key]) : match
     );

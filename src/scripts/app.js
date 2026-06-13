@@ -45,6 +45,7 @@ const icons = {
 };
 
 const multiSelectConfigs = {
+  paramSourceSelect: { label: "入参来源对象", empty: "未选择来源对象" },
   paramFieldSelect: { label: "来源字段勾选", empty: "未选择来源字段" },
   responseKeepFieldsSelect: { label: "保留字段勾选", empty: "未选择保留字段" },
   analysisBusinessSelect: { label: "分析业务选择", empty: "未选择分析业务" },
@@ -63,7 +64,8 @@ const popularModelPresets = [
 
 const placeholderConfigExample = [
   { name: "start_time", source: "mapping", from: "context.start_time" },
-  { name: "env", source: "custom", value: "prod" }
+  { name: "env", source: "custom", value: "prod" },
+  { name: "product", source: "dictionary", from: "产品列表.产品名", mode: "array" }
 ];
 
 function getPlaceholderConfigExample() {
@@ -193,7 +195,9 @@ const paramSourceTypeTips = {
   static: "固定入参：直接使用 Query/Header/Body 中配置的值。",
   database: "数据库查询：先查出记录，再按字段映射逐条或批量调用。",
   source: "上游数据源：用另一个数据源输出字段驱动当前调用。",
-  flow: "业务流上下文：使用时间窗口、租户、批次号等共享变量。"
+  flow: "业务流上下文：使用时间窗口、租户、批次号等共享变量。",
+  dictionary: "字典集：从自定义字典列取值，可用于产品、部门、环境等枚举入参。",
+  "flow-node": "业务节点输出：从当前业务流中一个或多个上游节点取字段，适合并发分支汇聚后调用。"
 };
 
 const flowNodeTypeLabels = {
@@ -616,17 +620,58 @@ function renderMappingSourceSelect() {
   updateResponsePersistState();
 }
 
-function renderParamSourceSelect(selectedId = "") {
-  $("#paramSourceSelect").innerHTML = [
-    '<option value="">不依赖外部来源</option>',
-    ...(window.opsData.sources || [])
+function getParamSourceOptions(sourceType = $("#paramSourceTypeSelect")?.value || "static") {
+  if (sourceType === "dictionary") {
+    return (window.opsData.dictionarySets || []).map((dictionary) => ({
+      value: `dict:${dictionary.id}`,
+      label: `${dictionary.name} · 字典集`
+    }));
+  }
+  if (sourceType === "flow-node") {
+    return (appState.flowNodes || [])
+      .filter((node) => node.type !== "output")
+      .map((node, index) => ({
+        value: `node:${node.id}`,
+        label: `${index + 1}. ${node.name || getFlowRefLabel(node.type, node.refId)} · 节点输出`
+      }));
+  }
+  if (sourceType === "database") {
+    return (window.opsData.sources || [])
+      .filter((source) => source.id !== appState.selectedSourceId && source.kind === "database")
+      .map((source) => ({ value: `source:${source.id}`, label: `${source.name} · 数据库` }));
+  }
+  if (sourceType === "source") {
+    return (window.opsData.sources || [])
       .filter((source) => source.id !== appState.selectedSourceId)
-      .map((source) => `<option value="${escapeHtml(source.id)}">${escapeHtml(source.name)} · ${escapeHtml(source.kind)}</option>`)
-  ].join("");
-  setSelectValue("#paramSourceSelect", selectedId);
+      .map((source) => ({ value: `source:${source.id}`, label: `${source.name} · ${source.kind}` }));
+  }
+  return [];
 }
 
-function getSourceFieldCandidates(sourceId) {
+function renderParamSourceSelect(selectedIds = []) {
+  const sourceType = $("#paramSourceTypeSelect")?.value || "static";
+  const options = getParamSourceOptions(sourceType);
+  const optionValues = new Set(options.map((option) => option.value));
+  const normalizedSelected = (Array.isArray(selectedIds) ? selectedIds : [selectedIds])
+    .filter(Boolean)
+    .map((value) => (String(value).includes(":") ? String(value) : `source:${value}`))
+    .filter((value) => optionValues.has(value));
+  if (!normalizedSelected.length && options.length && sourceType !== "static" && sourceType !== "flow") {
+    normalizedSelected.push(options[0].value);
+  }
+  $("#paramSourceSelect").innerHTML = [
+    ...(options.length ? [] : ['<option value="">不依赖外部来源</option>']),
+    ...options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`)
+  ].join("");
+  setSelectValues("#paramSourceSelect", normalizedSelected);
+}
+
+function stripParamSourceValue(value = "") {
+  return String(value || "").replace(/^(source|dict|node):/, "");
+}
+
+function getSourceFieldCandidates(sourceRef) {
+  const sourceId = stripParamSourceValue(sourceRef);
   const source = (window.opsData.sources || []).find((item) => item.id === sourceId);
   const mappingFields = (window.opsData.fieldMappings || [])
     .filter((mapping) => mapping.sourceId === sourceId)
@@ -638,6 +683,30 @@ function getSourceFieldCandidates(sourceId) {
   return ["alarmName", "level", "occurTime", "duration", "service.id", "service.owner", "extra.queue.lag"];
 }
 
+function getDictionaryFieldCandidates(dictionaryRef) {
+  const dictionaryId = stripParamSourceValue(dictionaryRef);
+  const dictionary = getDictionarySetById(dictionaryId);
+  return dictionary?.columns?.length ? dictionary.columns.map((column) => `${dictionary.name}.${column}`) : [];
+}
+
+function getFlowNodeFieldCandidates(nodeRef) {
+  const nodeId = stripParamSourceValue(nodeRef);
+  const node = (appState.flowNodes || []).find((item) => item.id === nodeId);
+  if (!node) return [];
+  if (node.type === "context") {
+    return ["context.start_time", "context.end_time", "context.businessName", "context.batchId", "context.tenant", "context.env"];
+  }
+  if (node.type === "source") {
+    const nodeLabel = (node.name || getFlowRefLabel(node.type, node.refId) || "source").replace(/\s+/g, "_");
+    return getSourceFieldCandidates(`source:${node.refId}`).map((field) => `${nodeLabel}.${field}`);
+  }
+  if (node.type === "rule") {
+    const nodeLabel = (node.name || getFlowRefLabel(node.type, node.refId) || "rule").replace(/\s+/g, "_");
+    return ["input", "output", "status"].map((field) => `${nodeLabel}.${field}`);
+  }
+  return [];
+}
+
 function getParamFieldCandidates() {
   const sourceType = $("#paramSourceTypeSelect")?.value || "static";
   if (sourceType === "flow") {
@@ -646,7 +715,14 @@ function getParamFieldCandidates() {
   if (sourceType === "static") {
     return ["start_time", "end_time", "severity", "owner", "env"];
   }
-  return getSourceFieldCandidates($("#paramSourceSelect")?.value);
+  const selectedSources = getSelectedValues($("#paramSourceSelect"));
+  if (sourceType === "dictionary") {
+    return selectedSources.flatMap((source) => getDictionaryFieldCandidates(source));
+  }
+  if (sourceType === "flow-node") {
+    return selectedSources.flatMap((source) => getFlowNodeFieldCandidates(source));
+  }
+  return selectedSources.flatMap((source) => getSourceFieldCandidates(source));
 }
 
 function renderParamFieldSelect(selectedFields = []) {
@@ -679,10 +755,30 @@ function updateParamSourceTypeHelp() {
   const sourceLabel = $("#paramSourceSelect")?.closest("label")?.querySelector("span");
   const filter = $("#paramFilterInput");
   if (sourceLabel) {
-    sourceLabel.textContent = value === "database" ? "来源数据库" : value === "source" ? "上游数据源" : "来源";
+    sourceLabel.textContent =
+      value === "database"
+        ? "来源数据库"
+        : value === "source"
+          ? "上游数据源"
+          : value === "dictionary"
+            ? "字典集"
+            : value === "flow-node"
+              ? "业务节点输出"
+              : "来源对象";
   }
   if (queryLabel) {
-    queryLabel.textContent = value === "database" ? "来源 SQL" : value === "flow" ? "上下文过滤条件" : value === "source" ? "上游过滤条件" : "固定条件";
+    queryLabel.textContent =
+      value === "database"
+        ? "来源 SQL"
+        : value === "flow"
+          ? "上下文过滤条件"
+          : value === "source"
+            ? "上游过滤条件"
+            : value === "dictionary"
+              ? "字典过滤条件"
+              : value === "flow-node"
+                ? "节点输出过滤条件"
+                : "固定条件";
   }
   if (filter) {
     filter.placeholder =
@@ -692,9 +788,15 @@ function updateParamSourceTypeHelp() {
           ? "如 context.env == prod"
           : value === "source"
             ? "如 level == P0 或 service.owner != ''"
-            : "固定入参通常无需过滤";
+            : value === "dictionary"
+              ? "如 产品部 == 交易产品部，为空表示使用全部字典值"
+              : value === "flow-node"
+                ? "如 节点名.level == P0，多个节点字段会带节点名前缀"
+                : "固定入参通常无需过滤";
   }
+  renderParamSourceSelect(getSelectedValues($("#paramSourceSelect")));
   $("#paramSourceSelect").disabled = value === "static" || value === "flow";
+  refreshMultiSelectControl($("#paramSourceSelect"));
   renderParamFieldSelect(getSelectedValues($("#paramFieldSelect")));
 }
 
@@ -702,6 +804,7 @@ function autoGenerateParamMapping() {
   const fields = getSelectedValues($("#paramFieldSelect"));
   const effectiveFields = fields.length ? fields : getParamFieldCandidates().slice(0, 3);
   const method = ($("#apiMethodSelect")?.value || "GET").toUpperCase();
+  const sourceType = $("#paramSourceTypeSelect").value;
   const targetScope = ["GET", "DELETE", "HEAD"].includes(method) ? "query" : "body";
   const mappings = effectiveFields.map((field) => ({
     from: field,
@@ -709,16 +812,15 @@ function autoGenerateParamMapping() {
   }));
   $("#paramMappingInput").value = JSON.stringify(mappings, null, 2);
   const placeholders = effectiveFields
-    .filter((field) => /^context\.|start|end|time|env|tenant/i.test(field))
+    .filter((field) => /^context\.|start|end|time|env|tenant|产品|product/i.test(field))
     .map((field) => ({
       name: field.replace(/^context\./, "").replace(/[^a-zA-Z0-9_]/g, "_"),
-      source: field.startsWith("context.") ? "mapping" : "custom",
-      from: field.startsWith("context.") ? field : "",
-      value: field.startsWith("context.") ? "" : field
+      source: sourceType === "dictionary" ? "dictionary" : field.startsWith("context.") ? "mapping" : "custom",
+      from: sourceType === "dictionary" || field.startsWith("context.") ? field : "",
+      value: sourceType === "dictionary" || field.startsWith("context.") ? "" : field
     }));
   $("#paramPlaceholderInput").value = formatOptionalJsonArray(placeholders);
   syncPlaceholderTextareaHint();
-  const sourceType = $("#paramSourceTypeSelect").value;
   const filter = $("#paramFilterInput").value.trim();
   if (sourceType === "database") {
     const selected = effectiveFields.length ? effectiveFields.join(", ") : "service_id, owner, env";
@@ -727,6 +829,10 @@ function autoGenerateParamMapping() {
     $("#paramQueryInput").value = filter || (effectiveFields.includes("level") ? "level == 'P0' || level == 'P1'" : "保留上游输出记录");
   } else if (sourceType === "flow") {
     $("#paramQueryInput").value = filter || "context.start_time && context.end_time";
+  } else if (sourceType === "dictionary") {
+    $("#paramQueryInput").value = filter || "使用所选字典集字段作为入参，可在过滤条件中限定字典行";
+  } else if (sourceType === "flow-node") {
+    $("#paramQueryInput").value = filter || "等待所选业务节点完成后，从节点输出字段组装当前数据源入参";
   }
 }
 
@@ -916,6 +1022,16 @@ function setSelectValue(selector, value) {
   }
 }
 
+function setSelectValues(selector, values = []) {
+  const element = $(selector);
+  if (!element) return;
+  const selectedValues = new Set((Array.isArray(values) ? values : [values]).filter(Boolean));
+  [...element.options].forEach((option) => {
+    option.selected = selectedValues.has(option.value);
+  });
+  refreshMultiSelectControl(element);
+}
+
 function populateSourceForm(source = getSelectedSource()) {
   if (!source) return;
   appState.editingSourceId = source.id;
@@ -937,8 +1053,9 @@ function populateSourceForm(source = getSelectedSource()) {
   setSelectValue("#responseFieldKeepModeSelect", source.responseConfig?.fieldKeepMode || "all");
   appState.responseValueFilters = Array.isArray(source.responseConfig?.valueFilters) ? source.responseConfig.valueFilters : [];
   const parameterConfig = source.parameterConfig || {};
-  renderParamSourceSelect(parameterConfig.sourceId || "");
   setSelectValue("#paramSourceTypeSelect", parameterConfig.sourceType || "static");
+  const selectedSourceIds = parameterConfig.sourceIds?.length ? parameterConfig.sourceIds : [parameterConfig.sourceId].filter(Boolean);
+  renderParamSourceSelect(selectedSourceIds);
   updateParamSourceTypeHelp();
   renderParamFieldSelect(parameterConfig.selectedFields || []);
   $("#paramFilterInput").value = parameterConfig.filterCondition || "";
@@ -1055,7 +1172,8 @@ function collectSourceForm() {
     },
     parameterConfig: {
       sourceType: $("#paramSourceTypeSelect").value,
-      sourceId: $("#paramSourceSelect").value,
+      sourceId: getSelectedValues($("#paramSourceSelect"))[0] || "",
+      sourceIds: getSelectedValues($("#paramSourceSelect")),
       selectedFields: getSelectedValues($("#paramFieldSelect")),
       filterCondition: $("#paramFilterInput").value.trim(),
       query: $("#paramQueryInput").value.trim(),
@@ -1500,8 +1618,9 @@ function getMultiSelectSummary(select) {
   const values = getSelectedValues(select);
   const config = multiSelectConfigs[select.id] || {};
   if (!values.length) return config.empty || "未选择";
-  if (values.length <= 2) return values.join("、");
-  return `${values.slice(0, 2).join("、")} 等 ${values.length} 项`;
+  const labels = [...select.selectedOptions].map((option) => option.textContent || option.value);
+  if (labels.length <= 2) return labels.join("、");
+  return `${labels.slice(0, 2).join("、")} 等 ${labels.length} 项`;
 }
 
 function refreshMultiSelectControl(select) {
