@@ -117,6 +117,24 @@ API 数据源的“测试联通”规则：
 - `mode=newline`：按换行拼接。
 - `mode=template`：用 `template` 对每个值渲染，例如 `product={{value}}`；可配 `asArray=true` 返回数组。
 
+如果某个入参字段本身是 JSON 字符串，需要在平台入参 JSON 中转义内部双引号。例如实际接口需要：
+
+```json
+{
+  "filter": "{\"product_service\": \"ROMAConenct,ServiceStage\"}"
+}
+```
+
+平台中可以配置为：
+
+```json
+{
+  "filter": "{\"product_service\": \"{{products}}\"}"
+}
+```
+
+系统会先解析外层入参 JSON，再替换字符串内部的 `{{products}}`。如果 `products` 来自字典列并使用默认 `join` 模式，最终会得到 `{"product_service": "ROMAConenct,ServiceStage"}` 这样的字符串值。
+
 页面中的占位符变量输入框可为空；为空表示不启用占位符替换。鼠标移到问号时会显示 JSON 填写格式和字段含义说明。
 
 ### 字段映射

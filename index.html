@@ -977,6 +977,13 @@
                   <small><code>mode=array</code> 保留数组，适合 JSON Body；<code>mode=first</code> 取首个；<code>mode=newline</code> 换行拼接。</small>
                   <small><code>mode=template</code> 可写 <code>template: "product={{value}}"</code>，配合 <code>separator</code> 控制每项之间的分隔符。</small>
                 </div>
+                <div class="guide-card expression-guide-card">
+                  <span class="icon" data-icon="bolt"></span>
+                  <strong>入参 JSON 字符串转义</strong>
+                  <small>如果某个入参字段本身就是 JSON 字符串，内部双引号需要写成 <code>\"</code>。</small>
+                  <small>例如平台入参写 <code>{"filter": "{\"product_service\": \"{{products}}\"}"}</code>。</small>
+                  <small>系统会先解析外层入参 JSON，再替换内部字符串里的 <code>{{products}}</code>，最终得到 <code>{"product_service": "ROMAConenct,ServiceStage"}</code>。</small>
+                </div>
               </div>
             </article>
           </div>
