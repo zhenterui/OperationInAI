@@ -61,6 +61,8 @@ const popularModelPresets = [
   { id: "preset_gemini_flash", name: "Gemini Flash", category: "美国热门模型", vendor: "gemini", model: "gemini-1.5-flash", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" }
 ];
 
+const dictionaryCategories = ["业务字典", "组织字典", "环境字典", "状态枚举", "技术字典", "通用字典"];
+
 async function apiRequest(path, options = {}) {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -1201,6 +1203,12 @@ function renderDictionaryColumnOptions(selector, dictionaryId, selectedColumn = 
   setSelectValue(selector, selectedColumn);
 }
 
+function setDictionaryCategoryValue(value = "业务字典") {
+  const select = $("#dictionaryCategoryInput");
+  if (!select) return;
+  select.value = dictionaryCategories.includes(value) ? value : "通用字典";
+}
+
 function parseDictionaryColumns() {
   const inferred = inferDictionaryColumns(parseDictionaryRows());
   if (inferred.length) {
@@ -1238,7 +1246,7 @@ function resetDictionaryForm() {
   appState.editingDictionaryId = "";
   $("#dictionaryModalTitle").textContent = "新增字典集";
   $("#dictionaryNameInput").value = "产品列表";
-  $("#dictionaryCategoryInput").value = "业务字典";
+  setDictionaryCategoryValue("业务字典");
   $("#dictionaryColumnsInput").value = "产品部,产品名,别名列表,版本号";
   $("#dictionaryRowsInput").value = JSON.stringify([{ "产品部": "交易产品部", "产品名": "支付网关", "别名列表": "pay-gateway,payment-api", "版本号": "v3" }], null, 2);
   syncDictionaryColumnsFromRows();
@@ -1251,7 +1259,7 @@ function populateDictionaryForm(dictionary) {
   appState.editingDictionaryId = dictionary.id;
   $("#dictionaryModalTitle").textContent = "编辑字典集";
   $("#dictionaryNameInput").value = dictionary.name || "";
-  $("#dictionaryCategoryInput").value = dictionary.category || "通用字典";
+  setDictionaryCategoryValue(dictionary.category || "通用字典");
   $("#dictionaryColumnsInput").value = (dictionary.columns || []).join(",");
   $("#dictionaryRowsInput").value = JSON.stringify(dictionary.rows || [], null, 2);
   syncDictionaryColumnsFromRows();

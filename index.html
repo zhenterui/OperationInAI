@@ -1051,7 +1051,15 @@
           </label>
           <label>
             <span>字典类别</span>
-            <input id="dictionaryCategoryInput" value="业务字典" />
+            <select id="dictionaryCategoryInput">
+              <option value="业务字典">业务字典</option>
+              <option value="组织字典">组织字典</option>
+              <option value="环境字典">环境字典</option>
+              <option value="状态枚举">状态枚举</option>
+              <option value="技术字典">技术字典</option>
+              <option value="通用字典">通用字典</option>
+            </select>
+            <small class="field-help">用于按类别分组展示和折叠管理，便于后续按业务口径筛选引用。</small>
           </label>
           <label class="full">
             <span>表头字段</span>
