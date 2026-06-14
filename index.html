@@ -350,6 +350,198 @@
                     <span>节点参数</span>
                     <input id="flowNodeParamInput" value="" placeholder="如 context.start_time 或 执行说明" />
                   </label>
+                  <details class="flow-node-execution-config source-node-only full">
+                    <summary>
+                      <span>
+                        <strong>数据源执行策略</strong>
+                        <small>针对 API 翻页、数据库记录驱动调用、并发与批次进行业务级覆盖。</small>
+                      </span>
+                    </summary>
+                    <div class="config-form compact flow-node-execution-grid">
+                      <label>
+                        <span class="label-with-help">
+                          分页查询
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="分页查询说明"
+                            data-tooltip="关闭表示只请求一次；页码分页会按页码递增直到无下一页或达到最大页数；Token 分页会从响应里的 nextToken 路径读取下一页标识。"
+                          >?</button>
+                        </span>
+                        <select id="flowNodePaginationModeSelect">
+                          <option value="inherit">继承数据源配置</option>
+                          <option value="off">不分页</option>
+                          <option value="page-number">页码分页到最后一页</option>
+                          <option value="next-token">Token 分页到最后一页</option>
+                        </select>
+                      </label>
+                      <label class="pagination-field page-number-field">
+                        <span class="label-with-help">
+                          页码参数
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="页码参数说明"
+                            data-tooltip="接口入参中的页码字段名，例如 page、pageNo、current。执行时会从起始页开始自动递增。"
+                          >?</button>
+                        </span>
+                        <input id="flowNodePageParamInput" value="page" />
+                      </label>
+                      <label class="pagination-field">
+                        <span class="label-with-help">
+                          每页参数
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="每页参数说明"
+                            data-tooltip="接口入参中的每页条数字段名，例如 pageSize、limit、size。为空时不自动写入每页条数。"
+                          >?</button>
+                        </span>
+                        <input id="flowNodePageSizeParamInput" value="pageSize" />
+                      </label>
+                      <label class="pagination-field">
+                        <span class="label-with-help">
+                          每页条数
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="每页条数说明"
+                            data-tooltip="每次请求希望接口返回的记录数。建议按接口限制配置，过大可能触发限流或超时。"
+                          >?</button>
+                        </span>
+                        <input id="flowNodePageSizeInput" type="number" min="1" value="100" />
+                      </label>
+                      <label class="pagination-field page-number-field">
+                        <span class="label-with-help">
+                          起始页
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="起始页说明"
+                            data-tooltip="页码分页的第一页编号。大多数接口从 1 开始，少数接口从 0 开始。"
+                          >?</button>
+                        </span>
+                        <input id="flowNodeStartPageInput" type="number" min="0" value="1" />
+                      </label>
+                      <label class="pagination-field token-field">
+                        <span class="label-with-help">
+                          下一页 Token 路径
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="下一页 Token 路径说明"
+                            data-tooltip="从响应体读取下一页标识的字段路径，例如 data.nextToken、pageInfo.cursor。下一次请求会把它作为翻页 token 使用。"
+                          >?</button>
+                        </span>
+                        <input id="flowNodeNextTokenPathInput" value="data.pageInfo.nextPageToken" />
+                      </label>
+                      <label class="pagination-field">
+                        <span class="label-with-help">
+                          是否还有下一页路径
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="是否还有下一页路径说明"
+                            data-tooltip="从响应体读取是否继续翻页的布尔字段路径，例如 data.hasNext、pageInfo.hasMore。为空时会依赖最大页数或 token 是否存在。"
+                          >?</button>
+                        </span>
+                        <input id="flowNodeHasNextPathInput" value="data.pageInfo.hasNext" />
+                      </label>
+                      <label class="pagination-field">
+                        <span class="label-with-help">
+                          最大页数
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="最大页数说明"
+                            data-tooltip="用于防止接口分页异常导致无限翻页。即使接口一直返回有下一页，达到最大页数后也会停止。"
+                          >?</button>
+                        </span>
+                        <input id="flowNodeMaxPagesInput" type="number" min="1" value="100" />
+                      </label>
+                      <label>
+                        <span class="label-with-help">
+                          入参迭代
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="入参迭代说明"
+                            data-tooltip="继承表示使用数据源入参配置；按记录逐条调用适合数据库表记录驱动 API；批量调用会按批次聚合记录后调用。"
+                          >?</button>
+                        </span>
+                        <select id="flowNodeInputIterationSelect">
+                          <option value="inherit">继承数据源配置</option>
+                          <option value="single">单次调用</option>
+                          <option value="per-record">按记录逐条调用</option>
+                          <option value="batch">分批次批量调用</option>
+                        </select>
+                      </label>
+                      <label class="iteration-field batch-field">
+                        <span class="label-with-help">
+                          批量大小
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="批量大小说明"
+                            data-tooltip="分批次批量调用时，每次从来源记录中取多少条组成一个批次。适合接口支持批量入参的场景。"
+                          >?</button>
+                        </span>
+                        <input id="flowNodeBatchSizeInput" type="number" min="1" value="100" />
+                      </label>
+                      <label class="iteration-field">
+                        <span class="label-with-help">
+                          并发数
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="并发数说明"
+                            data-tooltip="同一数据源节点允许同时执行的请求或批次数。建议结合接口限流、数据库连接池和记录锁策略设置。"
+                          >?</button>
+                        </span>
+                        <input id="flowNodeConcurrencyInput" type="number" min="1" value="5" />
+                      </label>
+                      <label class="iteration-field">
+                        <span class="label-with-help">
+                          最大记录数
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="最大记录数说明"
+                            data-tooltip="限制本次业务流最多读取多少条来源记录。填 0 表示不限制，适合先小批量验证再放大执行。"
+                          >?</button>
+                        </span>
+                        <input id="flowNodeRecordLimitInput" type="number" min="0" value="0" />
+                      </label>
+                      <label class="iteration-field">
+                        <span class="label-with-help">
+                          记录锁字段
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="记录锁字段说明"
+                            data-tooltip="用于并发读取数据库记录时避免多个任务同时处理同一条记录。建议填主键或唯一业务键，例如 id、event_id。为空表示不启用记录级锁。"
+                          >?</button>
+                        </span>
+                        <input id="flowNodeLockKeyInput" value="" placeholder="如 id / event_id" />
+                      </label>
+                      <label class="iteration-field">
+                        <span class="label-with-help">
+                          锁策略
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="锁策略说明"
+                            data-tooltip="不加锁适合只读或单线程；跳过已锁记录适合多 worker 并发消费同一张表；乐观锁适合通过版本号或状态更新时间避免覆盖更新。"
+                          >?</button>
+                        </span>
+                        <select id="flowNodeLockStrategySelect">
+                          <option value="none">不加锁</option>
+                          <option value="skip-locked">跳过已锁记录</option>
+                          <option value="optimistic">乐观锁版本校验</option>
+                        </select>
+                      </label>
+                    </div>
+                  </details>
                   <div class="row-actions">
                     <button class="small-button" id="saveFlowNodeBtn">保存节点</button>
                     <button class="small-button danger" id="deleteFlowNodeBtn">删除节点</button>

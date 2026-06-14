@@ -70,6 +70,81 @@ export function updateSituationTimeFilter(input = {}) {
   return store.situationTimeFilter;
 }
 
+function positiveNumber(value, fallback = 1) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function nonNegativeNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+function getSourceExecutionConfig(node = {}, source = {}) {
+  const sourceParameterConfig = source.parameterConfig || {};
+  const sourcePagination = source.kind === "api" ? source.requestConfig?.pagination || source.pagination || "" : "";
+  const config = node.executionConfig || {};
+  const pagination = {
+    mode: config.pagination?.mode || (sourcePagination ? "page-number" : "off"),
+    pageSize: positiveNumber(config.pagination?.pageSize, 100),
+    maxPages: positiveNumber(config.pagination?.maxPages, sourcePagination ? 2 : 1),
+    pageParam: config.pagination?.pageParam || "page",
+    pageSizeParam: config.pagination?.pageSizeParam || "pageSize",
+    startPage: nonNegativeNumber(config.pagination?.startPage, 1),
+    nextTokenPath: config.pagination?.nextTokenPath || "",
+    hasNextPath: config.pagination?.hasNextPath || ""
+  };
+  if (pagination.mode === "inherit") {
+    pagination.mode = sourcePagination ? "page-number" : "off";
+  }
+  const iteration = {
+    mode: config.iteration?.mode || sourceParameterConfig.iterationMode || "single",
+    batchSize: positiveNumber(config.iteration?.batchSize, 100),
+    concurrency: positiveNumber(config.iteration?.concurrency, 1),
+    recordLimit: nonNegativeNumber(config.iteration?.recordLimit, 0),
+    lockKey: config.iteration?.lockKey || "",
+    lockStrategy: config.iteration?.lockStrategy || "none",
+    sourceType: sourceParameterConfig.sourceType || "static",
+    sourceId: sourceParameterConfig.sourceId || ""
+  };
+  if (iteration.mode === "inherit") {
+    iteration.mode = sourceParameterConfig.iterationMode || "single";
+  }
+  return { pagination, iteration };
+}
+
+function estimateSourceNodePlan(node = {}, source = {}) {
+  const { pagination, iteration } = getSourceExecutionConfig(node, source);
+  const sourceType = iteration.sourceType;
+  const defaultRecordCount = sourceType === "database" ? 2 : 1;
+  const recordCount = iteration.mode === "single"
+    ? 1
+    : iteration.recordLimit || defaultRecordCount;
+  const batchCount = iteration.mode === "batch" ? Math.max(1, Math.ceil(recordCount / iteration.batchSize)) : recordCount;
+  const pageCount = pagination.mode === "off" ? 1 : pagination.maxPages;
+  const callCount = Math.max(1, batchCount * pageCount);
+  return {
+    nodeId: node.id,
+    nodeName: node.name || source.name || "数据源节点",
+    sourceId: source.id,
+    sourceName: source.name || node.refId,
+    paginationMode: pagination.mode,
+    pageCount,
+    pageSize: pagination.pageSize,
+    iterationMode: iteration.mode,
+    sourceType,
+    sourceIdForInput: iteration.sourceId,
+    recordCount,
+    batchSize: iteration.batchSize,
+    batchCount,
+    concurrency: iteration.concurrency,
+    lockKey: iteration.lockKey,
+    lockStrategy: iteration.lockStrategy,
+    callCount,
+    lockEnabled: Boolean(iteration.lockKey && iteration.lockStrategy !== "none")
+  };
+}
+
 export function createFieldMapping(input = {}) {
   const mapping = {
     id: `map_${Date.now()}`,
@@ -633,6 +708,9 @@ export function runBusinessFlow(input = {}) {
   const sources = nodeSourceIds
     .map((id) => store.dataSources.find((source) => source.id === id))
     .filter(Boolean);
+  const sourceNodes = Array.isArray(flow.nodes) && flow.nodes.length
+    ? flow.nodes.filter((node) => node.type === "source")
+    : sources.map((source) => ({ id: `node_source_${source.id}`, type: "source", refId: source.id, name: source.name }));
   const rules = nodeRuleIds
     .map((id) => store.cleaningRules.find((rule) => rule.id === id))
     .filter(Boolean);
@@ -649,12 +727,21 @@ export function runBusinessFlow(input = {}) {
   const sourceText = sources.map((source) => source.name).join(" + ") || "未选择数据源";
   const ruleText = rules.map((rule) => rule.name).join(" + ") || "未选择规则";
   const branchKeys = new Set((flow.nodes || []).filter((node) => node.branchFromId).map((node) => `${node.branchFromId}:${node.branchName || node.id}`));
+  const sourceExecutionPlans = sourceNodes
+    .map((node) => {
+      const source = store.dataSources.find((item) => item.id === node.refId);
+      return source ? estimateSourceNodePlan(node, source) : null;
+    })
+    .filter(Boolean);
   const executionPlan = {
     serial: (flow.nodes || []).filter((node) => (node.executionMode || "serial") === "serial").length,
     parallel: (flow.nodes || []).filter((node) => node.executionMode === "parallel").length,
     join: (flow.nodes || []).filter((node) => node.executionMode === "join").length,
     branches: branchKeys.size,
     conditionalBranches: (flow.nodes || []).filter((node) => node.branchFromId && node.branchCondition).length,
+    sourcePlans: sourceExecutionPlans,
+    maxConcurrency: Math.max(1, ...sourceExecutionPlans.map((plan) => plan.concurrency || 1)),
+    lockedSources: sourceExecutionPlans.filter((plan) => plan.lockEnabled).length,
     summary: (flow.nodes || [])
       .map((node, index) => {
         const branchText = node.branchFromId ? `, 分支:${node.branchName || "未命名"}${node.branchCondition ? ` if ${node.branchCondition}` : ""}` : "";
@@ -662,32 +749,15 @@ export function runBusinessFlow(input = {}) {
       })
       .join(" -> ")
   };
-  const loopCalls = sources.reduce((sum, source) => {
-    const parameterConfig = source.parameterConfig || {};
-    if (parameterConfig.sourceType === "database" && parameterConfig.iterationMode === "per-record") {
-      return sum + 2;
-    }
-    if (parameterConfig.iterationMode === "batch") {
-      return sum + 1;
-    }
-    return sum + 1;
-  }, 0);
+  const loopCalls = sourceExecutionPlans.reduce((sum, plan) => sum + plan.callCount, 0);
   const parameterPlan = {
     loopCalls,
     summary: sources
-      .map((source) => {
-        const config = source.parameterConfig || {};
-        if (config.sourceType === "database") {
-          return `${source.name} 从数据库来源 ${config.sourceId || "未选择"} 查询后${config.iterationMode === "per-record" ? "逐条" : "批量"}调用`;
-        }
-        if (config.sourceType === "source") {
-          return `${source.name} 使用上游数据源字段作为入参`;
-        }
-        if (config.sourceType === "flow") {
-          return `${source.name} 使用业务流上下文入参`;
-        }
-        return `${source.name} 使用固定入参`;
-      })
+      .map((source) => sourceExecutionPlans.find((plan) => plan.sourceId === source.id))
+      .filter(Boolean)
+      .map((plan) =>
+        `${plan.sourceName} ${plan.sourceType === "database" ? `从数据库来源 ${plan.sourceIdForInput || "未选择"} 读取 ${plan.recordCount} 条记录` : "使用配置入参"}，${plan.iterationMode === "batch" ? `${plan.batchCount} 批` : `${plan.recordCount} 轮`}，分页 ${plan.pageCount} 页，并发 ${plan.concurrency}${plan.lockEnabled ? `，按 ${plan.lockKey} ${plan.lockStrategy} 防重` : ""}`
+      )
       .join("；")
   };
   const row = [

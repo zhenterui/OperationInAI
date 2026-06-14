@@ -2457,6 +2457,89 @@ function getFlowRefLabel(type, refId) {
   return getFlowRefOptions(type).find((option) => option.value === refId)?.label || refId || "未配置";
 }
 
+function getDefaultSourceExecutionConfig() {
+  return {
+    pagination: {
+      mode: "inherit",
+      pageParam: "page",
+      pageSizeParam: "pageSize",
+      pageSize: 100,
+      startPage: 1,
+      nextTokenPath: "data.pageInfo.nextPageToken",
+      hasNextPath: "data.pageInfo.hasNext",
+      maxPages: 100
+    },
+    iteration: {
+      mode: "inherit",
+      batchSize: 100,
+      concurrency: 5,
+      recordLimit: 0,
+      lockKey: "",
+      lockStrategy: "none"
+    }
+  };
+}
+
+function normalizeSourceExecutionConfig(config = {}) {
+  const defaults = getDefaultSourceExecutionConfig();
+  return {
+    pagination: {
+      ...defaults.pagination,
+      ...(config.pagination || {})
+    },
+    iteration: {
+      ...defaults.iteration,
+      ...(config.iteration || {})
+    }
+  };
+}
+
+function readIntegerInput(selector, fallback = 0) {
+  const value = Number($(selector)?.value || fallback);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function collectSourceExecutionConfig() {
+  return {
+    pagination: {
+      mode: $("#flowNodePaginationModeSelect").value,
+      pageParam: $("#flowNodePageParamInput").value.trim() || "page",
+      pageSizeParam: $("#flowNodePageSizeParamInput").value.trim() || "pageSize",
+      pageSize: Math.max(1, readIntegerInput("#flowNodePageSizeInput", 100)),
+      startPage: Math.max(0, readIntegerInput("#flowNodeStartPageInput", 1)),
+      nextTokenPath: $("#flowNodeNextTokenPathInput").value.trim(),
+      hasNextPath: $("#flowNodeHasNextPathInput").value.trim(),
+      maxPages: Math.max(1, readIntegerInput("#flowNodeMaxPagesInput", 100))
+    },
+    iteration: {
+      mode: $("#flowNodeInputIterationSelect").value,
+      batchSize: Math.max(1, readIntegerInput("#flowNodeBatchSizeInput", 100)),
+      concurrency: Math.max(1, readIntegerInput("#flowNodeConcurrencyInput", 5)),
+      recordLimit: Math.max(0, readIntegerInput("#flowNodeRecordLimitInput", 0)),
+      lockKey: $("#flowNodeLockKeyInput").value.trim(),
+      lockStrategy: $("#flowNodeLockStrategySelect").value
+    }
+  };
+}
+
+function populateSourceExecutionConfig(config = {}) {
+  const normalized = normalizeSourceExecutionConfig(config);
+  setSelectValue("#flowNodePaginationModeSelect", normalized.pagination.mode);
+  $("#flowNodePageParamInput").value = normalized.pagination.pageParam;
+  $("#flowNodePageSizeParamInput").value = normalized.pagination.pageSizeParam;
+  $("#flowNodePageSizeInput").value = normalized.pagination.pageSize;
+  $("#flowNodeStartPageInput").value = normalized.pagination.startPage;
+  $("#flowNodeNextTokenPathInput").value = normalized.pagination.nextTokenPath;
+  $("#flowNodeHasNextPathInput").value = normalized.pagination.hasNextPath;
+  $("#flowNodeMaxPagesInput").value = normalized.pagination.maxPages;
+  setSelectValue("#flowNodeInputIterationSelect", normalized.iteration.mode);
+  $("#flowNodeBatchSizeInput").value = normalized.iteration.batchSize;
+  $("#flowNodeConcurrencyInput").value = normalized.iteration.concurrency;
+  $("#flowNodeRecordLimitInput").value = normalized.iteration.recordLimit;
+  $("#flowNodeLockKeyInput").value = normalized.iteration.lockKey;
+  setSelectValue("#flowNodeLockStrategySelect", normalized.iteration.lockStrategy);
+}
+
 function makeFlowNode(type = "source", refId = "", overrides = {}) {
   const resolvedRef = refId || getFlowRefOptions(type)[0]?.value || "";
   return {
@@ -2469,6 +2552,7 @@ function makeFlowNode(type = "source", refId = "", overrides = {}) {
     branchFromId: "",
     branchName: "",
     branchCondition: "",
+    executionConfig: type === "source" ? getDefaultSourceExecutionConfig() : undefined,
     ...overrides
   };
 }
@@ -2484,12 +2568,13 @@ function defaultFlowNodesFromFlow(flow = {}) {
       param: node.param || "",
       branchFromId: node.branchFromId || "",
       branchName: node.branchName || "",
-      branchCondition: node.branchCondition || ""
+      branchCondition: node.branchCondition || "",
+      executionConfig: node.type === "source" ? normalizeSourceExecutionConfig(node.executionConfig) : node.executionConfig
     }));
   }
   return [
     { id: "node_context", type: "context", refId: "time-window", name: "业务时间窗口", executionMode: "serial", param: "context.start_time / context.end_time" },
-    ...(flow.dataSourceIds || []).map((id) => ({ id: `node_source_${id}`, type: "source", refId: id, name: getFlowRefLabel("source", id), executionMode: "parallel", param: "" })),
+    ...(flow.dataSourceIds || []).map((id) => ({ id: `node_source_${id}`, type: "source", refId: id, name: getFlowRefLabel("source", id), executionMode: "parallel", param: "", executionConfig: getDefaultSourceExecutionConfig() })),
     ...(flow.ruleIds || []).map((id) => ({ id: `node_rule_${id}`, type: "rule", refId: id, name: getFlowRefLabel("rule", id), executionMode: "join", param: "" })),
     { id: "node_output", type: "output", refId: "business-table", name: flow.outputConfig?.businessTable || "业务表输出", executionMode: "serial", param: flow.outputConfig?.writeStrategy || "upsert" }
   ];
@@ -2502,6 +2587,7 @@ function selectFlowNode(nodeId) {
     $("#flowNodeNameInput").value = "";
     renderFlowNodeRefSelect("#flowNodeRefEditSelect", "source");
     renderFlowBranchFromSelect();
+    populateSourceExecutionConfig();
     updateFlowInspectorMode();
     return;
   }
@@ -2514,11 +2600,22 @@ function selectFlowNode(nodeId) {
   $("#flowNodeBranchNameInput").value = node.branchName || "";
   $("#flowNodeBranchConditionInput").value = node.branchCondition || "";
   $("#flowNodeParamInput").value = node.param || "";
+  populateSourceExecutionConfig(node.executionConfig);
   updateFlowInspectorMode();
 }
 
 function updateFlowInspectorMode() {
-  $("#flowNodeInspector")?.classList.toggle("branch-mode", $("#flowNodeBranchModeSelect")?.value === "branch");
+  const inspector = $("#flowNodeInspector");
+  if (!inspector) return;
+  const nodeType = $("#flowNodeTypeEditSelect")?.value || "source";
+  const paginationMode = $("#flowNodePaginationModeSelect")?.value || "inherit";
+  const iterationMode = $("#flowNodeInputIterationSelect")?.value || "inherit";
+  inspector.classList.toggle("branch-mode", $("#flowNodeBranchModeSelect")?.value === "branch");
+  inspector.classList.toggle("source-node-mode", nodeType === "source");
+  inspector.classList.toggle("pagination-page-number", paginationMode === "page-number");
+  inspector.classList.toggle("pagination-next-token", paginationMode === "next-token");
+  inspector.classList.toggle("iteration-per-record", iterationMode === "per-record");
+  inspector.classList.toggle("iteration-batch", iterationMode === "batch");
 }
 
 function getExecutionLabel(mode) {
@@ -2780,6 +2877,9 @@ function renderFlowOutput(result) {
     $("#flowOutput").innerHTML = "<h3>业务执行结果</h3><p>保存并执行业务后，会在这里显示这个业务的唯一业务流、组合数据源、清洗规则和最终业务数据。</p>";
     return;
   }
+  const sourcePlanItems = (result.executionPlan?.sourcePlans || [])
+    .map((plan) => `<li>${escapeHtml(plan.sourceName)}：${escapeHtml(plan.iterationMode)} / ${escapeHtml(String(plan.recordCount))} 条记录 / ${escapeHtml(String(plan.batchCount))} 批 / ${escapeHtml(String(plan.pageCount))} 页 / 并发 ${escapeHtml(String(plan.concurrency))}${plan.lockEnabled ? ` / 锁 ${escapeHtml(plan.lockKey)}(${escapeHtml(plan.lockStrategy)})` : ""}</li>`)
+    .join("");
   $("#flowOutput").innerHTML = `
     <h3>业务执行结果</h3>
     <p>${escapeHtml(result.business.name)} 已执行唯一业务流 ${escapeHtml(result.flow.name)}，组合 ${result.sources.length} 个数据源和 ${result.rules.length} 条规则。</p>
@@ -2791,6 +2891,7 @@ function renderFlowOutput(result) {
       <li>写入策略：${escapeHtml(result.outputConfig?.writeStrategy || "-")} / 主键 ${escapeHtml(result.outputConfig?.primaryKey || "-")} / 去重 ${escapeHtml(result.outputConfig?.dedupeStrategy || "-")}${result.outputConfig?.dedupeFields ? ` / 组合字段 ${escapeHtml(result.outputConfig.dedupeFields)}` : ""}</li>
       <li>执行计划：串行 ${escapeHtml(String(result.executionPlan?.serial || 0))} 个，并行 ${escapeHtml(String(result.executionPlan?.parallel || 0))} 个，分支 ${escapeHtml(String(result.executionPlan?.branches || 0))} 条，汇聚 ${escapeHtml(String(result.executionPlan?.join || 0))} 个</li>
       <li>入参循环：${escapeHtml(String(result.parameterPlan?.loopCalls || 0))} 次调用，${escapeHtml(result.parameterPlan?.summary || "固定入参")}</li>
+      ${sourcePlanItems ? `<li>数据源执行策略：<ul>${sourcePlanItems}</ul></li>` : ""}
     </ul>
   `;
 }
@@ -3817,8 +3918,11 @@ function bindEvents() {
   });
   $("#flowNodeTypeEditSelect").addEventListener("change", () => {
     renderFlowNodeRefSelect("#flowNodeRefEditSelect", $("#flowNodeTypeEditSelect").value);
+    updateFlowInspectorMode();
   });
   $("#flowNodeBranchModeSelect").addEventListener("change", updateFlowInspectorMode);
+  $("#flowNodePaginationModeSelect").addEventListener("change", updateFlowInspectorMode);
+  $("#flowNodeInputIterationSelect").addEventListener("change", updateFlowInspectorMode);
   $("#flowBusinessTableInput").addEventListener("input", () => {
     if ($("#flowNodeTypeSelect").value === "output") {
       renderFlowNodeRefSelect("#flowNodeRefSelect", "output");
@@ -3892,6 +3996,7 @@ function bindEvents() {
       node.branchCondition = "";
     }
     node.param = $("#flowNodeParamInput").value.trim();
+    node.executionConfig = node.type === "source" ? collectSourceExecutionConfig() : undefined;
     renderFlowDesigner();
   });
   $("#deleteFlowNodeBtn").addEventListener("click", () => {

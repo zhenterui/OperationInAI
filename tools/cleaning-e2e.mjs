@@ -88,6 +88,11 @@ try {
     "flowNodeBranchFromSelect",
     "flowNodeBranchConditionInput",
     "flowNodeInspector",
+    "flowNodePaginationModeSelect",
+    "flowNodeInputIterationSelect",
+    "flowNodeConcurrencyInput",
+    "flowNodeBatchSizeInput",
+    "flowNodeLockKeyInput",
     "flowDedupeFieldsInput",
     "overviewFilterBar",
     "configureSituationFiltersBtn",
@@ -529,7 +534,36 @@ try {
       ruleIds: [rule.data.id],
       nodes: [
         { id: "e2e_context", type: "context", refId: "time-window", name: "E2E 时间窗口", executionMode: "serial", param: "context.start_time/context.end_time" },
-        { id: "e2e_source_api", type: "source", refId: source.data.id, name: "E2E 多层 API 数据源", executionMode: "parallel", param: "数据库逐条入参", branchFromId: "e2e_context", branchName: "告警接口分支", branchCondition: "severity in [P0,P1]" },
+        {
+          id: "e2e_source_api",
+          type: "source",
+          refId: source.data.id,
+          name: "E2E 多层 API 数据源",
+          executionMode: "parallel",
+          param: "数据库批量入参 + 自动分页",
+          branchFromId: "e2e_context",
+          branchName: "告警接口分支",
+          branchCondition: "severity in [P0,P1]",
+          executionConfig: {
+            pagination: {
+              mode: "page-number",
+              pageParam: "page",
+              pageSizeParam: "pageSize",
+              pageSize: 50,
+              startPage: 1,
+              hasNextPath: "data.pageInfo.hasNext",
+              maxPages: 3
+            },
+            iteration: {
+              mode: "batch",
+              batchSize: 2,
+              concurrency: 4,
+              recordLimit: 5,
+              lockKey: "service_id",
+              lockStrategy: "skip-locked"
+            }
+          }
+        },
         { id: "e2e_source_cmdb", type: "source", refId: "src_cmdb_pg", name: "CMDB PostgreSQL", executionMode: "parallel", param: "负责人补齐", branchFromId: "e2e_context", branchName: "CMDB 补齐分支", branchCondition: "service_id exists" },
         { id: "e2e_rule_enum", type: "rule", refId: rule.data.id, name: "E2E 等级枚举转换", executionMode: "join", param: "P0/P1/P2" },
         { id: "e2e_output", type: "output", refId: "business-table", name: "biz_e2e_event", executionMode: "serial", param: "upsert" }
@@ -581,7 +615,12 @@ try {
   });
   assert(flowRun.data.business.name === "E2E 清洗业务", "business flow should create target business data");
   assert(flowRun.data.outputConfig.businessTable === "biz_e2e_event", "business table should round-trip");
-  assert(flowRun.data.parameterPlan.loopCalls === 3, "flow graph should combine database-driven API calls and static source calls");
+  assert(flowRun.data.parameterPlan.loopCalls === 10, "flow graph should combine paginated batch API calls and static source calls");
+  const apiSourcePlan = flowRun.data.executionPlan.sourcePlans.find((plan) => plan.nodeId === "e2e_source_api");
+  assert(apiSourcePlan.pageCount === 3, "source node plan should support automatic pagination to max pages");
+  assert(apiSourcePlan.batchCount === 3, "source node plan should support batched database-driven calls");
+  assert(apiSourcePlan.concurrency === 4, "source node plan should keep concurrency config");
+  assert(apiSourcePlan.lockEnabled === true && apiSourcePlan.lockKey === "service_id", "source node plan should keep record lock config");
   assert(flowRun.data.executionPlan.parallel === 2, "flow graph should support parallel source nodes");
   assert(flowRun.data.executionPlan.branches === 2, "flow graph should support conditional branch lanes");
   assert(flowRun.data.executionPlan.conditionalBranches === 2, "flow graph should keep branch conditions");

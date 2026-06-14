@@ -246,6 +246,56 @@
   display: none;
 }
 
+.flow-inspector:not(.source-node-mode) .source-node-only {
+  display: none;
+}
+
+.flow-node-execution-config {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.flow-node-execution-config summary {
+  cursor: pointer;
+}
+
+.flow-node-execution-config summary strong,
+.flow-node-execution-config summary small {
+  display: block;
+}
+
+.flow-node-execution-config summary small {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.flow-node-execution-grid {
+  margin-top: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.flow-node-execution-grid .pagination-field,
+.flow-node-execution-grid .iteration-field {
+  display: none;
+}
+
+.flow-inspector.pagination-page-number .pagination-field,
+.flow-inspector.pagination-next-token .pagination-field,
+.flow-inspector.iteration-per-record .iteration-field,
+.flow-inspector.iteration-batch .iteration-field {
+  display: grid;
+}
+
+.flow-inspector.pagination-next-token .page-number-field,
+.flow-inspector.pagination-page-number .token-field,
+.flow-inspector.iteration-per-record .batch-field {
+  display: none;
+}
+
 .flow-designer {
   min-height: 280px;
   padding: 18px;
