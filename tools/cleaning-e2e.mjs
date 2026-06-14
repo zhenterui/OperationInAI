@@ -70,6 +70,10 @@ try {
     "configureValueFiltersBtn",
     "mapDefaultInput",
     "mapRuleSelect",
+    "mapRecordModeSelect",
+    "mapRecordFilterInput",
+    "mapAggregateModeSelect",
+    "mapAggregateSeparatorInput",
     "addMappingBtn",
     "ruleActionSelect",
     "ruleParamInput",
@@ -83,8 +87,42 @@ try {
     "flowNodeBranchModeSelect",
     "flowNodeBranchFromSelect",
     "flowNodeBranchConditionInput",
-    "flowNodeInspector"
+    "flowNodeInspector",
+    "flowDedupeFieldsInput",
+    "overviewFilterBar",
+    "configureSituationFiltersBtn",
+    "situationFilterModal",
+    "situationFilterFieldInput",
+    "situationTimeFieldsInput"
   ].forEach((id) => assert(html.includes(`id="${id}"`), `missing UI control: ${id}`));
+
+  const situationFilter = await request("/api/situation-filters", {
+    method: "POST",
+    body: JSON.stringify({
+      label: "E2E 环境",
+      field: "env",
+      type: "select",
+      source: "manual",
+      options: ["prod", "test"],
+      defaultVisible: true,
+      timeFields: ["event_time", "created_at", "时间"]
+    })
+  });
+  assert(situationFilter.data.field === "env", "situation filter should be configurable globally");
+  const updatedSituationFilter = await request(`/api/situation-filters/${situationFilter.data.id}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      ...situationFilter.data,
+      label: "E2E 环境筛选",
+      options: ["prod", "stage"]
+    })
+  });
+  assert(updatedSituationFilter.data.label === "E2E 环境筛选", "situation filter should be editable");
+  const timeFilter = await request("/api/situation-time-filter", {
+    method: "PUT",
+    body: JSON.stringify({ fields: ["event_time", "time", "时间"] })
+  });
+  assert(timeFilter.data.fields.includes("时间"), "global situation time filter should save candidate fields");
 
   const auth = await request("/api/auth-configs", {
     method: "POST",
@@ -436,6 +474,52 @@ try {
   });
   assert(deletedMapping.data.id === updatedMapping.data.id, "mapping delete should return deleted mapping");
 
+  const aggregateSource = await request("/api/data-sources", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E 多对象合并映射 API",
+      kind: "api",
+      type: "POST /api/e2e/aggregate-mapping",
+      method: "POST",
+      responsePath: "data.items[]",
+      responseBody: {
+        data: {
+          items: [
+            { value: "应用服务|ROMAConnect|2.2.0", level: "P0" },
+            { value: "应用服务|ROMAConnect|2.3.0", level: "P1" },
+            { value: "应用服务|ServiceStage|2.2.0", level: "P1" },
+            { value: "应用服务|Unknown|1.0.0", level: "P2" }
+          ]
+        }
+      }
+    })
+  });
+  await request("/api/field-mappings", {
+    method: "POST",
+    body: JSON.stringify({
+      sourceId: aggregateSource.data.id,
+      sourceField: "data.items[].value",
+      targetField: "matched_products",
+      type: "字符串",
+      defaultValue: "",
+      ruleId: "",
+      recordMode: "aggregate-records",
+      recordFilter: "value contains ROMAConnect || value contains ServiceStage",
+      aggregateMode: "join",
+      aggregateSeparator: ",",
+      output: "内部业务库"
+    })
+  });
+  const aggregateMappingTest = await request("/api/data-sources/test", {
+    method: "POST",
+    body: JSON.stringify({ sourceId: aggregateSource.data.id, ...aggregateSource.data })
+  });
+  assert(aggregateMappingTest.data.mappedRecords.length === 1, "aggregate mapping should produce one target record");
+  assert(
+    aggregateMappingTest.data.mappedRecords[0].matched_products === "应用服务|ROMAConnect|2.2.0,应用服务|ROMAConnect|2.3.0,应用服务|ServiceStage|2.2.0",
+    "aggregate mapping should join filtered values into the same target field"
+  );
+
   const flow = await request("/api/business-flows", {
     method: "POST",
     body: JSON.stringify({
@@ -454,14 +538,17 @@ try {
       outputMode: "upsert-business",
       outputConfig: {
         writeStrategy: "upsert",
-        primaryKey: "event_id",
+        primaryKey: "event_id,source_id",
         rawTable: "raw_e2e_api",
         cleanTable: "clean_e2e_event",
         businessTable: "biz_e2e_event",
-        dedupeStrategy: "primary-key"
+        dedupeStrategy: "field-combo",
+        dedupeFields: "product_dept,service_name,event_time"
       }
     })
   });
+  assert(flow.data.outputConfig.primaryKey === "event_id,source_id", "business flow should support composite primary key config");
+  assert(flow.data.outputConfig.dedupeFields === "product_dept,service_name,event_time", "business flow should save field-combo dedupe fields");
   const duplicateBusinessFlow = await request("/api/business-flows", {
     method: "POST",
     body: JSON.stringify({
@@ -504,6 +591,7 @@ try {
   await request(`/api/cleaning-rules/${rule.data.id}`, { method: "DELETE" });
   await request(`/api/cleaning-rules/${extractRule.data.id}`, { method: "DELETE" });
   await request(`/api/dictionary-sets/${productAliasDictionary.data.id}`, { method: "DELETE" });
+  await request(`/api/situation-filters/${updatedSituationFilter.data.id}`, { method: "DELETE" });
   const deletedFlow = await request(`/api/business-flows/${updatedFlow.data.id}`, { method: "DELETE" });
   await request(`/api/data-sources/${source.data.id}`, { method: "DELETE" });
   await request(`/api/auth-configs/${auth.data.id}`, { method: "DELETE" });

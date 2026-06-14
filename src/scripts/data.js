@@ -11,6 +11,14 @@ window.opsData = {
     { title: "映射与清洗", desc: "源字段到目标字段，类型转换与枚举归一", icon: "pipeline" },
     { title: "展示 / 分析 / 搜索", desc: "业务视图、AI 洞察、知识问答", icon: "spark" }
   ],
+  situationFilters: [
+    { id: "situation_filter_severity", label: "等级", field: "等级", type: "select", source: "auto", dictionaryRef: "", options: [], defaultVisible: true, defaultValue: "" },
+    { id: "situation_filter_owner", label: "归属对象", field: "归属对象", type: "select", source: "auto", dictionaryRef: "", options: [], defaultVisible: true, defaultValue: "" }
+  ],
+  situationTimeFilter: {
+    fields: ["event_time", "created_at", "updated_at", "time", "时间"],
+    defaultRange: "24h"
+  },
   sources: [
     { name: "告警中心 API", type: "POST /api/alarm/list", status: "Cookie 登录刷新，5 分钟采集", icon: "cloud" },
     { name: "CMDB PostgreSQL", type: "asset_service_relation", status: "数据库连接池，30 分钟增量", icon: "database" },

@@ -75,6 +75,20 @@
         </header>
 
         <section class="panel active" id="overview" aria-labelledby="panelTitle">
+          <article class="surface overview-filter-panel">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Global Filters</p>
+                <h2>全局态势筛选</h2>
+                <small>筛选项按字段名作用于所有业务；某个业务没有对应字段时会自动跳过该筛选。</small>
+              </div>
+              <button class="small-button" id="configureSituationFiltersBtn" type="button">
+                <span class="icon" data-icon="pipeline"></span>
+                筛选配置
+              </button>
+            </div>
+            <div class="overview-filter-grid" id="overviewFilterBar"></div>
+          </article>
           <div class="metric-grid" id="metricGrid"></div>
           <div class="dashboard-grid">
             <article class="surface operations-map">
@@ -168,11 +182,15 @@
                     <input id="flowNameInput" value="新业务聚合流" />
                   </label>
                   <label>
-                    <span>时间字段</span>
-                    <input id="flowTimeFieldInput" value="event_time" />
-                  </label>
-                  <label>
-                    <span>输出方式</span>
+                    <span class="label-with-help">
+                      输出方式
+                      <button
+                        class="help-dot"
+                        type="button"
+                        aria-label="输出方式说明"
+                        data-tooltip="写入/更新业务模块：结果进入系统业务数据，供态势总览、数据展示和智能分析使用。输出文件或 API 用于后续扩展外部交付，当前主要保存配置语义。"
+                      >?</button>
+                    </span>
                     <select id="flowOutputModeSelect">
                       <option value="upsert-business">写入/更新业务模块</option>
                       <option value="file">输出文件</option>
@@ -199,8 +217,16 @@
                     </select>
                   </label>
                   <label>
-                    <span>主键字段</span>
-                    <input id="flowPrimaryKeyInput" value="event_id" />
+                    <span class="label-with-help">
+                      主键字段
+                      <button
+                        class="help-dot"
+                        type="button"
+                        aria-label="主键字段说明"
+                        data-tooltip="支持单字段或多字段组合。多字段用英文逗号分隔，例如 event_id,source_id；写入策略为按主键更新时，会按这些字段共同定位同一条业务记录。"
+                      >?</button>
+                    </span>
+                    <input id="flowPrimaryKeyInput" value="event_id" placeholder="如 event_id 或 event_id,source_id" />
                   </label>
                   <label>
                     <span>原始表名</span>
@@ -209,19 +235,30 @@
                   <label>
                     <span>清洗表名</span>
                     <input id="flowCleanTableInput" value="clean_alarm_event" />
-                    <small class="field-help">保存过滤、字段映射、默认值和清洗规则处理后的中间结果，便于追溯与复跑。</small>
                   </label>
                   <label>
                     <span>业务表名</span>
                     <input id="flowBusinessTableInput" value="biz_alarm_event" />
                   </label>
                   <label>
-                    <span>去重策略</span>
+                    <span class="label-with-help">
+                      去重策略
+                      <button
+                        class="help-dot"
+                        type="button"
+                        aria-label="去重策略说明"
+                        data-tooltip="按主键去重：使用主键字段判断重复。按字段组合去重：使用下方去重字段组合判断重复，适合没有稳定事件 ID 的业务。 不去重：保留所有写入记录。"
+                      >?</button>
+                    </span>
                     <select id="flowDedupeStrategySelect">
                       <option value="primary-key">按主键去重</option>
                       <option value="field-combo">按字段组合去重</option>
                       <option value="none">不去重</option>
                     </select>
+                  </label>
+                  <label class="flow-dedupe-fields">
+                    <span>去重字段组合</span>
+                    <input id="flowDedupeFieldsInput" value="" placeholder="如 product_dept,product_name,event_time" />
                   </label>
                   </div>
                 </details>
@@ -618,6 +655,37 @@
                 <label>
                   <span>清洗规则</span>
                   <select id="mapRuleSelect" aria-label="清洗规则"></select>
+                </label>
+                <label>
+                  <span>映射方式</span>
+                  <select id="mapRecordModeSelect" aria-label="映射方式">
+                    <option value="per-record">每个对象生成一条记录</option>
+                    <option value="aggregate-records">多对象合并到同一条记录</option>
+                  </select>
+                </label>
+                <label class="aggregate-mapping-field">
+                  <span>对象过滤条件</span>
+                  <input id="mapRecordFilterInput" value="" aria-label="对象过滤条件" placeholder="如 value contains ROMAConnect" />
+                </label>
+                <label class="aggregate-mapping-field">
+                  <span class="label-with-help">
+                    聚合方式
+                    <button
+                      class="help-dot"
+                      type="button"
+                      aria-label="聚合方式说明"
+                      data-tooltip="去重后拼接：把多条对象命中的值去重后按分隔符合成一个字符串，适合写入同一个目标字段。取第一个值：只保留第一条命中的值，适合时间、来源等单值字段。输出数组：保留多个值的数组结构，适合后续规则或接口继续处理。"
+                    >?</button>
+                  </span>
+                  <select id="mapAggregateModeSelect" aria-label="聚合方式">
+                    <option value="join">去重后拼接</option>
+                    <option value="first">取第一个值</option>
+                    <option value="array">输出数组</option>
+                  </select>
+                </label>
+                <label class="aggregate-mapping-field">
+                  <span>拼接分隔符</span>
+                  <input id="mapAggregateSeparatorInput" value="," aria-label="拼接分隔符" placeholder="如 ," />
                 </label>
                 <button class="small-button inline-editor-action" id="addMappingBtn" type="button">
                   <span class="icon" data-icon="plus"></span>
@@ -1060,6 +1128,110 @@
           <button class="small-button" value="cancel">取消</button>
           <button class="small-button primary" id="saveAuthBtn" value="default">保存认证</button>
         </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="situationFilterModal">
+      <form class="modal-panel" method="dialog">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Global Situation Filters</p>
+            <h2>态势筛选配置</h2>
+            <small>这里维护全局筛选维度。业务数据存在对应字段时参与过滤，不存在时自动跳过。</small>
+          </div>
+          <button class="icon-button modal-close-button" id="closeSituationFilterBtn" type="button" aria-label="关闭筛选配置">
+            <span class="icon" data-icon="x"></span>
+          </button>
+        </div>
+        <div class="config-form">
+          <label>
+            <span>筛选名称</span>
+            <input id="situationFilterLabelInput" value="环境" placeholder="如 环境 / 区域 / 等级" />
+          </label>
+          <label>
+            <span>控件类型</span>
+            <select id="situationFilterTypeSelect">
+              <option value="select">下拉单选</option>
+              <option value="multi-select">多选</option>
+              <option value="text">文本搜索</option>
+            </select>
+          </label>
+          <label>
+            <span>默认展示</span>
+            <select id="situationFilterVisibleSelect">
+              <option value="true">展示</option>
+              <option value="false">隐藏</option>
+            </select>
+          </label>
+          <label>
+            <span>默认值</span>
+            <input id="situationFilterDefaultInput" value="" placeholder="可选" />
+          </label>
+          <details class="situation-config-section full" open>
+            <summary>
+              <span>
+                <strong>取值配置</strong>
+                <small>先配置字段和取值来源，再按来源展开字典或枚举输入。</small>
+              </span>
+            </summary>
+            <div class="config-form compact situation-value-grid">
+              <label>
+                <span class="label-with-help">
+                  字段名
+                  <button
+                    class="help-dot"
+                    type="button"
+                    aria-label="态势筛选字段说明"
+                    data-tooltip="填写最终业务数据中的字段名。对象记录可写字段路径；数组记录会按业务字段表头匹配。某业务没有该字段时，该筛选条件会自动跳过。"
+                  >?</button>
+                </span>
+                <input id="situationFilterFieldInput" value="env" placeholder="如 env / region / 等级" />
+              </label>
+              <label>
+                <span>取值来源</span>
+                <select id="situationFilterSourceSelect">
+                  <option value="auto">从业务数据自动提取</option>
+                  <option value="dictionary">引用字典集</option>
+                  <option value="manual">手工枚举</option>
+                </select>
+              </label>
+              <label class="situation-source-field" data-situation-source-field="dictionary">
+                <span>字典引用</span>
+                <input id="situationFilterDictionaryInput" value="" placeholder="如 产品列表.产品名" />
+              </label>
+              <label class="situation-source-field full" data-situation-source-field="manual">
+                <span>手工枚举</span>
+                <textarea id="situationFilterOptionsInput" rows="3" placeholder="一行一个值，或用英文逗号分隔"></textarea>
+              </label>
+            </div>
+          </details>
+          <details class="situation-config-section full" id="situationTimeConfigDetails">
+            <summary>
+              <span>
+                <strong>时间筛选设置</strong>
+                <small>通常不需要改；用于态势总览的全局时间段筛选。</small>
+              </span>
+            </summary>
+            <label>
+              <span class="label-with-help">
+                时间字段候选
+                <button
+                  class="help-dot"
+                  type="button"
+                  aria-label="时间字段候选说明"
+                  data-tooltip="系统会按顺序查找这些字段；某条数据没有任何候选时间字段时，时间筛选会跳过该记录。"
+                >?</button>
+              </span>
+              <input id="situationTimeFieldsInput" value="event_time,created_at,updated_at,time,时间" />
+            </label>
+          </details>
+        </div>
+        <div class="modal-actions">
+          <button class="small-button" id="cancelSituationFilterBtn" value="cancel">取消</button>
+          <button class="small-button" id="resetSituationFilterBtn" type="button">新建筛选项</button>
+          <button class="small-button primary" id="saveSituationFilterBtn" value="default">保存筛选项</button>
+        </div>
+        <div class="support-list" id="situationFilterList"></div>
       </form>
     </dialog>
 

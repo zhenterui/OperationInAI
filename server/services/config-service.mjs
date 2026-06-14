@@ -1,5 +1,75 @@
 import { store } from "../data/store.mjs";
 
+function normalizeList(value, fallback = []) {
+  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+  if (typeof value === "string") {
+    return value
+      .split(/[\n,，]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return fallback;
+}
+
+function toSituationFilter(input = {}, existing = {}) {
+  return {
+    id: existing.id || input.id || `situation_filter_${Date.now()}`,
+    label: input.label || existing.label || "自定义筛选",
+    field: input.field || existing.field || "",
+    type: ["select", "multi-select", "text"].includes(input.type) ? input.type : existing.type || "select",
+    source: ["auto", "dictionary", "manual"].includes(input.source) ? input.source : existing.source || "auto",
+    dictionaryRef: input.dictionaryRef ?? existing.dictionaryRef ?? "",
+    options: normalizeList(input.options, existing.options || []),
+    defaultVisible: input.defaultVisible ?? existing.defaultVisible ?? true,
+    defaultValue: input.defaultValue ?? existing.defaultValue ?? "",
+    updatedAt: new Date().toISOString()
+  };
+}
+
+export function createSituationFilter(input = {}) {
+  const filter = toSituationFilter(input);
+  store.situationFilters.unshift(filter);
+  if (input.timeFields !== undefined) {
+    updateSituationTimeFilter({ fields: input.timeFields });
+  }
+  return filter;
+}
+
+export function updateSituationFilter(id, input = {}) {
+  const index = store.situationFilters.findIndex((item) => item.id === id);
+  if (index < 0) {
+    const error = new Error("Situation filter not found");
+    error.status = 404;
+    throw error;
+  }
+  const updated = toSituationFilter(input, store.situationFilters[index]);
+  store.situationFilters[index] = updated;
+  if (input.timeFields !== undefined) {
+    updateSituationTimeFilter({ fields: input.timeFields });
+  }
+  return updated;
+}
+
+export function deleteSituationFilter(id) {
+  const index = store.situationFilters.findIndex((item) => item.id === id);
+  if (index < 0) {
+    const error = new Error("Situation filter not found");
+    error.status = 404;
+    throw error;
+  }
+  const [removed] = store.situationFilters.splice(index, 1);
+  return removed;
+}
+
+export function updateSituationTimeFilter(input = {}) {
+  store.situationTimeFilter = {
+    ...(store.situationTimeFilter || {}),
+    fields: normalizeList(input.fields, store.situationTimeFilter?.fields || ["event_time", "created_at", "updated_at", "time", "时间"]),
+    defaultRange: input.defaultRange || store.situationTimeFilter?.defaultRange || "24h"
+  };
+  return store.situationTimeFilter;
+}
+
 export function createFieldMapping(input = {}) {
   const mapping = {
     id: `map_${Date.now()}`,
@@ -11,6 +81,10 @@ export function createFieldMapping(input = {}) {
     ruleId: input.ruleId || "",
     ruleParam: input.ruleParam || "",
     rule: input.rule || "trim",
+    recordMode: input.recordMode === "aggregate-records" ? "aggregate-records" : "per-record",
+    recordFilter: input.recordFilter || "",
+    aggregateMode: ["first", "join", "array"].includes(input.aggregateMode) ? input.aggregateMode : "join",
+    aggregateSeparator: input.aggregateSeparator ?? ",",
     output: input.output || "内部业务库"
   };
   store.fieldMappings.push(mapping);
@@ -35,6 +109,10 @@ export function updateFieldMapping(id, input = {}) {
     ruleId: input.ruleId ?? existing.ruleId ?? "",
     ruleParam: input.ruleParam ?? existing.ruleParam ?? "",
     rule: input.rule || existing.rule,
+    recordMode: input.recordMode === "aggregate-records" ? "aggregate-records" : "per-record",
+    recordFilter: input.recordFilter ?? existing.recordFilter ?? "",
+    aggregateMode: ["first", "join", "array"].includes(input.aggregateMode) ? input.aggregateMode : existing.aggregateMode || "join",
+    aggregateSeparator: input.aggregateSeparator ?? existing.aggregateSeparator ?? ",",
     output: input.output || existing.output,
     updatedAt: new Date().toISOString()
   };
@@ -273,6 +351,7 @@ function getStorageDataScope(policy = "copy-config") {
     cleaningRules: store.cleaningRules.length,
     dictionarySets: store.dictionarySets.length,
     businessFlows: store.businessFlows.length,
+    situationFilters: store.situationFilters.length,
     modelConfigs: store.modelConfigs.length
   };
   const businessCounts = {
@@ -469,7 +548,8 @@ export function createBusinessFlow(input = {}) {
       rawTable: input.outputConfig?.rawTable || `raw_${input.businessName || "business"}`,
       cleanTable: input.outputConfig?.cleanTable || `clean_${input.businessName || "business"}`,
       businessTable: input.outputConfig?.businessTable || `biz_${input.businessName || "business"}`,
-      dedupeStrategy: input.outputConfig?.dedupeStrategy || "primary-key"
+      dedupeStrategy: input.outputConfig?.dedupeStrategy || "primary-key",
+      dedupeFields: input.outputConfig?.dedupeFields || ""
     },
     status: "ready",
     lastRunAt: "",
@@ -562,7 +642,8 @@ export function runBusinessFlow(input = {}) {
     rawTable: `raw_${flow.businessName}`,
     cleanTable: `clean_${flow.businessName}`,
     businessTable: `biz_${flow.businessName}`,
-    dedupeStrategy: "primary-key"
+    dedupeStrategy: "primary-key",
+    dedupeFields: ""
   };
   const nowText = new Date().toISOString().slice(0, 16).replace("T", " ");
   const sourceText = sources.map((source) => source.name).join(" + ") || "未选择数据源";
@@ -628,6 +709,7 @@ export function runBusinessFlow(input = {}) {
     };
     store.businesses.unshift(business);
   }
+  business.timeField = flow.timeField;
   business.rows.unshift(row);
   flow.status = "success";
   flow.lastRunAt = new Date().toISOString();

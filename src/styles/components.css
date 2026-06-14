@@ -89,7 +89,12 @@
 }
 
 .business-fields {
-  grid-template-columns: minmax(260px, 1.15fr) minmax(220px, 0.95fr) minmax(160px, 0.65fr) minmax(190px, 0.75fr);
+  grid-template-columns: minmax(260px, 1.15fr) minmax(220px, 0.95fr);
+}
+
+.business-filter-fields {
+  margin-top: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
 }
 
 .business-name-field input {
@@ -165,6 +170,14 @@
 .flow-advanced-config .flow-config {
   margin: 0;
   padding: 0 12px 12px;
+}
+
+.flow-config .flow-dedupe-fields {
+  display: none;
+}
+
+.flow-config.is-field-combo .flow-dedupe-fields {
+  display: grid;
 }
 
 .flow-storage-guide {
@@ -569,6 +582,62 @@
   overflow: hidden;
 }
 
+.overview-filter-panel {
+  margin-bottom: 14px;
+}
+
+.overview-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.overview-filter-grid label {
+  display: grid;
+  gap: 7px;
+}
+
+.overview-filter-grid .small-button {
+  min-height: 42px;
+}
+
+.situation-config-section {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.situation-config-section summary {
+  cursor: pointer;
+  color: var(--text);
+}
+
+.situation-config-section summary strong,
+.situation-config-section summary small {
+  display: block;
+}
+
+.situation-config-section summary small {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.situation-value-grid {
+  margin-top: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.situation-config-section > label {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+}
+
 .metric-card::after {
   position: absolute;
   inset: auto -28px -42px auto;
@@ -668,6 +737,12 @@
 .icon-button {
   width: 44px;
   height: 44px;
+}
+
+.modal-close-button {
+  flex: 0 0 44px;
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .small-button {
@@ -1043,6 +1118,14 @@
 .mapping-editor {
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   align-items: end;
+}
+
+.mapping-editor .aggregate-mapping-field {
+  display: none;
+}
+
+.mapping-editor.is-aggregate .aggregate-mapping-field {
+  display: grid;
 }
 
 .rule-editor {
@@ -1546,9 +1629,9 @@ textarea {
 }
 
 .mapping-row {
-  min-width: 1040px;
+  min-width: 1180px;
   display: grid;
-  grid-template-columns: 1.2fr 1fr 0.65fr 0.75fr 1.15fr 0.78fr 128px;
+  grid-template-columns: 1.2fr 1fr 0.9fr 0.65fr 0.75fr 1.15fr 0.78fr 128px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);
 }

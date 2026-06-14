@@ -23,6 +23,8 @@ function toSourcePatch(input = {}) {
     status: input.status || "待配置认证策略",
     icon: input.icon || (input.kind === "database" ? "database" : input.kind === "file" ? "file" : "cloud"),
     responsePath: input.responsePath || "data.items",
+    responseBody: input.responseBody || input.mockResponseBody || null,
+    mockResponseBody: input.mockResponseBody || input.responseBody || null,
     cookieName: "",
     cookieValue: "",
     requestConfig: {
@@ -630,13 +632,45 @@ function applyCleaningRule(values = [], mapping = {}, record = {}, responsePath 
   return finalizeRuleOutput(cleaned, mapping.defaultValue);
 }
 
+function applyMappingToRecord(record = {}, mapping = {}, responsePath = "") {
+  const localField = stripResponsePrefix(mapping.sourceField, responsePath);
+  const values = getValuesByPath(record, localField);
+  return applyCleaningRule(values, mapping, record, responsePath);
+}
+
+function finalizeAggregateMappingOutput(values = [], mapping = {}) {
+  const normalizedValues = mapping.uniqueAggregate === false
+    ? normalizeMappedValues(values)
+    : uniqueValues(normalizeMappedValues(values));
+  if (!normalizedValues.length) return mapping.defaultValue ?? "";
+  if (mapping.aggregateMode === "array") return normalizedValues;
+  if (mapping.aggregateMode === "first") return normalizedValues[0] ?? mapping.defaultValue ?? "";
+  return normalizedValues.map((value) => String(value)).join(mapping.aggregateSeparator ?? ",");
+}
+
+function applyAggregateMapping(records = [], mapping = {}, responsePath = "") {
+  const matchedRecords = records.filter((record) => matchesFilter(record, mapping.recordFilter, responsePath));
+  const values = matchedRecords.flatMap((record) => normalizeMappedValues([applyMappingToRecord(record, mapping, responsePath)]));
+  return finalizeAggregateMappingOutput(values, mapping);
+}
+
 function applyFieldMappings(records = [], mappings = [], responsePath = "") {
   if (!mappings.length) return [];
+  const hasAggregateMappings = mappings.some((mapping) => mapping.recordMode === "aggregate-records");
+  if (hasAggregateMappings) {
+    const firstRecord = records[0] || {};
+    return [
+      mappings.reduce((output, mapping) => {
+        output[mapping.targetField] = mapping.recordMode === "aggregate-records"
+          ? applyAggregateMapping(records, mapping, responsePath)
+          : applyMappingToRecord(firstRecord, mapping, responsePath);
+        return output;
+      }, {})
+    ];
+  }
   return records.map((record) =>
     mappings.reduce((output, mapping) => {
-      const localField = stripResponsePrefix(mapping.sourceField, responsePath);
-      const values = getValuesByPath(record, localField);
-      output[mapping.targetField] = applyCleaningRule(values, mapping, record, responsePath);
+      output[mapping.targetField] = applyMappingToRecord(record, mapping, responsePath);
       return output;
     }, {})
   );

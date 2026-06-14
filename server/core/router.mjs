@@ -9,6 +9,7 @@ import {
   createKnowledgeSource,
   createModelConfig,
   createStorageConfig,
+  createSituationFilter,
   deleteAuthConfig,
   deleteBusinessFlow,
   deleteCleaningRule,
@@ -16,6 +17,7 @@ import {
   deleteFieldMapping,
   deleteModelConfig,
   deleteStorageConfig,
+  deleteSituationFilter,
   queryBusiness,
   runBusinessFlow,
   switchStorageConfig,
@@ -25,7 +27,9 @@ import {
   updateDictionarySet,
   updateFieldMapping,
   updateModelConfig,
-  updateStorageConfig
+  updateStorageConfig,
+  updateSituationFilter,
+  updateSituationTimeFilter
 } from "../services/config-service.mjs";
 import { answerQuestion } from "../services/search-service.mjs";
 import { createDataSource, deleteDataSource, listSyncLogs, runSync, testDataSource, updateDataSource } from "../services/sync-service.mjs";
@@ -60,6 +64,9 @@ route("POST", "/api/model-configs", async ({ request }) => createModelConfig(awa
 route("GET", "/api/storage-configs", () => store.storageConfigs.map((item) => ({ ...item, password: "" })));
 route("POST", "/api/storage-configs", async ({ request }) => createStorageConfig(await readJson(request)));
 route("POST", "/api/storage-configs/switch", async ({ request }) => switchStorageConfig(await readJson(request)));
+route("GET", "/api/situation-filters", () => store.situationFilters);
+route("POST", "/api/situation-filters", async ({ request }) => createSituationFilter(await readJson(request)));
+route("PUT", "/api/situation-time-filter", async ({ request }) => updateSituationTimeFilter(await readJson(request)));
 route("GET", "/api/businesses", () => store.businesses);
 route("POST", "/api/businesses/query", async ({ request }) => queryBusiness(await readJson(request)));
 route("GET", "/api/business-flows", () => store.businessFlows);
@@ -198,6 +205,23 @@ export async function handleApi(request, response) {
   if (storageConfigMatch && request.method === "DELETE") {
     try {
       sendJson(response, 200, { data: deleteStorageConfig(storageConfigMatch[1]) });
+    } catch (error) {
+      sendError(response, error.status || 500, "API request failed", error.message);
+    }
+    return true;
+  }
+  const situationFilterMatch = parsed.pathname.match(/^\/api\/situation-filters\/([^/]+)$/);
+  if (situationFilterMatch && request.method === "PUT") {
+    try {
+      sendJson(response, 200, { data: updateSituationFilter(situationFilterMatch[1], await readJson(request)) });
+    } catch (error) {
+      sendError(response, error.status || 500, "API request failed", error.message);
+    }
+    return true;
+  }
+  if (situationFilterMatch && request.method === "DELETE") {
+    try {
+      sendJson(response, 200, { data: deleteSituationFilter(situationFilterMatch[1]) });
     } catch (error) {
       sendError(response, error.status || 500, "API request failed", error.message);
     }

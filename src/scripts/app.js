@@ -9,6 +9,7 @@ const appState = {
   editingRuleId: "",
   editingMappingId: "",
   editingStorageConfigId: "",
+  editingSituationFilterId: "",
   selectedFlowId: "",
   selectedFlowNodeId: "",
   businessDetailMode: "list",
@@ -19,6 +20,9 @@ const appState = {
   chartType: "line",
   lastDisplayResult: null,
   responseValueFilters: [],
+  overviewFilters: {},
+  overviewTimeStart: "",
+  overviewTimeEnd: "",
   cleaningTab: "business",
   analysisTab: "config",
   editingModelConfigId: ""
@@ -34,6 +38,7 @@ const icons = {
   brain: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M8 6a4 4 0 0 0-4 4 4 4 0 0 0 1 7.7A4 4 0 0 0 12 20V5a4 4 0 0 0-4-4"/><path d="M16 6a4 4 0 0 1 4 4 4 4 0 0 1-1 7.7A4 4 0 0 1 12 20"/><path d="M8 10h1M15 10h1M8 15h2M14 15h2"/></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg>',
   refresh: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M20 11a8 8 0 0 0-14.8-4"/><path d="M4 5v5h5"/><path d="M4 13a8 8 0 0 0 14.8 4"/><path d="M20 19v-5h-5"/></svg>',
+  x: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
   bolt: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M13 2 4 14h7l-1 8 10-13h-7z"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>',
   "git-branch": '<svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M6 15V6a3 3 0 0 1 3-3h6"/><path d="M9 18h6"/></svg>',
@@ -134,6 +139,14 @@ function normalizeOpsData() {
   window.opsData.fieldMappings = window.opsData.fieldMappings || [];
   window.opsData.mappings = window.opsData.mappings || [];
   window.opsData.businesses = window.opsData.businesses || [];
+  window.opsData.situationFilters = window.opsData.situationFilters || [
+    { id: "situation_filter_severity", label: "等级", field: "等级", type: "select", source: "auto", dictionaryRef: "", options: [], defaultVisible: true, defaultValue: "" },
+    { id: "situation_filter_owner", label: "归属对象", field: "归属对象", type: "select", source: "auto", dictionaryRef: "", options: [], defaultVisible: true, defaultValue: "" }
+  ];
+  window.opsData.situationTimeFilter = window.opsData.situationTimeFilter || {
+    fields: ["event_time", "created_at", "updated_at", "time", "时间"],
+    defaultRange: "24h"
+  };
   window.opsData.cleaningRules = window.opsData.cleaningRules || [];
   window.opsData.dictionarySets = window.opsData.dictionarySets || [
     {
@@ -269,6 +282,9 @@ function setPanel(panelId) {
   $$(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === panelId));
   const active = $(`.nav-item[data-panel="${panelId}"] span:last-child`);
   $("#panelTitle").textContent = active ? active.textContent : "态势总览";
+  if (panelId === "overview") {
+    requestAnimationFrame(() => renderOverview());
+  }
   if (panelId === "display") {
     requestAnimationFrame(() => renderBusinessTable());
   }
@@ -354,6 +370,125 @@ function getBusinessFields(business) {
   return business?.fields?.length ? business.fields : ["事件名称", "等级", "归属对象", "时间", "状态/影响"];
 }
 
+function getNestedValue(record, path = "") {
+  if (!path) return undefined;
+  return String(path)
+    .split(".")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce((current, part) => (current && typeof current === "object" ? current[part] : undefined), record);
+}
+
+function getBusinessFieldValue(business, row, field = "") {
+  const key = String(field || "").trim();
+  if (!key) return undefined;
+  if (row && typeof row === "object" && !Array.isArray(row)) {
+    return getNestedValue(row, key) ?? row[key];
+  }
+  const fields = getBusinessFields(business);
+  const exactIndex = fields.findIndex((item) => item === key);
+  if (exactIndex >= 0) return row?.[exactIndex];
+  const aliasMap = {
+    event_name: 0,
+    name: 0,
+    severity: 1,
+    level: 1,
+    owner: 2,
+    service: 2,
+    object: 2,
+    event_time: 3,
+    created_at: 3,
+    updated_at: 3,
+    time: 3,
+    status: 4,
+    impact: 4
+  };
+  return aliasMap[key] !== undefined ? row?.[aliasMap[key]] : undefined;
+}
+
+function hasBusinessFieldValue(value) {
+  return value !== undefined && value !== null && value !== "";
+}
+
+function parseOptionList(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+  return String(value || "")
+    .split(/[\n,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function getDictionaryRefValues(ref = "") {
+  const [dictionaryName, columnName] = String(ref || "").split(".");
+  if (!dictionaryName || !columnName) return [];
+  const dictionary = (window.opsData.dictionarySets || []).find((item) => item.name === dictionaryName || item.id === dictionaryName);
+  if (!dictionary) return [];
+  return [
+    ...new Set(
+      (dictionary.rows || [])
+        .flatMap((row) => parseOptionList(row[columnName]))
+        .filter(Boolean)
+    )
+  ];
+}
+
+function getSituationFilterOptions(filter) {
+  if (filter.source === "manual") return parseOptionList(filter.options);
+  if (filter.source === "dictionary") return getDictionaryRefValues(filter.dictionaryRef);
+  const values = (window.opsData.businesses || []).flatMap((business) =>
+    (business.rows || []).map((row) => getBusinessFieldValue(business, row, filter.field)).filter(hasBusinessFieldValue)
+  );
+  return [...new Set(values.map((value) => String(value)))];
+}
+
+function getSituationSelectedValue(filter) {
+  if (Object.prototype.hasOwnProperty.call(appState.overviewFilters, filter.id)) {
+    return appState.overviewFilters[filter.id];
+  }
+  return filter.defaultValue || "";
+}
+
+function getOverviewTimeValue(business, row) {
+  const candidates = window.opsData.situationTimeFilter?.fields?.length
+    ? window.opsData.situationTimeFilter.fields
+    : ["event_time", "created_at", "updated_at", "time", "时间"];
+  for (const field of candidates) {
+    const value = getBusinessFieldValue(business, row, field);
+    if (hasBusinessFieldValue(value)) return value;
+  }
+  return undefined;
+}
+
+function passesOverviewFilters(business, row) {
+  const activeFilters = (window.opsData.situationFilters || []).filter((filter) => filter.defaultVisible !== false);
+  const filterMatched = activeFilters.every((filter) => {
+    const selected = getSituationSelectedValue(filter);
+    const selectedValues = Array.isArray(selected) ? selected.filter(Boolean) : [selected].filter(Boolean);
+    if (!selectedValues.length) return true;
+    const value = getBusinessFieldValue(business, row, filter.field);
+    if (!hasBusinessFieldValue(value)) return true;
+    const text = String(value);
+    if (filter.type === "text") return selectedValues.some((item) => text.includes(String(item)));
+    return selectedValues.includes(text);
+  });
+  if (!filterMatched) return false;
+  if (!appState.overviewTimeStart && !appState.overviewTimeEnd) return true;
+  const value = getOverviewTimeValue(business, row);
+  if (!hasBusinessFieldValue(value)) return true;
+  const timestamp = Date.parse(String(value).replace(" ", "T"));
+  if (Number.isNaN(timestamp)) return true;
+  const start = appState.overviewTimeStart ? Date.parse(appState.overviewTimeStart) : 0;
+  const end = appState.overviewTimeEnd ? Date.parse(appState.overviewTimeEnd) : 0;
+  return (!start || timestamp >= start) && (!end || timestamp <= end);
+}
+
+function getFilteredOverviewBusinesses() {
+  return (window.opsData.businesses || []).map((business) => ({
+    ...business,
+    rows: (business.rows || []).filter((row) => passesOverviewFilters(business, row))
+  }));
+}
+
 function renderTimeFieldOptions() {
   const business = getCurrentBusiness();
   const selected = $("#timeFieldSelect")?.value || business?.timeField || "event_time";
@@ -431,7 +566,7 @@ function getConfiguredBusinessSummary() {
     }
   });
   const flows = [...flowByBusiness.values()];
-  const businesses = window.opsData.businesses || [];
+  const businesses = getFilteredOverviewBusinesses();
   const sources = window.opsData.sources || [];
   const rules = window.opsData.cleaningRules || [];
   const mappings = window.opsData.fieldMappings || [];
@@ -532,6 +667,150 @@ function buildOverviewModel() {
     Math.min(cleaningScore / 100, 1)
   ].map((value) => Math.max(0.18, value));
   return { metrics, flowCards, signals, radarValues, highRiskCount: attentionCount };
+}
+
+function renderOverviewFilters() {
+  const filters = (window.opsData.situationFilters || []).filter((filter) => filter.defaultVisible !== false);
+  const timeFields = window.opsData.situationTimeFilter?.fields || [];
+  const filterControls = filters.map((filter) => {
+    if (filter.type === "text") {
+      return `
+        <label>
+          <span>${escapeHtml(filter.label)}</span>
+          <input data-overview-filter="${escapeHtml(filter.id)}" type="search" value="${escapeHtml(appState.overviewFilters[filter.id] || "")}" placeholder="输入关键词" />
+        </label>
+      `;
+    }
+    const options = getSituationFilterOptions(filter);
+    const selected = getSituationSelectedValue(filter);
+    return `
+      <label>
+        <span>${escapeHtml(filter.label)}</span>
+        <select data-overview-filter="${escapeHtml(filter.id)}" ${filter.type === "multi-select" ? "multiple" : ""}>
+          ${filter.type === "multi-select" ? "" : '<option value="">全部</option>'}
+          ${options.map((option) => `<option value="${escapeHtml(option)}" ${Array.isArray(selected) ? selected.includes(option) ? "selected" : "" : selected === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+        </select>
+      </label>
+    `;
+  });
+  $("#overviewFilterBar").innerHTML = [
+    ...filterControls,
+    `
+      <label>
+        <span class="label-with-help">
+          时间开始
+          <button class="help-dot" type="button" aria-label="态势时间筛选说明" data-tooltip="时间筛选会按候选字段顺序查找，例如 ${escapeHtml(timeFields.join(", ") || "event_time,time")}；某条数据没有候选时间字段时自动跳过时间过滤。">?</button>
+        </span>
+        <input id="overviewTimeStartInput" type="datetime-local" value="${escapeHtml(appState.overviewTimeStart || "")}" />
+      </label>
+      <label>
+        <span>时间结束</span>
+        <input id="overviewTimeEndInput" type="datetime-local" value="${escapeHtml(appState.overviewTimeEnd || "")}" />
+      </label>
+      <button class="small-button" id="resetOverviewFiltersBtn" type="button">重置筛选</button>
+    `
+  ].join("");
+  renderIcons();
+}
+
+function resetSituationFilterForm() {
+  appState.editingSituationFilterId = "";
+  $("#situationFilterLabelInput").value = "环境";
+  $("#situationFilterFieldInput").value = "env";
+  setSelectValue("#situationFilterTypeSelect", "select");
+  setSelectValue("#situationFilterSourceSelect", "auto");
+  $("#situationFilterDictionaryInput").value = "";
+  $("#situationFilterDefaultInput").value = "";
+  $("#situationFilterOptionsInput").value = "";
+  setSelectValue("#situationFilterVisibleSelect", "true");
+  $("#situationTimeFieldsInput").value = (window.opsData.situationTimeFilter?.fields || ["event_time", "created_at", "updated_at", "time", "时间"]).join(",");
+  $("#saveSituationFilterBtn").textContent = "保存筛选项";
+  updateSituationFilterSourceVisibility();
+}
+
+function populateSituationFilterForm(filter) {
+  if (!filter) return;
+  appState.editingSituationFilterId = filter.id;
+  $("#situationFilterLabelInput").value = filter.label || "";
+  $("#situationFilterFieldInput").value = filter.field || "";
+  setSelectValue("#situationFilterTypeSelect", filter.type || "select");
+  setSelectValue("#situationFilterSourceSelect", filter.source || "auto");
+  $("#situationFilterDictionaryInput").value = filter.dictionaryRef || "";
+  $("#situationFilterDefaultInput").value = filter.defaultValue || "";
+  $("#situationFilterOptionsInput").value = (filter.options || []).join("\n");
+  setSelectValue("#situationFilterVisibleSelect", filter.defaultVisible === false ? "false" : "true");
+  $("#situationTimeFieldsInput").value = (window.opsData.situationTimeFilter?.fields || []).join(",");
+  $("#saveSituationFilterBtn").textContent = "保存修改";
+  updateSituationFilterSourceVisibility();
+}
+
+function updateSituationFilterSourceVisibility() {
+  const source = $("#situationFilterSourceSelect")?.value || "auto";
+  $$("[data-situation-source-field]").forEach((field) => {
+    field.classList.toggle("hidden", field.dataset.situationSourceField !== source);
+  });
+}
+
+function collectSituationFilterForm() {
+  return {
+    label: $("#situationFilterLabelInput").value.trim() || "自定义筛选",
+    field: $("#situationFilterFieldInput").value.trim(),
+    type: $("#situationFilterTypeSelect").value,
+    source: $("#situationFilterSourceSelect").value,
+    dictionaryRef: $("#situationFilterDictionaryInput").value.trim(),
+    defaultValue: $("#situationFilterDefaultInput").value.trim(),
+    options: parseOptionList($("#situationFilterOptionsInput").value),
+    defaultVisible: $("#situationFilterVisibleSelect").value === "true",
+    timeFields: parseOptionList($("#situationTimeFieldsInput").value)
+  };
+}
+
+function renderSituationFilterList() {
+  const filters = window.opsData.situationFilters || [];
+  $("#situationFilterList").innerHTML = filters.length
+    ? filters
+        .map((filter) => `
+          <div class="support-list-item ${filter.id === appState.editingSituationFilterId ? "selected" : ""}">
+            <div>
+              <strong>${escapeHtml(filter.label)}</strong>
+              <small>${escapeHtml(filter.field || "-")} · ${escapeHtml(filter.type || "select")} · ${filter.defaultVisible === false ? "隐藏" : "展示"}</small>
+            </div>
+            <div class="row-actions">
+              <button class="small-button" type="button" data-situation-filter-action="edit" data-situation-filter-id="${escapeHtml(filter.id)}">编辑</button>
+              <button class="small-button danger" type="button" data-situation-filter-action="delete" data-situation-filter-id="${escapeHtml(filter.id)}">删除</button>
+            </div>
+          </div>
+        `)
+        .join("")
+    : '<div class="support-list-item"><div><strong>暂无筛选项</strong><small>新增后会显示在态势总览筛选区。</small></div></div>';
+}
+
+async function saveSituationFilter() {
+  const payload = collectSituationFilterForm();
+  if (!payload.field) return;
+  const editingId = appState.editingSituationFilterId;
+  try {
+    const saved = await apiRequest(editingId ? `/api/situation-filters/${encodeURIComponent(editingId)}` : "/api/situation-filters", {
+      method: editingId ? "PUT" : "POST",
+      body: JSON.stringify(payload)
+    });
+    await apiRequest("/api/situation-time-filter", {
+      method: "PUT",
+      body: JSON.stringify({ fields: payload.timeFields })
+    });
+    window.opsData.situationFilters = editingId
+      ? (window.opsData.situationFilters || []).map((item) => (item.id === saved.id ? saved : item))
+      : [saved, ...(window.opsData.situationFilters || [])];
+  } catch {
+    const local = { id: editingId || `situation_filter_${Date.now()}`, ...payload };
+    window.opsData.situationFilters = editingId
+      ? (window.opsData.situationFilters || []).map((item) => (item.id === editingId ? local : item))
+      : [local, ...(window.opsData.situationFilters || [])];
+  }
+  window.opsData.situationTimeFilter = { ...(window.opsData.situationTimeFilter || {}), fields: payload.timeFields };
+  resetSituationFilterForm();
+  renderSituationFilterList();
+  renderOverview();
 }
 
 function renderMetrics() {
@@ -2401,7 +2680,6 @@ function populateFlowForm(flow) {
   appState.selectedFlowId = flow.id;
   $("#flowNameInput").value = flow.name;
   $("#flowBusinessInput").value = flow.businessName;
-  $("#flowTimeFieldInput").value = flow.timeField;
   setSelectValue("#flowOutputModeSelect", flow.outputMode);
   const outputConfig = flow.outputConfig || {};
   setSelectValue("#flowWriteStrategySelect", outputConfig.writeStrategy || "upsert");
@@ -2410,15 +2688,21 @@ function populateFlowForm(flow) {
   $("#flowCleanTableInput").value = outputConfig.cleanTable || `clean_${flow.businessName || "business"}`;
   $("#flowBusinessTableInput").value = outputConfig.businessTable || `biz_${flow.businessName || "business"}`;
   setSelectValue("#flowDedupeStrategySelect", outputConfig.dedupeStrategy || "primary-key");
+  $("#flowDedupeFieldsInput").value = outputConfig.dedupeFields || "";
+  updateFlowDedupeVisibility();
   appState.flowNodes = defaultFlowNodesFromFlow(flow);
   appState.selectedFlowNodeId = appState.flowNodes[0]?.id || "";
+}
+
+function updateFlowDedupeVisibility() {
+  const config = $(".flow-config");
+  config?.classList.toggle("is-field-combo", $("#flowDedupeStrategySelect")?.value === "field-combo");
 }
 
 function resetFlowForm() {
   appState.selectedFlowId = "";
   $("#flowNameInput").value = "新业务聚合流";
   $("#flowBusinessInput").value = "新业务模块";
-  $("#flowTimeFieldInput").value = "event_time";
   setSelectValue("#flowOutputModeSelect", "upsert-business");
   setSelectValue("#flowWriteStrategySelect", "upsert");
   $("#flowPrimaryKeyInput").value = "event_id";
@@ -2426,6 +2710,8 @@ function resetFlowForm() {
   $("#flowCleanTableInput").value = "clean_new_business";
   $("#flowBusinessTableInput").value = "biz_new_business";
   setSelectValue("#flowDedupeStrategySelect", "primary-key");
+  $("#flowDedupeFieldsInput").value = "";
+  updateFlowDedupeVisibility();
   appState.flowNodes = defaultFlowNodesFromFlow({ dataSourceIds: [], ruleIds: [], outputConfig: collectFlowForm().outputConfig });
   appState.selectedFlowNodeId = appState.flowNodes[0]?.id || "";
   renderFlowDesigner();
@@ -2468,10 +2754,11 @@ function renderFlowTable() {
 function collectFlowForm() {
   const dataSourceIds = appState.flowNodes.filter((node) => node.type === "source" && node.refId).map((node) => node.refId);
   const ruleIds = appState.flowNodes.filter((node) => node.type === "rule" && node.refId).map((node) => node.refId);
+  const defaultTimeField = window.opsData.situationTimeFilter?.fields?.[0] || "event_time";
   return {
     name: $("#flowNameInput").value.trim() || "自定义业务流",
     businessName: $("#flowBusinessInput").value.trim() || "新业务模块",
-    timeField: $("#flowTimeFieldInput").value.trim() || "event_time",
+    timeField: defaultTimeField,
     outputMode: $("#flowOutputModeSelect").value,
     dataSourceIds,
     ruleIds,
@@ -2482,7 +2769,8 @@ function collectFlowForm() {
       rawTable: $("#flowRawTableInput").value.trim(),
       cleanTable: $("#flowCleanTableInput").value.trim(),
       businessTable: $("#flowBusinessTableInput").value.trim(),
-      dedupeStrategy: $("#flowDedupeStrategySelect").value
+      dedupeStrategy: $("#flowDedupeStrategySelect").value,
+      dedupeFields: $("#flowDedupeFieldsInput").value.trim()
     }
   };
 }
@@ -2500,7 +2788,7 @@ function renderFlowOutput(result) {
       <li>数据源：${result.sources.map((source) => escapeHtml(source.name)).join("、") || "未选择"}</li>
       <li>规则：${result.rules.map((rule) => escapeHtml(rule.name)).join("、") || "未选择"}</li>
       <li>落库：原始表 ${escapeHtml(result.outputConfig?.rawTable || "-")}，清洗表 ${escapeHtml(result.outputConfig?.cleanTable || "-")}，业务表 ${escapeHtml(result.outputConfig?.businessTable || "-")}</li>
-      <li>写入策略：${escapeHtml(result.outputConfig?.writeStrategy || "-")} / 主键 ${escapeHtml(result.outputConfig?.primaryKey || "-")} / 去重 ${escapeHtml(result.outputConfig?.dedupeStrategy || "-")}</li>
+      <li>写入策略：${escapeHtml(result.outputConfig?.writeStrategy || "-")} / 主键 ${escapeHtml(result.outputConfig?.primaryKey || "-")} / 去重 ${escapeHtml(result.outputConfig?.dedupeStrategy || "-")}${result.outputConfig?.dedupeFields ? ` / 组合字段 ${escapeHtml(result.outputConfig.dedupeFields)}` : ""}</li>
       <li>执行计划：串行 ${escapeHtml(String(result.executionPlan?.serial || 0))} 个，并行 ${escapeHtml(String(result.executionPlan?.parallel || 0))} 个，分支 ${escapeHtml(String(result.executionPlan?.branches || 0))} 条，汇聚 ${escapeHtml(String(result.executionPlan?.join || 0))} 个</li>
       <li>入参循环：${escapeHtml(String(result.parameterPlan?.loopCalls || 0))} 次调用，${escapeHtml(result.parameterPlan?.summary || "固定入参")}</li>
     </ul>
@@ -2572,16 +2860,6 @@ function setupBusinessWorkbenchLayout() {
     `;
     flowConfig.before(guide);
   }
-  [
-    ["flowRawTableInput", "可选。留空时后端按业务名生成 raw_业务名，用于保存采集原文。"],
-    ["flowCleanTableInput", "可选。留空时生成 clean_业务名，用于保存映射和清洗后的中间结果。"],
-    ["flowBusinessTableInput", "建议配置。最终展示、分析和总览优先读取这张业务结果表。"]
-  ].forEach(([id, text]) => {
-    const label = $(`#${id}`)?.closest("label");
-    if (label && !$(".field-help", label)) {
-      label.insertAdjacentHTML("beforeend", `<small class="field-help">${escapeHtml(text)}</small>`);
-    }
-  });
 }
 
 function setupSourceWorkbenchLayout() {
@@ -2732,9 +3010,10 @@ function renderMappings() {
     type: row[2],
     defaultValue: row.length > 5 ? row[3] : "",
     rule: row.length > 5 ? row[4] : row[3],
+    recordMode: "per-record",
     output: row.length > 5 ? row[5] : row[4]
   }));
-  const header = ["源字段", "目标字段", "类型", "默认值", "清洗规则", "输出目标", "操作"];
+  const header = ["源字段", "目标字段", "映射方式", "类型", "默认值", "清洗规则", "输出目标", "操作"];
   const items = mappings.length ? mappings : fallbackRows;
   $("#mappingTable").innerHTML = [
     `<div class="mapping-row header">${header.map((cell) => `<span>${escapeHtml(cell)}</span>`).join("")}</div>`,
@@ -2743,10 +3022,14 @@ function renderMappings() {
       const ruleText = item.ruleParam
         ? `${rule?.name || item.rule || "自定义规则"} / ${item.ruleParam}`
         : rule?.name || item.rule || "-";
+      const modeText = item.recordMode === "aggregate-records"
+        ? `合并${item.aggregateMode === "first" ? "首个值" : item.aggregateMode === "array" ? "数组" : "拼接"}`
+        : "逐条";
       return `
         <div class="mapping-row" data-mapping-id="${escapeHtml(item.id || "")}">
           <span>${escapeHtml(item.sourceField)}</span>
           <span>${escapeHtml(item.targetField)}</span>
+          <span title="${escapeHtml(item.recordFilter || "")}">${escapeHtml(modeText)}</span>
           <span>${escapeHtml(item.type)}</span>
           <span>${escapeHtml(item.defaultValue || "-")}</span>
           <span title="${escapeHtml(rule?.description || item.rule || "")}">${escapeHtml(ruleText)}</span>
@@ -2764,14 +3047,25 @@ function renderMappings() {
   }
 }
 
+function updateMappingModeVisibility() {
+  const editor = $(".mapping-editor");
+  const isAggregate = $("#mapRecordModeSelect")?.value === "aggregate-records";
+  editor?.classList.toggle("is-aggregate", Boolean(isAggregate));
+}
+
 function resetMappingForm() {
   appState.editingMappingId = "";
   $("#mapSourceInput").value = "raw.status";
   $("#mapTargetInput").value = "status";
   setSelectValue("#mapTypeSelect", "字符串");
   $("#mapDefaultInput").value = "";
+  setSelectValue("#mapRecordModeSelect", "per-record");
+  $("#mapRecordFilterInput").value = "";
+  setSelectValue("#mapAggregateModeSelect", "join");
+  $("#mapAggregateSeparatorInput").value = ",";
   renderMappingRuleSelect();
   $("#addMappingBtn").innerHTML = '<span class="icon" data-icon="plus"></span> 添加映射';
+  updateMappingModeVisibility();
   renderIcons();
 }
 
@@ -2782,8 +3076,13 @@ function populateMappingForm(mapping) {
   $("#mapTargetInput").value = mapping.targetField || "";
   setSelectValue("#mapTypeSelect", mapping.type || "字符串");
   $("#mapDefaultInput").value = mapping.defaultValue || "";
+  setSelectValue("#mapRecordModeSelect", mapping.recordMode || "per-record");
+  $("#mapRecordFilterInput").value = mapping.recordFilter || "";
+  setSelectValue("#mapAggregateModeSelect", mapping.aggregateMode || "join");
+  $("#mapAggregateSeparatorInput").value = mapping.aggregateSeparator ?? ",";
   renderMappingRuleSelect(mapping.ruleId || "");
   $("#addMappingBtn").innerHTML = '<span class="icon" data-icon="plus"></span> 保存映射';
+  updateMappingModeVisibility();
   renderIcons();
 }
 
@@ -2976,6 +3275,7 @@ function renderSignals() {
 }
 
 function renderOverview() {
+  renderOverviewFilters();
   renderMetrics();
   renderFlow();
   renderSignals();
@@ -3430,6 +3730,78 @@ function bindEvents() {
     const trigger = event.target.closest("[data-multi-select-trigger]");
     if (trigger) {
       openMultiSelectDialog(trigger.dataset.multiSelectTrigger);
+    }
+  });
+  $("#overviewFilterBar")?.addEventListener("input", (event) => {
+    const control = event.target.closest("[data-overview-filter]");
+    if (control) {
+      appState.overviewFilters[control.dataset.overviewFilter] = control.value;
+      renderOverview();
+      return;
+    }
+    if (event.target.id === "overviewTimeStartInput") {
+      appState.overviewTimeStart = event.target.value;
+      renderOverview();
+    }
+    if (event.target.id === "overviewTimeEndInput") {
+      appState.overviewTimeEnd = event.target.value;
+      renderOverview();
+    }
+  });
+  $("#overviewFilterBar")?.addEventListener("change", (event) => {
+    const control = event.target.closest("[data-overview-filter]");
+    if (control) {
+      appState.overviewFilters[control.dataset.overviewFilter] = control.multiple ? getSelectedValues(control) : control.value;
+      renderOverview();
+      return;
+    }
+    if (event.target.id === "overviewTimeStartInput") appState.overviewTimeStart = event.target.value;
+    if (event.target.id === "overviewTimeEndInput") appState.overviewTimeEnd = event.target.value;
+    renderOverview();
+  });
+  $("#overviewFilterBar")?.addEventListener("click", (event) => {
+    if (event.target.id !== "resetOverviewFiltersBtn") return;
+    appState.overviewFilters = {};
+    appState.overviewTimeStart = "";
+    appState.overviewTimeEnd = "";
+    renderOverview();
+  });
+  $("#configureSituationFiltersBtn")?.addEventListener("click", () => {
+    resetSituationFilterForm();
+    renderSituationFilterList();
+    openDialog("#situationFilterModal");
+  });
+  $("#resetSituationFilterBtn")?.addEventListener("click", resetSituationFilterForm);
+  $("#situationFilterSourceSelect")?.addEventListener("change", updateSituationFilterSourceVisibility);
+  $("#closeSituationFilterBtn")?.addEventListener("click", () => closeDialog("#situationFilterModal"));
+  $("#cancelSituationFilterBtn")?.addEventListener("click", () => closeDialog("#situationFilterModal"));
+  $("#saveSituationFilterBtn")?.addEventListener("click", async (event) => {
+    event.preventDefault();
+    await saveSituationFilter();
+  });
+  $("#situationFilterList")?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-situation-filter-action]");
+    if (!button) return;
+    const filterId = button.dataset.situationFilterId;
+    const action = button.dataset.situationFilterAction;
+    const filter = (window.opsData.situationFilters || []).find((item) => item.id === filterId);
+    if (!filter) return;
+    if (action === "edit") {
+      populateSituationFilterForm(filter);
+      renderSituationFilterList();
+      return;
+    }
+    if (action === "delete") {
+      try {
+        await apiRequest(`/api/situation-filters/${encodeURIComponent(filterId)}`, { method: "DELETE" });
+      } catch {
+        // Local fallback.
+      }
+      window.opsData.situationFilters = (window.opsData.situationFilters || []).filter((item) => item.id !== filterId);
+      delete appState.overviewFilters[filterId];
+      if (appState.editingSituationFilterId === filterId) resetSituationFilterForm();
+      renderSituationFilterList();
+      renderOverview();
     }
   });
   $("#confirmMultiSelectBtn")?.addEventListener("click", applyMultiSelectDialog);
@@ -4087,6 +4459,10 @@ function bindEvents() {
       ruleId: $("#mapRuleSelect").value,
       ruleParam: "",
       rule: selectedRule?.expression || "未配置规则",
+      recordMode: $("#mapRecordModeSelect").value,
+      recordFilter: $("#mapRecordFilterInput").value,
+      aggregateMode: $("#mapAggregateModeSelect").value,
+      aggregateSeparator: $("#mapAggregateSeparatorInput").value || ",",
       output: "内部业务库"
     };
     const editingId = appState.editingMappingId;
@@ -4116,6 +4492,7 @@ function bindEvents() {
     renderMappingSourceSelect();
     renderOverview();
   });
+  $("#mapRecordModeSelect").addEventListener("change", updateMappingModeVisibility);
   $("#addRuleBtn").addEventListener("click", () => {
     resetRuleForm();
     openDialog("#ruleModal");
@@ -4200,6 +4577,7 @@ function bindEvents() {
     await deleteBusinessFlow();
   });
   $("#runFlowBtn").addEventListener("click", runSelectedBusinessFlow);
+  $("#flowDedupeStrategySelect").addEventListener("change", updateFlowDedupeVisibility);
   $("#addKnowledgeBtn").addEventListener("click", async () => {
     const payload = {
       name: $("#knowledgeNameInput").value,

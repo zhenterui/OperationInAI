@@ -13,6 +13,15 @@ export const store = {
     { title: "映射与清洗", desc: "源字段到目标字段，类型转换与枚举归一", icon: "pipeline" },
     { title: "展示 / 分析 / 搜索", desc: "业务视图、AI 洞察、知识问答", icon: "spark" }
   ],
+  situationFilters: [
+    { id: "situation_filter_severity", label: "等级", field: "等级", type: "select", source: "auto", dictionaryRef: "", options: [], defaultVisible: true, defaultValue: "" },
+    { id: "situation_filter_owner", label: "归属对象", field: "归属对象", type: "select", source: "auto", dictionaryRef: "", options: [], defaultVisible: true, defaultValue: "" },
+    { id: "situation_filter_env", label: "环境", field: "env", type: "select", source: "auto", dictionaryRef: "", options: [], defaultVisible: true, defaultValue: "" }
+  ],
+  situationTimeFilter: {
+    fields: ["event_time", "created_at", "updated_at", "time", "时间"],
+    defaultRange: "24h"
+  },
   dataSources: [
     {
       id: "src_alarm_api",
@@ -211,11 +220,12 @@ export const store = {
       outputMode: "upsert-business",
       outputConfig: {
         writeStrategy: "upsert",
-        primaryKey: "event_id",
+        primaryKey: "event_id,source_id",
         rawTable: "raw_alarm_api",
         cleanTable: "clean_alarm_event",
         businessTable: "biz_alarm_event",
-        dedupeStrategy: "primary-key"
+        dedupeStrategy: "primary-key",
+        dedupeFields: ""
       },
       status: "ready",
       lastRunAt: "",
@@ -416,6 +426,8 @@ export function getBootstrapData() {
       fields: item.fields,
       rows: item.rows
     })),
+    situationFilters: store.situationFilters,
+    situationTimeFilter: store.situationTimeFilter,
     cleaningRules: store.cleaningRules,
     businessFlows: store.businessFlows,
     modelConfigs: store.modelConfigs,
