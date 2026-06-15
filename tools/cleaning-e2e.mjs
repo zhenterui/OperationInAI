@@ -89,6 +89,8 @@ try {
     "flowNodeBranchConditionInput",
     "flowNodeInspector",
     "flowNodePaginationModeSelect",
+    "flowNodeTotalPagesInput",
+    "flowNodePagesPerShardInput",
     "flowNodeInputIterationSelect",
     "flowNodeConcurrencyInput",
     "flowNodeBatchSizeInput",
@@ -552,12 +554,14 @@ try {
               pageSize: 50,
               startPage: 1,
               hasNextPath: "data.pageInfo.hasNext",
-              maxPages: 3
+              maxPages: 120,
+              totalPages: 100,
+              pagesPerShard: 50
             },
             iteration: {
               mode: "batch",
               batchSize: 2,
-              concurrency: 4,
+              concurrency: 2,
               recordLimit: 5,
               lockKey: "service_id",
               lockStrategy: "skip-locked"
@@ -615,11 +619,14 @@ try {
   });
   assert(flowRun.data.business.name === "E2E 清洗业务", "business flow should create target business data");
   assert(flowRun.data.outputConfig.businessTable === "biz_e2e_event", "business table should round-trip");
-  assert(flowRun.data.parameterPlan.loopCalls === 10, "flow graph should combine paginated batch API calls and static source calls");
+  assert(flowRun.data.parameterPlan.loopCalls === 301, "flow graph should combine paginated batch API calls and static source calls");
   const apiSourcePlan = flowRun.data.executionPlan.sourcePlans.find((plan) => plan.nodeId === "e2e_source_api");
-  assert(apiSourcePlan.pageCount === 3, "source node plan should support automatic pagination to max pages");
+  assert(apiSourcePlan.pageCount === 100, "source node plan should let business config control total pages");
+  assert(apiSourcePlan.pageShards.length === 2, "source node plan should split pages into concurrency shards");
+  assert(apiSourcePlan.pageShards[0].start === 1 && apiSourcePlan.pageShards[0].end === 50, "first page shard should cover pages 1-50");
+  assert(apiSourcePlan.pageShards[1].start === 51 && apiSourcePlan.pageShards[1].end === 100, "second page shard should cover pages 51-100");
   assert(apiSourcePlan.batchCount === 3, "source node plan should support batched database-driven calls");
-  assert(apiSourcePlan.concurrency === 4, "source node plan should keep concurrency config");
+  assert(apiSourcePlan.concurrency === 2, "source node plan should keep concurrency config");
   assert(apiSourcePlan.lockEnabled === true && apiSourcePlan.lockKey === "service_id", "source node plan should keep record lock config");
   assert(flowRun.data.executionPlan.parallel === 2, "flow graph should support parallel source nodes");
   assert(flowRun.data.executionPlan.branches === 2, "flow graph should support conditional branch lanes");

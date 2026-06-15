@@ -92,13 +92,15 @@ function getSourceExecutionConfig(node = {}, source = {}) {
     pageSizeParam: config.pagination?.pageSizeParam || "pageSize",
     startPage: nonNegativeNumber(config.pagination?.startPage, 1),
     nextTokenPath: config.pagination?.nextTokenPath || "",
-    hasNextPath: config.pagination?.hasNextPath || ""
+    hasNextPath: config.pagination?.hasNextPath || "",
+    totalPages: nonNegativeNumber(config.pagination?.totalPages, 0),
+    pagesPerShard: nonNegativeNumber(config.pagination?.pagesPerShard, 0)
   };
   if (pagination.mode === "inherit") {
     pagination.mode = sourcePagination ? "page-number" : "off";
   }
   const iteration = {
-    mode: config.iteration?.mode || sourceParameterConfig.iterationMode || "single",
+    mode: config.iteration?.mode || "single",
     batchSize: positiveNumber(config.iteration?.batchSize, 100),
     concurrency: positiveNumber(config.iteration?.concurrency, 1),
     recordLimit: nonNegativeNumber(config.iteration?.recordLimit, 0),
@@ -108,9 +110,29 @@ function getSourceExecutionConfig(node = {}, source = {}) {
     sourceId: sourceParameterConfig.sourceId || ""
   };
   if (iteration.mode === "inherit") {
-    iteration.mode = sourceParameterConfig.iterationMode || "single";
+    iteration.mode = "single";
   }
   return { pagination, iteration };
+}
+
+function buildPageShards(pagination = {}, concurrency = 1) {
+  if (pagination.mode !== "page-number" || !pagination.totalPages) {
+    return [];
+  }
+  const totalPages = positiveNumber(pagination.totalPages, 1);
+  const startPage = nonNegativeNumber(pagination.startPage, 1);
+  const shardSize = pagination.pagesPerShard > 0
+    ? positiveNumber(pagination.pagesPerShard, totalPages)
+    : Math.max(1, Math.ceil(totalPages / positiveNumber(concurrency, 1)));
+  const shards = [];
+  let current = startPage;
+  const finalPage = startPage + totalPages - 1;
+  while (current <= finalPage) {
+    const end = Math.min(finalPage, current + shardSize - 1);
+    shards.push({ start: current, end, pages: end - current + 1 });
+    current = end + 1;
+  }
+  return shards;
 }
 
 function estimateSourceNodePlan(node = {}, source = {}) {
@@ -121,7 +143,8 @@ function estimateSourceNodePlan(node = {}, source = {}) {
     ? 1
     : iteration.recordLimit || defaultRecordCount;
   const batchCount = iteration.mode === "batch" ? Math.max(1, Math.ceil(recordCount / iteration.batchSize)) : recordCount;
-  const pageCount = pagination.mode === "off" ? 1 : pagination.maxPages;
+  const pageCount = pagination.mode === "off" ? 1 : pagination.totalPages || pagination.maxPages;
+  const pageShards = buildPageShards(pagination, iteration.concurrency);
   const callCount = Math.max(1, batchCount * pageCount);
   return {
     nodeId: node.id,
@@ -138,6 +161,8 @@ function estimateSourceNodePlan(node = {}, source = {}) {
     batchSize: iteration.batchSize,
     batchCount,
     concurrency: iteration.concurrency,
+    pageShards,
+    pageShardSize: pagination.pagesPerShard || (pageShards[0]?.pages || 0),
     lockKey: iteration.lockKey,
     lockStrategy: iteration.lockStrategy,
     callCount,
@@ -755,9 +780,12 @@ export function runBusinessFlow(input = {}) {
     summary: sources
       .map((source) => sourceExecutionPlans.find((plan) => plan.sourceId === source.id))
       .filter(Boolean)
-      .map((plan) =>
-        `${plan.sourceName} ${plan.sourceType === "database" ? `从数据库来源 ${plan.sourceIdForInput || "未选择"} 读取 ${plan.recordCount} 条记录` : "使用配置入参"}，${plan.iterationMode === "batch" ? `${plan.batchCount} 批` : `${plan.recordCount} 轮`}，分页 ${plan.pageCount} 页，并发 ${plan.concurrency}${plan.lockEnabled ? `，按 ${plan.lockKey} ${plan.lockStrategy} 防重` : ""}`
-      )
+      .map((plan) => {
+        const shardText = plan.pageShards?.length
+          ? `，页段 ${plan.pageShards.map((shard) => `${shard.start}-${shard.end}`).join("、")}`
+          : "";
+        return `${plan.sourceName} ${plan.sourceType === "database" ? `从数据库来源 ${plan.sourceIdForInput || "未选择"} 读取 ${plan.recordCount} 条记录` : "使用配置入参"}，${plan.iterationMode === "batch" ? `${plan.batchCount} 批` : `${plan.recordCount} 轮`}，分页 ${plan.pageCount} 页，并发 ${plan.concurrency}${shardText}${plan.lockEnabled ? `，按 ${plan.lockKey} ${plan.lockStrategy} 防重` : ""}`;
+      })
       .join("；")
   };
   const row = [

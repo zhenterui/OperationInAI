@@ -479,6 +479,30 @@
                         </span>
                         <input id="flowNodeMaxPagesInput" type="number" min="1" value="100" />
                       </label>
+                      <label class="pagination-field page-number-field">
+                        <span class="label-with-help">
+                          查询总页数
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="查询总页数说明"
+                            data-tooltip="业务本次希望查询的总页数。填 0 表示未知页数，将按是否还有下一页路径或最大页数停止。已知总页数时，系统会按总页数生成并发页段。"
+                          >?</button>
+                        </span>
+                        <input id="flowNodeTotalPagesInput" type="number" min="0" value="0" />
+                      </label>
+                      <label class="pagination-field page-number-field">
+                        <span class="label-with-help">
+                          每并发页段
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="每并发页段说明"
+                            data-tooltip="每个并发任务负责多少页。例如总页数 100、每并发页段 50，会生成 1-50 和 51-100 两个页段；填 0 表示按并发数自动均分。"
+                          >?</button>
+                        </span>
+                        <input id="flowNodePagesPerShardInput" type="number" min="0" value="0" />
+                      </label>
                       <label>
                         <span class="label-with-help">
                           入参迭代
@@ -664,8 +688,16 @@
                   </select>
                 </label>
                 <label>
-                  <span>分页字段</span>
-                  <input id="paginationInput" value="page=1&pageSize=100" />
+                  <span class="label-with-help">
+                    分页参数模板
+                    <button
+                      class="help-dot"
+                      type="button"
+                      aria-label="分页参数模板说明"
+                      data-tooltip="只描述接口使用哪些分页字段，例如 page=1&pageSize=100 或 pageNo=1&limit=50。实际查多少页、并发几路、每路负责哪些页，由业务配置中的数据源执行策略控制。"
+                    >?</button>
+                  </span>
+                  <input id="paginationInput" value="page=1&pageSize=100" placeholder="如 page=1&pageSize=100" />
                 </label>
                 <label class="full" data-request-param="query">
                   <span>Query 入参 JSON</span>
@@ -741,7 +773,7 @@
   { "name": "product", "source": "dictionary", "from": "产品列表.产品名", "mode": "array" }
 ]</textarea>
                 </label>
-                <label>
+                <label class="hidden">
                   <span>调用方式</span>
                   <select id="paramIterationModeSelect">
                     <option value="single">单次调用</option>
@@ -749,7 +781,7 @@
                     <option value="batch">批量调用</option>
                   </select>
                 </label>
-                <label>
+                <label class="hidden">
                   <span>并发/重试</span>
                   <input id="paramStrategyInput" value="concurrency=5; retries=2; continueOnError=true" />
                 </label>

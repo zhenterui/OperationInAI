@@ -221,11 +221,12 @@
 }
 
 .flow-inspector {
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
 }
 
 .flow-inspector > div:first-child,
+.flow-inspector > .full,
 .flow-inspector .row-actions {
   grid-column: 1 / -1;
 }
@@ -268,6 +269,7 @@
   min-height: 32px;
   cursor: pointer;
   list-style-position: inside;
+  overflow: hidden;
 }
 
 .flow-inspector-section summary strong,
@@ -289,10 +291,11 @@
   padding: 0;
   border: 0;
   background: transparent;
+  width: 100%;
 }
 
 .flow-inspector-grid {
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
 
 .flow-node-execution-grid .pagination-field,

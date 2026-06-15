@@ -2467,7 +2467,9 @@ function getDefaultSourceExecutionConfig() {
       startPage: 1,
       nextTokenPath: "data.pageInfo.nextPageToken",
       hasNextPath: "data.pageInfo.hasNext",
-      maxPages: 100
+      maxPages: 100,
+      totalPages: 0,
+      pagesPerShard: 0
     },
     iteration: {
       mode: "inherit",
@@ -2509,7 +2511,9 @@ function collectSourceExecutionConfig() {
       startPage: Math.max(0, readIntegerInput("#flowNodeStartPageInput", 1)),
       nextTokenPath: $("#flowNodeNextTokenPathInput").value.trim(),
       hasNextPath: $("#flowNodeHasNextPathInput").value.trim(),
-      maxPages: Math.max(1, readIntegerInput("#flowNodeMaxPagesInput", 100))
+      maxPages: Math.max(1, readIntegerInput("#flowNodeMaxPagesInput", 100)),
+      totalPages: Math.max(0, readIntegerInput("#flowNodeTotalPagesInput", 0)),
+      pagesPerShard: Math.max(0, readIntegerInput("#flowNodePagesPerShardInput", 0))
     },
     iteration: {
       mode: $("#flowNodeInputIterationSelect").value,
@@ -2532,6 +2536,8 @@ function populateSourceExecutionConfig(config = {}) {
   $("#flowNodeNextTokenPathInput").value = normalized.pagination.nextTokenPath;
   $("#flowNodeHasNextPathInput").value = normalized.pagination.hasNextPath;
   $("#flowNodeMaxPagesInput").value = normalized.pagination.maxPages;
+  $("#flowNodeTotalPagesInput").value = normalized.pagination.totalPages;
+  $("#flowNodePagesPerShardInput").value = normalized.pagination.pagesPerShard;
   setSelectValue("#flowNodeInputIterationSelect", normalized.iteration.mode);
   $("#flowNodeBatchSizeInput").value = normalized.iteration.batchSize;
   $("#flowNodeConcurrencyInput").value = normalized.iteration.concurrency;
@@ -2878,7 +2884,12 @@ function renderFlowOutput(result) {
     return;
   }
   const sourcePlanItems = (result.executionPlan?.sourcePlans || [])
-    .map((plan) => `<li>${escapeHtml(plan.sourceName)}：${escapeHtml(plan.iterationMode)} / ${escapeHtml(String(plan.recordCount))} 条记录 / ${escapeHtml(String(plan.batchCount))} 批 / ${escapeHtml(String(plan.pageCount))} 页 / 并发 ${escapeHtml(String(plan.concurrency))}${plan.lockEnabled ? ` / 锁 ${escapeHtml(plan.lockKey)}(${escapeHtml(plan.lockStrategy)})` : ""}</li>`)
+    .map((plan) => {
+      const pageShardText = Array.isArray(plan.pageShards) && plan.pageShards.length
+        ? ` / 页段 ${plan.pageShards.map((shard) => `${escapeHtml(String(shard.start))}-${escapeHtml(String(shard.end))}`).join("，")}`
+        : "";
+      return `<li>${escapeHtml(plan.sourceName)}：${escapeHtml(plan.iterationMode)} / ${escapeHtml(String(plan.recordCount))} 条记录 / ${escapeHtml(String(plan.batchCount))} 批 / ${escapeHtml(String(plan.pageCount))} 页 / 并发 ${escapeHtml(String(plan.concurrency))}${pageShardText}${plan.lockEnabled ? ` / 锁 ${escapeHtml(plan.lockKey)}(${escapeHtml(plan.lockStrategy)})` : ""}</li>`;
+    })
     .join("");
   $("#flowOutput").innerHTML = `
     <h3>业务执行结果</h3>
