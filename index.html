@@ -181,6 +181,16 @@
                     <span>业务流名称</span>
                     <input id="flowNameInput" value="新业务聚合流" />
                   </label>
+                </div>
+                <details class="flow-advanced-config">
+                  <summary>
+                    <span>
+                      <strong>输出与落库</strong>
+                      <small>原始表、清洗表、业务表与写入策略</small>
+                    </span>
+                    <span class="status-pill">高级</span>
+                  </summary>
+                  <div class="config-form flow-config compact">
                   <label>
                     <span class="label-with-help">
                       输出方式
@@ -197,16 +207,6 @@
                       <option value="api">输出 API</option>
                     </select>
                   </label>
-                </div>
-                <details class="flow-advanced-config">
-                  <summary>
-                    <span>
-                      <strong>输出与落库</strong>
-                      <small>原始表、清洗表、业务表与写入策略</small>
-                    </span>
-                    <span class="status-pill">高级</span>
-                  </summary>
-                  <div class="config-form flow-config compact">
                   <label>
                     <span>写入策略</span>
                     <select id="flowWriteStrategySelect">
@@ -302,54 +302,74 @@
                     <p class="eyebrow">Node Inspector</p>
                     <strong>节点配置</strong>
                   </div>
-                  <label>
-                    <span>节点名称</span>
-                    <input id="flowNodeNameInput" value="" />
-                  </label>
-                  <label>
-                    <span>节点类型</span>
-                    <select id="flowNodeTypeEditSelect">
-                      <option value="context">业务流上下文</option>
-                      <option value="source">数据源</option>
-                      <option value="rule">清洗规则</option>
-                      <option value="output">输出落库</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>节点对象</span>
-                    <select id="flowNodeRefEditSelect"></select>
-                  </label>
-                  <label>
-                    <span>执行方式</span>
-                    <select id="flowNodeExecutionSelect">
-                      <option value="serial">串行执行</option>
-                      <option value="parallel">并行执行</option>
-                      <option value="join">等待汇聚</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>节点位置</span>
-                    <select id="flowNodeBranchModeSelect">
-                      <option value="main">主线节点</option>
-                      <option value="branch">分支节点</option>
-                    </select>
-                  </label>
-                  <label class="branch-only">
-                    <span>分支来源</span>
-                    <select id="flowNodeBranchFromSelect"></select>
-                  </label>
-                  <label class="branch-only">
-                    <span>分支名称</span>
-                    <input id="flowNodeBranchNameInput" value="" placeholder="如 高优先级分支" />
-                  </label>
-                  <label class="branch-only">
-                    <span>进入条件</span>
-                    <input id="flowNodeBranchConditionInput" value="" placeholder="如 severity in [P0,P1]" />
-                  </label>
-                  <label class="full">
-                    <span>节点参数</span>
-                    <input id="flowNodeParamInput" value="" placeholder="如 context.start_time 或 执行说明" />
-                  </label>
+                  <details class="flow-inspector-section full" open>
+                    <summary>
+                      <span>
+                        <strong>基础信息</strong>
+                        <small>节点名称、类型和引用对象</small>
+                      </span>
+                    </summary>
+                    <div class="config-form compact flow-inspector-grid">
+                      <label>
+                        <span>节点名称</span>
+                        <input id="flowNodeNameInput" value="" />
+                      </label>
+                      <label>
+                        <span>节点类型</span>
+                        <select id="flowNodeTypeEditSelect">
+                          <option value="context">业务流上下文</option>
+                          <option value="source">数据源</option>
+                          <option value="rule">清洗规则</option>
+                          <option value="output">输出落库</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>节点对象</span>
+                        <select id="flowNodeRefEditSelect"></select>
+                      </label>
+                    </div>
+                  </details>
+                  <details class="flow-inspector-section full">
+                    <summary>
+                      <span>
+                        <strong>运行关系</strong>
+                        <small>串行、并行、分支和节点参数</small>
+                      </span>
+                    </summary>
+                    <div class="config-form compact flow-inspector-grid">
+                      <label>
+                        <span>执行方式</span>
+                        <select id="flowNodeExecutionSelect">
+                          <option value="serial">串行执行</option>
+                          <option value="parallel">并行执行</option>
+                          <option value="join">等待汇聚</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>节点位置</span>
+                        <select id="flowNodeBranchModeSelect">
+                          <option value="main">主线节点</option>
+                          <option value="branch">分支节点</option>
+                        </select>
+                      </label>
+                      <label class="branch-only">
+                        <span>分支来源</span>
+                        <select id="flowNodeBranchFromSelect"></select>
+                      </label>
+                      <label class="branch-only">
+                        <span>分支名称</span>
+                        <input id="flowNodeBranchNameInput" value="" placeholder="如 高优先级分支" />
+                      </label>
+                      <label class="branch-only">
+                        <span>进入条件</span>
+                        <input id="flowNodeBranchConditionInput" value="" placeholder="如 severity in [P0,P1]" />
+                      </label>
+                      <label class="full">
+                        <span>节点参数</span>
+                        <input id="flowNodeParamInput" value="" placeholder="如 context.start_time 或 执行说明" />
+                      </label>
+                    </div>
+                  </details>
                   <details class="flow-node-execution-config source-node-only full">
                     <summary>
                       <span>

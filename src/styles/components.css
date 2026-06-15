@@ -250,6 +250,7 @@
   display: none;
 }
 
+.flow-inspector-section,
 .flow-node-execution-config {
   padding: 10px 12px;
   border: 1px solid var(--line);
@@ -257,25 +258,41 @@
   background: rgba(255, 255, 255, 0.035);
 }
 
-.flow-node-execution-config summary {
-  cursor: pointer;
+.flow-inspector-section[open],
+.flow-node-execution-config[open] {
+  border-color: rgba(48, 232, 199, 0.24);
 }
 
+.flow-inspector-section summary,
+.flow-node-execution-config summary {
+  min-height: 32px;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.flow-inspector-section summary strong,
+.flow-inspector-section summary small,
 .flow-node-execution-config summary strong,
 .flow-node-execution-config summary small {
   display: block;
 }
 
+.flow-inspector-section summary small,
 .flow-node-execution-config summary small {
   margin-top: 4px;
   color: var(--muted);
 }
 
+.flow-inspector-grid,
 .flow-node-execution-grid {
   margin-top: 12px;
   padding: 0;
   border: 0;
   background: transparent;
+}
+
+.flow-inspector-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
 }
 
 .flow-node-execution-grid .pagination-field,
