@@ -67,6 +67,14 @@ npm.cmd run static
 `npm.cmd run dev` 会启动带后端 API 的完整服务。  
 `npm.cmd run static` 只启动静态页面服务，主要用于前端纯页面预览。
 
+## 运行配置
+
+- `OPERATION_API_TOKEN`：可选。配置后所有 `/api/*` 请求都需要带 `X-Operation-Token`，不配置则保持本地开发免鉴权。
+- `OPERATION_MAX_JSON_BYTES`：可选。限制单个 JSON 请求体大小，默认 `1048576`。
+- `OPERATION_FLOW_MAX_CALLS`：可选。限制单次业务流最多实际调用数据源次数，默认 `500`，用于防止分页或批次误配置。
+- `OPERATION_BLOCK_PRIVATE_FETCH=1`：可选。启用后阻止服务端请求常见私网地址，降低 SSRF 风险。
+- 运行时配置会保存到 `server/data/runtime-store.json`，该文件已加入 `.gitignore`；写盘时会清空 Cookie、密码和 API Key 等敏感值。
+
 ## 当前接口
 
 - `GET /api/health`

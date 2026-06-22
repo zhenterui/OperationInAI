@@ -1,5 +1,5 @@
 import { store } from "../data/store.mjs";
-import { testDataSource } from "./sync-service.mjs";
+import { executeDataSourcePlan } from "./sync-service.mjs";
 
 function normalizeList(value, fallback = []) {
   if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
@@ -228,6 +228,74 @@ function toBusinessRows(sourceResults = [], fallbackRow = []) {
     fields,
     rows: flattenedRecords.map((record) => fields.map((field) => record[field] ?? ""))
   };
+}
+
+function parseFieldList(value = "") {
+  return String(value || "")
+    .split(/[,，\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function getDedupeFields(outputConfig = {}) {
+  if (outputConfig.dedupeStrategy === "field-combo" && outputConfig.dedupeFields) {
+    return parseFieldList(outputConfig.dedupeFields);
+  }
+  return parseFieldList(outputConfig.primaryKey);
+}
+
+function rowKey(fields = [], row = [], keyFields = []) {
+  if (!keyFields.length) return "";
+  const parts = keyFields.map((field) => {
+    const index = fields.indexOf(field);
+    return index >= 0 ? String(row[index] ?? "") : "";
+  });
+  return parts.some(Boolean) ? parts.join("\u0001") : "";
+}
+
+function mergeBusinessRows(existingRows = [], newRows = [], fields = [], outputConfig = {}) {
+  const strategy = outputConfig.writeStrategy || "upsert";
+  if (strategy === "append") {
+    return [...newRows, ...existingRows].slice(0, 1000);
+  }
+  const keyFields = getDedupeFields(outputConfig);
+  if (!keyFields.length) {
+    return [...newRows, ...existingRows].slice(0, 1000);
+  }
+  const newKeys = new Set(newRows.map((row) => rowKey(fields, row, keyFields)).filter(Boolean));
+  const keptRows = existingRows.filter((row) => {
+    const key = rowKey(fields, row, keyFields);
+    return !key || !newKeys.has(key);
+  });
+  return [...newRows, ...keptRows].slice(0, 1000);
+}
+
+async function executeSourceNodes(sourceNodes = [], sourceExecutionPlans = []) {
+  const results = [];
+  let index = 0;
+  while (index < sourceNodes.length) {
+    const node = sourceNodes[index];
+    const runNode = async (item) => {
+      const source = store.dataSources.find((entry) => entry.id === item.refId);
+      if (!source) return null;
+      const plan = sourceExecutionPlans.find((entry) => entry.nodeId === item.id) || estimateSourceNodePlan(item, source);
+      const result = await executeDataSourcePlan(source, item, plan);
+      return { node: item, source, result, plan };
+    };
+    if (node.executionMode === "parallel") {
+      const parallelNodes = [];
+      while (sourceNodes[index]?.executionMode === "parallel") {
+        parallelNodes.push(sourceNodes[index]);
+        index += 1;
+      }
+      results.push(...(await Promise.all(parallelNodes.map(runNode))).filter(Boolean));
+    } else {
+      const output = await runNode(node);
+      if (output) results.push(output);
+      index += 1;
+    }
+  }
+  return results;
 }
 
 export function createFieldMapping(input = {}) {
@@ -848,13 +916,7 @@ export async function runBusinessFlow(input = {}) {
     nowText,
     `${rules.length} 条规则 / ${loopCalls} 次调用`
   ];
-  const sourceResults = [];
-  for (const node of sourceNodes) {
-    const source = store.dataSources.find((item) => item.id === node.refId);
-    if (!source) continue;
-    const result = await testDataSource({ sourceId: source.id, ...source, previewLimit: 0 });
-    sourceResults.push({ node, source, result });
-  }
+  const sourceResults = await executeSourceNodes(sourceNodes, sourceExecutionPlans);
   const materialized = toBusinessRows(sourceResults, row);
   const runFailedRows = sourceResults.filter((item) => !item.result.ok).length;
   const fetchedRows = sourceResults.reduce((sum, item) => sum + Number(item.result.recordCount || 0), 0);
@@ -874,7 +936,7 @@ export async function runBusinessFlow(input = {}) {
   }
   business.timeField = flow.timeField;
   business.fields = materialized.fields;
-  materialized.rows.slice().reverse().forEach((businessRow) => business.rows.unshift(businessRow));
+  business.rows = mergeBusinessRows(business.rows || [], materialized.rows, materialized.fields, flow.outputConfig);
   flow.status = "success";
   flow.lastRunAt = new Date().toISOString();
   flow.updatedAt = flow.lastRunAt;
@@ -914,6 +976,8 @@ export async function runBusinessFlow(input = {}) {
       recordCount: result.recordCount,
       filteredRecordCount: result.filteredRecordCount,
       mappedRecordCount: result.mappedRecords?.length || 0,
+      plannedCalls: result.plannedCalls || 1,
+      actualCalls: result.actualCalls || 1,
       error: result.error || ""
     })),
     outputConfig: flow.outputConfig,

@@ -1,6 +1,54 @@
-const now = () => new Date().toISOString();
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
-export const store = {
+const now = () => new Date().toISOString();
+const runtimeStorePath = resolve(process.cwd(), "server/data/runtime-store.json");
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function deepMerge(base, patch) {
+  if (Array.isArray(base) || Array.isArray(patch) || !base || typeof base !== "object" || !patch || typeof patch !== "object") {
+    return patch === undefined ? base : patch;
+  }
+  return Object.keys({ ...base, ...patch }).reduce((output, key) => {
+    output[key] = deepMerge(base[key], patch[key]);
+    return output;
+  }, {});
+}
+
+function readPersistedStore() {
+  if (!existsSync(runtimeStorePath)) return null;
+  try {
+    return JSON.parse(readFileSync(runtimeStorePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeSecretsForDisk(snapshot) {
+  const sanitized = clone(snapshot);
+  sanitized.authConfigs = (sanitized.authConfigs || []).map((item) => ({
+    ...item,
+    password: item.password ? "******" : "",
+    cookieValue: "",
+    tokenHeader: ""
+  }));
+  sanitized.modelConfigs = (sanitized.modelConfigs || []).map((item) => ({
+    ...item,
+    apiKey: "",
+    apiKeyMasked: item.apiKeyMasked || (item.apiKey ? "已配置" : "未配置")
+  }));
+  sanitized.storageConfigs = (sanitized.storageConfigs || []).map((item) => ({
+    ...item,
+    password: "",
+    passwordMasked: item.passwordMasked || (item.password ? "已配置" : "")
+  }));
+  return sanitized;
+}
+
+const defaultStore = {
   metrics: [
     { label: "接入数据源", value: "28", delta: "+4 本周新增", icon: "database" },
     { label: "清洗成功率", value: "99.2%", delta: "最近 24 小时", icon: "pipeline" },
@@ -404,9 +452,40 @@ export const store = {
   analysisResults: []
 };
 
+export const store = deepMerge(defaultStore, readPersistedStore() || {});
+
+export function persistStore() {
+  mkdirSync(dirname(runtimeStorePath), { recursive: true });
+  const tempPath = `${runtimeStorePath}.tmp`;
+  writeFileSync(tempPath, JSON.stringify(sanitizeSecretsForDisk(store), null, 2), "utf8");
+  renameSync(tempPath, runtimeStorePath);
+}
+
+function countHighPriorityRows() {
+  return store.businesses.reduce((total, business) => {
+    const fields = business.fields || [];
+    const levelIndex = fields.findIndex((field) => ["等级", "level", "severity"].includes(String(field).toLowerCase()));
+    if (levelIndex < 0) return total;
+    return total + (business.rows || []).filter((row) => ["P0", "P1", "高", "中"].includes(String(row[levelIndex] || ""))).length;
+  }, 0);
+}
+
+function getRuntimeMetrics() {
+  const recentLogs = store.syncLogs.slice(0, 20);
+  const successfulLogs = recentLogs.filter((log) => log.status === "success").length;
+  const successRate = recentLogs.length ? `${Math.round((successfulLogs / recentLogs.length) * 1000) / 10}%` : "暂无运行";
+  const chunks = store.knowledge.reduce((total, item) => total + Number(item.chunks || 0), 0);
+  return [
+    { label: "接入数据源", value: String(store.dataSources.length), delta: `${store.businessFlows.length} 个业务流`, icon: "database" },
+    { label: "清洗成功率", value: successRate, delta: recentLogs.length ? `最近 ${recentLogs.length} 次运行` : "等待首次同步", icon: "pipeline" },
+    { label: "高优告警", value: String(countHighPriorityRows()), delta: "按业务数据动态统计", icon: "radar" },
+    { label: "知识命中率", value: chunks ? `${Math.min(99, Math.round(chunks / 300))}%` : "待索引", delta: `${chunks.toLocaleString("zh-CN")} 个切片`, icon: "search" }
+  ];
+}
+
 export function getBootstrapData() {
   return {
-    metrics: store.metrics,
+    metrics: getRuntimeMetrics(),
     flowNodes: store.flowNodes,
     sources: store.dataSources,
     authConfigs: store.authConfigs,

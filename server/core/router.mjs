@@ -1,4 +1,4 @@
-import { getBootstrapData, store } from "../data/store.mjs";
+import { getBootstrapData, persistStore, store } from "../data/store.mjs";
 import { runAnalysis, listAnalysisResults } from "../services/analysis-service.mjs";
 import {
   createAuthConfig,
@@ -39,6 +39,27 @@ const routes = new Map();
 
 function route(method, path, handler) {
   routes.set(`${method} ${path}`, handler);
+}
+
+function isAuthorized(request) {
+  const token = process.env.OPERATION_API_TOKEN;
+  if (!token) return true;
+  return request.headers["x-operation-token"] === token;
+}
+
+function persistAfterMutation(request) {
+  if (["POST", "PUT", "DELETE"].includes(request.method || "")) {
+    persistStore();
+  }
+}
+
+function errorDetail(error) {
+  return error.status && error.status < 500 ? error.message : "Internal server error";
+}
+
+function sendData(response, request, data) {
+  persistAfterMutation(request);
+  sendJson(response, 200, { data });
 }
 
 route("GET", "/api/health", () => ({
@@ -90,157 +111,161 @@ export async function handleApi(request, response) {
   if (!parsed.pathname.startsWith("/api/")) {
     return false;
   }
+  if (!isAuthorized(request)) {
+    sendError(response, 401, "Unauthorized", "Missing or invalid X-Operation-Token");
+    return true;
+  }
 
   const dataSourceMatch = parsed.pathname.match(/^\/api\/data-sources\/([^/]+)$/);
   if (dataSourceMatch && request.method === "PUT") {
     try {
-      sendJson(response, 200, { data: updateDataSource(dataSourceMatch[1], await readJson(request)) });
+      sendData(response, request, updateDataSource(dataSourceMatch[1], await readJson(request)));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   if (dataSourceMatch && request.method === "DELETE") {
     try {
-      sendJson(response, 200, { data: deleteDataSource(dataSourceMatch[1]) });
+      sendData(response, request, deleteDataSource(dataSourceMatch[1]));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   const authConfigMatch = parsed.pathname.match(/^\/api\/auth-configs\/([^/]+)$/);
   if (authConfigMatch && request.method === "PUT") {
     try {
-      sendJson(response, 200, { data: updateAuthConfig(authConfigMatch[1], await readJson(request)) });
+      sendData(response, request, updateAuthConfig(authConfigMatch[1], await readJson(request)));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   if (authConfigMatch && request.method === "DELETE") {
     try {
-      sendJson(response, 200, { data: deleteAuthConfig(authConfigMatch[1]) });
+      sendData(response, request, deleteAuthConfig(authConfigMatch[1]));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   const cleaningRuleMatch = parsed.pathname.match(/^\/api\/cleaning-rules\/([^/]+)$/);
   if (cleaningRuleMatch && request.method === "PUT") {
     try {
-      sendJson(response, 200, { data: updateCleaningRule(cleaningRuleMatch[1], await readJson(request)) });
+      sendData(response, request, updateCleaningRule(cleaningRuleMatch[1], await readJson(request)));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   if (cleaningRuleMatch && request.method === "DELETE") {
     try {
-      sendJson(response, 200, { data: deleteCleaningRule(cleaningRuleMatch[1]) });
+      sendData(response, request, deleteCleaningRule(cleaningRuleMatch[1]));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   const fieldMappingMatch = parsed.pathname.match(/^\/api\/field-mappings\/([^/]+)$/);
   if (fieldMappingMatch && request.method === "PUT") {
     try {
-      sendJson(response, 200, { data: updateFieldMapping(fieldMappingMatch[1], await readJson(request)) });
+      sendData(response, request, updateFieldMapping(fieldMappingMatch[1], await readJson(request)));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   if (fieldMappingMatch && request.method === "DELETE") {
     try {
-      sendJson(response, 200, { data: deleteFieldMapping(fieldMappingMatch[1]) });
+      sendData(response, request, deleteFieldMapping(fieldMappingMatch[1]));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   const dictionarySetMatch = parsed.pathname.match(/^\/api\/dictionary-sets\/([^/]+)$/);
   if (dictionarySetMatch && request.method === "PUT") {
     try {
-      sendJson(response, 200, { data: updateDictionarySet(dictionarySetMatch[1], await readJson(request)) });
+      sendData(response, request, updateDictionarySet(dictionarySetMatch[1], await readJson(request)));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   if (dictionarySetMatch && request.method === "DELETE") {
     try {
-      sendJson(response, 200, { data: deleteDictionarySet(dictionarySetMatch[1]) });
+      sendData(response, request, deleteDictionarySet(dictionarySetMatch[1]));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   const modelConfigMatch = parsed.pathname.match(/^\/api\/model-configs\/([^/]+)$/);
   if (modelConfigMatch && request.method === "PUT") {
     try {
-      sendJson(response, 200, { data: updateModelConfig(modelConfigMatch[1], await readJson(request)) });
+      sendData(response, request, updateModelConfig(modelConfigMatch[1], await readJson(request)));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   if (modelConfigMatch && request.method === "DELETE") {
     try {
-      sendJson(response, 200, { data: deleteModelConfig(modelConfigMatch[1]) });
+      sendData(response, request, deleteModelConfig(modelConfigMatch[1]));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   const storageConfigMatch = parsed.pathname.match(/^\/api\/storage-configs\/([^/]+)$/);
   if (storageConfigMatch && request.method === "PUT") {
     try {
-      sendJson(response, 200, { data: updateStorageConfig(storageConfigMatch[1], await readJson(request)) });
+      sendData(response, request, updateStorageConfig(storageConfigMatch[1], await readJson(request)));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   if (storageConfigMatch && request.method === "DELETE") {
     try {
-      sendJson(response, 200, { data: deleteStorageConfig(storageConfigMatch[1]) });
+      sendData(response, request, deleteStorageConfig(storageConfigMatch[1]));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   const situationFilterMatch = parsed.pathname.match(/^\/api\/situation-filters\/([^/]+)$/);
   if (situationFilterMatch && request.method === "PUT") {
     try {
-      sendJson(response, 200, { data: updateSituationFilter(situationFilterMatch[1], await readJson(request)) });
+      sendData(response, request, updateSituationFilter(situationFilterMatch[1], await readJson(request)));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   if (situationFilterMatch && request.method === "DELETE") {
     try {
-      sendJson(response, 200, { data: deleteSituationFilter(situationFilterMatch[1]) });
+      sendData(response, request, deleteSituationFilter(situationFilterMatch[1]));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   const businessFlowMatch = parsed.pathname.match(/^\/api\/business-flows\/([^/]+)$/);
   if (businessFlowMatch && request.method === "PUT") {
     try {
-      sendJson(response, 200, { data: updateBusinessFlow(businessFlowMatch[1], await readJson(request)) });
+      sendData(response, request, updateBusinessFlow(businessFlowMatch[1], await readJson(request)));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
   if (businessFlowMatch && request.method === "DELETE") {
     try {
-      sendJson(response, 200, { data: deleteBusinessFlow(businessFlowMatch[1]) });
+      sendData(response, request, deleteBusinessFlow(businessFlowMatch[1]));
     } catch (error) {
-      sendError(response, error.status || 500, "API request failed", error.message);
+      sendError(response, error.status || 500, "API request failed", errorDetail(error));
     }
     return true;
   }
@@ -254,10 +279,11 @@ export async function handleApi(request, response) {
   try {
     const payload = await handler({ request, response, url: parsed });
     if (!response.writableEnded) {
+      persistAfterMutation(request);
       sendJson(response, 200, { data: payload });
     }
   } catch (error) {
-    sendError(response, 500, "API request failed", error.message);
+    sendError(response, error.status || 500, "API request failed", errorDetail(error));
   }
   return true;
 }

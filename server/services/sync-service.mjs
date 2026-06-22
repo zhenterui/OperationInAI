@@ -491,6 +491,23 @@ function normalizeSourceUrl(type = "") {
   return withoutMethod;
 }
 
+function assertSafeSourceUrl(url) {
+  const parsed = new URL(url);
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    const error = new Error("Only HTTP/HTTPS data source URLs are allowed");
+    error.status = 400;
+    throw error;
+  }
+  const host = parsed.hostname.toLowerCase();
+  const blockedHosts = new Set(["0.0.0.0", "169.254.169.254"]);
+  const privateNetworkPattern = /^(10\.|172\.(1[6-9]|2\d|3[0-1])\.|192\.168\.)/;
+  if (blockedHosts.has(host) || (process.env.OPERATION_BLOCK_PRIVATE_FETCH === "1" && privateNetworkPattern.test(host))) {
+    const error = new Error("Data source URL is blocked by server-side request policy");
+    error.status = 400;
+    throw error;
+  }
+}
+
 function appendQueryParams(url, queryParams = {}) {
   const parsed = new URL(url);
   Object.entries(queryParams || {}).forEach(([key, value]) => {
@@ -679,6 +696,7 @@ function applyFieldMappings(records = [], mappings = [], responsePath = "") {
 async function fetchRealSource(config = {}) {
   const sourceUrl = normalizeSourceUrl(config.type);
   if (!sourceUrl || (config.kind || "api") !== "api") return null;
+  assertSafeSourceUrl(sourceUrl);
   const method = String(config.method || config.requestConfig?.method || "GET").toUpperCase();
   const placeholderValues = buildPlaceholderValues(config.parameterConfig || {});
   const queryParams = applyPlaceholders(config.queryParams || config.requestConfig?.queryParams || {}, placeholderValues);
@@ -715,6 +733,82 @@ async function fetchRealSource(config = {}) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function uniqueObjects(items = []) {
+  const seen = new Set();
+  return items.filter((item) => {
+    const key = JSON.stringify(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildPagedRequestConfig(source = {}, node = {}, plan = {}, pageNumber = 1) {
+  const pagination = node.executionConfig?.pagination || {};
+  const requestConfig = source.requestConfig || {};
+  const pageParam = pagination.pageParam || "page";
+  const pageSizeParam = pagination.pageSizeParam || "pageSize";
+  const pageSize = pagination.pageSize || plan.pageSize || 100;
+  const queryParams = { ...(requestConfig.queryParams || {}) };
+  const body = requestConfig.body && typeof requestConfig.body === "object" && !Array.isArray(requestConfig.body)
+    ? { ...requestConfig.body }
+    : requestConfig.body;
+  const target = pagination.paramLocation === "body" && body && typeof body === "object" && !Array.isArray(body)
+    ? body
+    : queryParams;
+  if ((pagination.mode || plan.paginationMode) === "page-number") {
+    target[pageParam] = pageNumber;
+    target[pageSizeParam] = pageSize;
+  }
+  return {
+    ...requestConfig,
+    queryParams,
+    body
+  };
+}
+
+async function runWithConcurrency(tasks = [], concurrency = 1) {
+  const results = [];
+  let cursor = 0;
+  async function worker() {
+    while (cursor < tasks.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await tasks[index]();
+    }
+  }
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, tasks.length)) }, () => worker()));
+  return results;
+}
+
+function mergeDataSourceResults(results = [], source = {}, node = {}, plan = {}) {
+  const ok = results.every((result) => result.ok);
+  const mappedRecords = uniqueObjects(results.flatMap((result) => result.mappedRecords || []));
+  const selectedRecords = uniqueObjects(results.flatMap((result) => result.selectedRecords || []));
+  const fields = [...new Set(results.flatMap((result) => result.fields || []))];
+  const recordFields = [...new Set(results.flatMap((result) => result.recordFields || []))];
+  return {
+    ok,
+    status: ok ? 200 : results.find((result) => !result.ok)?.status || 500,
+    durationMs: results.reduce((sum, result) => sum + Number(result.durationMs || 0), 0),
+    sourceMode: results.some((result) => result.sourceMode === "real") ? "real" : "mock",
+    error: results.map((result) => result.error).filter(Boolean).join("; "),
+    testedAt: new Date().toISOString(),
+    request: results[0]?.request || {},
+    responseBody: results[0]?.responseBody || {},
+    fields,
+    recordFields,
+    recordCount: results.reduce((sum, result) => sum + Number(result.recordCount || 0), 0),
+    filteredRecordCount: results.reduce((sum, result) => sum + Number(result.filteredRecordCount || 0), 0),
+    selectedRecords,
+    mappedRecords,
+    plannedCalls: plan.callCount || results.length,
+    actualCalls: results.length,
+    nodeId: node.id,
+    sourceId: source.id
+  };
 }
 
 export async function testDataSource(input = {}) {
@@ -933,6 +1027,27 @@ export async function testDataSource(input = {}) {
     selectedRecords: limitPreview(extraction.selectedRecords),
     mappedRecords: limitPreview(mappedRecords)
   };
+}
+
+export async function executeDataSourcePlan(source = {}, node = {}, plan = {}) {
+  const pageCount = Math.max(1, Number(plan.pageCount || 1));
+  const batchCount = Math.max(1, Number(plan.batchCount || 1));
+  const plannedCalls = Math.max(1, pageCount * batchCount);
+  const maxCalls = Math.max(1, Number(process.env.OPERATION_FLOW_MAX_CALLS || 500));
+  const actualCalls = Math.min(plannedCalls, maxCalls);
+  const concurrency = Math.max(1, Number(plan.concurrency || 1));
+  const startPage = Number(node.executionConfig?.pagination?.startPage || 1);
+  const tasks = Array.from({ length: actualCalls }, (_, index) => {
+    const pageNumber = startPage + (index % pageCount);
+    return () => testDataSource({
+      sourceId: source.id,
+      ...source,
+      requestConfig: buildPagedRequestConfig(source, node, plan, pageNumber),
+      previewLimit: 0
+    });
+  });
+  const results = await runWithConcurrency(tasks, concurrency);
+  return mergeDataSourceResults(results, source, node, plan);
 }
 
 export async function runSync(payload = {}) {
