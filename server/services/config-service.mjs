@@ -1,4 +1,5 @@
 import { store } from "../data/store.mjs";
+import { testDataSource } from "./sync-service.mjs";
 
 function normalizeList(value, fallback = []) {
   if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
@@ -167,6 +168,65 @@ function estimateSourceNodePlan(node = {}, source = {}) {
     lockStrategy: iteration.lockStrategy,
     callCount,
     lockEnabled: Boolean(iteration.lockKey && iteration.lockStrategy !== "none")
+  };
+}
+
+function flattenBusinessRecord(record = {}, prefix = "", output = {}) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    if (prefix) output[prefix] = record;
+    return output;
+  }
+  Object.entries(record).forEach(([key, value]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      flattenBusinessRecord(value, path, output);
+    } else if (Array.isArray(value)) {
+      output[path] = value.join(",");
+    } else {
+      output[path] = value;
+    }
+  });
+  return output;
+}
+
+function buildBusinessFields(records = []) {
+  const preferred = ["alarmName", "event_name", "事件名称", "level", "severity", "等级", "service.name", "owner", "归属对象", "occurTime", "event_time", "时间", "duration", "status", "状态/影响"];
+  const seen = new Set();
+  const fields = [];
+  preferred.forEach((field) => {
+    if (records.some((record) => Object.prototype.hasOwnProperty.call(record, field))) {
+      seen.add(field);
+      fields.push(field);
+    }
+  });
+  records.forEach((record) => {
+    Object.keys(record).forEach((field) => {
+      if (!seen.has(field)) {
+        seen.add(field);
+        fields.push(field);
+      }
+    });
+  });
+  return fields.slice(0, 12);
+}
+
+function toBusinessRows(sourceResults = [], fallbackRow = []) {
+  const flattenedRecords = sourceResults.flatMap(({ result, source }) => {
+    const records = Array.isArray(result.mappedRecords) && result.mappedRecords.length
+      ? result.mappedRecords
+      : result.selectedRecords || [];
+    return records.map((record) => ({
+      source_name: source?.name || "",
+      ...flattenBusinessRecord(record)
+    }));
+  });
+  if (!flattenedRecords.length) {
+    return { fields: ["事件名称", "等级", "归属对象", "时间", "状态/影响"], rows: [fallbackRow] };
+  }
+  const fields = buildBusinessFields(flattenedRecords);
+  return {
+    fields,
+    rows: flattenedRecords.map((record) => fields.map((field) => record[field] ?? ""))
   };
 }
 
@@ -698,7 +758,7 @@ export function deleteBusinessFlow(id) {
   return removed;
 }
 
-export function runBusinessFlow(input = {}) {
+export async function runBusinessFlow(input = {}) {
   const runtimeFlow = input.flow && typeof input.flow === "object" ? input.flow : null;
   const storedIndex = store.businessFlows.findIndex((item) => item.id === (runtimeFlow?.id || input.flowId));
   const storedFlow = storedIndex >= 0 ? store.businessFlows[storedIndex] : store.businessFlows[0];
@@ -716,13 +776,6 @@ export function runBusinessFlow(input = {}) {
     const error = new Error("Business flow not found");
     error.status = 404;
     throw error;
-  }
-  if (storedIndex >= 0) {
-    store.businessFlows[storedIndex] = {
-      ...store.businessFlows[storedIndex],
-      ...flow,
-      outputConfig: flow.outputConfig
-    };
   }
   const nodeSourceIds = Array.isArray(flow.nodes) && flow.nodes.length
     ? flow.nodes.filter((node) => node.type === "source").map((node) => node.refId)
@@ -795,6 +848,18 @@ export function runBusinessFlow(input = {}) {
     nowText,
     `${rules.length} 条规则 / ${loopCalls} 次调用`
   ];
+  const sourceResults = [];
+  for (const node of sourceNodes) {
+    const source = store.dataSources.find((item) => item.id === node.refId);
+    if (!source) continue;
+    const result = await testDataSource({ sourceId: source.id, ...source, previewLimit: 0 });
+    sourceResults.push({ node, source, result });
+  }
+  const materialized = toBusinessRows(sourceResults, row);
+  const runFailedRows = sourceResults.filter((item) => !item.result.ok).length;
+  const fetchedRows = sourceResults.reduce((sum, item) => sum + Number(item.result.recordCount || 0), 0);
+  const cleanedRows = materialized.rows.length;
+  const durationMs = sourceResults.reduce((sum, item) => sum + Number(item.result.durationMs || 0), 0);
 
   let business = store.businesses.find((item) => item.name === flow.businessName);
   if (!business) {
@@ -802,29 +867,59 @@ export function runBusinessFlow(input = {}) {
       id: `biz_${Date.now()}`,
       name: flow.businessName,
       timeField: flow.timeField,
-      fields: ["事件名称", "等级", "归属对象", "时间", "状态/影响"],
+      fields: materialized.fields,
       rows: []
     };
     store.businesses.unshift(business);
   }
   business.timeField = flow.timeField;
-  business.rows.unshift(row);
+  business.fields = materialized.fields;
+  materialized.rows.slice().reverse().forEach((businessRow) => business.rows.unshift(businessRow));
   flow.status = "success";
   flow.lastRunAt = new Date().toISOString();
   flow.updatedAt = flow.lastRunAt;
+  if (storedIndex >= 0) {
+    store.businessFlows[storedIndex] = {
+      ...store.businessFlows[storedIndex],
+      status: flow.status,
+      lastRunAt: flow.lastRunAt,
+      updatedAt: flow.updatedAt
+    };
+  }
   store.syncLogs.unshift({
     id: `flow_run_${Date.now()}`,
     sourceId: flow.id,
     sourceName: flow.name,
-    status: "success",
-    fetchedRows: Math.max(1, loopCalls * 4),
-    cleanedRows: 1,
-    failedRows: 0,
-    durationMs: 1260,
+    status: runFailedRows ? "warning" : "success",
+    fetchedRows,
+    cleanedRows,
+    failedRows: runFailedRows,
+    durationMs,
     startedAt: flow.lastRunAt,
     message: `已编排 ${sources.length} 个数据源，执行 ${rules.length} 条规则，输出到 ${flow.outputConfig.businessTable}。规则：${ruleText}`
   });
-  return { flow, business, row, sources, rules, outputConfig: flow.outputConfig, parameterPlan, executionPlan };
+  return {
+    flow,
+    business,
+    row: materialized.rows[0] || row,
+    rows: materialized.rows,
+    sources,
+    rules,
+    sourceResults: sourceResults.map(({ node, source, result }) => ({
+      nodeId: node.id,
+      sourceId: source.id,
+      sourceName: source.name,
+      ok: result.ok,
+      sourceMode: result.sourceMode,
+      recordCount: result.recordCount,
+      filteredRecordCount: result.filteredRecordCount,
+      mappedRecordCount: result.mappedRecords?.length || 0,
+      error: result.error || ""
+    })),
+    outputConfig: flow.outputConfig,
+    parameterPlan,
+    executionPlan
+  };
 }
 
 export function createKnowledgeSource(input = {}) {
@@ -857,10 +952,22 @@ function parseBusinessTime(value) {
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
+function findFieldIndex(fields = [], candidates = [], fallback = 0) {
+  const normalized = fields.map((field) => String(field).toLowerCase());
+  const index = candidates
+    .map((candidate) => normalized.indexOf(String(candidate).toLowerCase()))
+    .find((item) => item >= 0);
+  return index ?? fallback;
+}
+
 export function queryBusiness(input = {}) {
   const business = store.businesses.find((item) => item.name === input.businessName) || store.businesses[0];
   let rows = [...business.rows];
   const keyword = String(input.keyword || "").trim().toLowerCase();
+  const fields = business.fields || [];
+  const severityIndex = findFieldIndex(fields, ["等级", "level", "severity", "alarmLevel", "result"], 1);
+  const timeIndex = findFieldIndex(fields, ["时间", "occurTime", "event_time", "time", "updated_at", "checked_at", "created_at"], 3);
+  const impactIndex = findFieldIndex(fields, ["状态/影响", "duration", "queue_lag", "lag", "impact"], 4);
 
   if (keyword) {
     rows = rows.filter((row) => row.some((cell) => String(cell).toLowerCase().includes(keyword)));
@@ -869,20 +976,20 @@ export function queryBusiness(input = {}) {
   const startTime = input.timeStart ? Date.parse(input.timeStart) : 0;
   const endTime = input.timeEnd ? Date.parse(input.timeEnd) : 0;
   if (startTime || endTime) {
-    // Prototype rows keep the business timestamp at index 3; the selected timeField is preserved in query metadata.
+    // Dynamic business fields are generated from source records, so resolve the time column by field name first.
     rows = rows.filter((row) => {
-      const rowTime = parseBusinessTime(row[3]);
+      const rowTime = parseBusinessTime(row[timeIndex]);
       if (!rowTime) return true;
       return (!startTime || rowTime >= startTime) && (!endTime || rowTime <= endTime);
     });
   }
 
   if (input.sort === "time") {
-    rows.sort((a, b) => String(b[3]).localeCompare(String(a[3])));
+    rows.sort((a, b) => String(b[timeIndex]).localeCompare(String(a[timeIndex])));
   } else if (input.sort === "impact") {
-    rows.sort((a, b) => impactValue(b[4]) - impactValue(a[4]));
+    rows.sort((a, b) => impactValue(b[impactIndex]) - impactValue(a[impactIndex]));
   } else {
-    rows.sort((a, b) => (severityWeight[b[1]] || 0) - (severityWeight[a[1]] || 0));
+    rows.sort((a, b) => (severityWeight[b[severityIndex]] || 0) - (severityWeight[a[severityIndex]] || 0));
   }
 
   if (input.view === "top") {

@@ -744,6 +744,7 @@ export async function testDataSource(input = {}) {
   let durationMs = 186;
   let error = "";
   let responseBody = config.responseBody || config.mockResponseBody;
+  const expectsRealFetch = Boolean(normalizeSourceUrl(config.type)) && kind === "api";
   try {
     const realResult = await fetchRealSource(config);
     if (realResult) {
@@ -754,7 +755,15 @@ export async function testDataSource(input = {}) {
       error = realResult.error;
     }
   } catch (fetchError) {
-    error = fetchError.message || "实际请求失败，已回退模拟响应";
+    if (expectsRealFetch) {
+      status = 599;
+      durationMs = 0;
+      sourceMode = "real";
+      error = fetchError.message || "实际请求失败";
+      responseBody = { error };
+    } else {
+      error = fetchError.message || "实际请求失败，已回退模拟响应";
+    }
   }
   if (!responseBody) {
     responseBody =
@@ -886,6 +895,9 @@ export async function testDataSource(input = {}) {
   const recordFields = extraction.recordValue === undefined ? [] : flattenFields(extraction.filteredRecords, normalizeRecordPrefix(responsePath));
   const sourceMappings = (store.fieldMappings || []).filter((mapping) => mapping.sourceId === (config.id || config.sourceId));
   const mappedRecords = applyFieldMappings(extraction.filteredRecords, sourceMappings, responsePath);
+  const previewLimit = Number(input.previewLimit ?? 10);
+  const limitPreview = (items = []) =>
+    Number.isFinite(previewLimit) && previewLimit > 0 ? items.slice(0, previewLimit) : items;
 
   return {
     ok: status >= 200 && status < 400,
@@ -918,8 +930,8 @@ export async function testDataSource(input = {}) {
     recordFields,
     recordCount: extraction.recordCount,
     filteredRecordCount: extraction.filteredRecordCount,
-    selectedRecords: extraction.selectedRecords.slice(0, 10),
-    mappedRecords: mappedRecords.slice(0, 10)
+    selectedRecords: limitPreview(extraction.selectedRecords),
+    mappedRecords: limitPreview(mappedRecords)
   };
 }
 

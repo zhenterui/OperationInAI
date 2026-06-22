@@ -619,6 +619,8 @@ try {
   });
   assert(flowRun.data.business.name === "E2E 清洗业务", "business flow should create target business data");
   assert(flowRun.data.outputConfig.businessTable === "biz_e2e_event", "business table should round-trip");
+  assert(flowRun.data.rows.length > 1, "business flow should materialize real source records instead of one placeholder row");
+  assert(!String(flowRun.data.row[0]).includes("聚合数据"), "business flow first row should come from source data, not placeholder text");
   assert(flowRun.data.parameterPlan.loopCalls === 301, "flow graph should combine paginated batch API calls and static source calls");
   const apiSourcePlan = flowRun.data.executionPlan.sourcePlans.find((plan) => plan.nodeId === "e2e_source_api");
   assert(apiSourcePlan.pageCount === 100, "source node plan should let business config control total pages");
@@ -633,6 +635,10 @@ try {
   assert(flowRun.data.executionPlan.conditionalBranches === 2, "flow graph should keep branch conditions");
   assert(flowRun.data.executionPlan.summary.includes("E2E 运行时分支"), "run should use latest flow payload from the page");
   assert(flowRun.data.executionPlan.join === 1, "flow graph should support join nodes");
+  const storedFlowsAfterRun = await request("/api/business-flows");
+  const storedFlowAfterRun = storedFlowsAfterRun.data.find((item) => item.id === updatedFlow.data.id);
+  const storedRuntimeNode = storedFlowAfterRun.nodes.find((node) => node.id === "e2e_source_api");
+  assert(storedRuntimeNode.branchName !== "E2E 运行时分支", "runtime flow payload should not overwrite stored flow config");
 
   await request(`/api/cleaning-rules/${rule.data.id}`, { method: "DELETE" });
   await request(`/api/cleaning-rules/${extractRule.data.id}`, { method: "DELETE" });
