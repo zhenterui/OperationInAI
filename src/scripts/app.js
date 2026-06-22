@@ -2110,7 +2110,12 @@ function setupMultiSelectControls() {
               <small id="multiSelectMeta"></small>
             </div>
           </div>
+          <label class="multi-select-search">
+            <span>搜索</span>
+            <input id="multiSelectSearchInput" type="search" placeholder="输入字段名或路径快速过滤" />
+          </label>
           <div class="multi-check-list" id="multiSelectList"></div>
+          <div class="module-status hidden" id="multiSelectEmpty">未找到匹配字段。</div>
           <div class="modal-actions">
             <button class="small-button" id="cancelMultiSelectBtn" type="button">取消</button>
             <button class="small-button primary" id="confirmMultiSelectBtn" type="button">确定</button>
@@ -2146,11 +2151,12 @@ function openMultiSelectDialog(selectId) {
   const config = multiSelectConfigs[selectId] || {};
   $("#multiSelectTitle").textContent = config.label || "选择字段";
   $("#multiSelectMeta").textContent = `共 ${select.options.length} 项，可多选`;
+  $("#multiSelectSearchInput").value = "";
   const selected = new Set(getSelectedValues(select));
   $("#multiSelectList").innerHTML = [...select.options]
     .map(
       (option) => `
-        <label class="multi-check-item">
+        <label class="multi-check-item" data-search-text="${escapeHtml(`${option.textContent || ""} ${option.value}`.toLowerCase())}">
           <input type="checkbox" value="${escapeHtml(option.value)}" ${selected.has(option.value) ? "checked" : ""} />
           <span>${escapeHtml(option.textContent || option.value)}</span>
         </label>
@@ -2158,7 +2164,26 @@ function openMultiSelectDialog(selectId) {
     )
     .join("");
   dialog.dataset.targetSelect = selectId;
+  filterMultiSelectOptions();
   openDialog("#multiSelectModal");
+  $("#multiSelectSearchInput").focus();
+}
+
+function filterMultiSelectOptions() {
+  const keyword = ($("#multiSelectSearchInput")?.value || "").trim().toLowerCase();
+  let visibleCount = 0;
+  $$("#multiSelectList .multi-check-item").forEach((item) => {
+    const matched = !keyword || String(item.dataset.searchText || "").includes(keyword);
+    item.classList.toggle("hidden", !matched);
+    if (matched) visibleCount += 1;
+  });
+  $("#multiSelectEmpty")?.classList.toggle("hidden", visibleCount > 0);
+  const targetSelect = $(`#${$("#multiSelectModal")?.dataset.targetSelect || ""}`);
+  if (targetSelect) {
+    $("#multiSelectMeta").textContent = keyword
+      ? `匹配 ${visibleCount} / 共 ${targetSelect.options.length} 项，可多选`
+      : `共 ${targetSelect.options.length} 项，可多选`;
+  }
 }
 
 function applyMultiSelectDialog() {
@@ -3844,6 +3869,7 @@ function bindEvents() {
       openMultiSelectDialog(trigger.dataset.multiSelectTrigger);
     }
   });
+  $("#multiSelectSearchInput")?.addEventListener("input", filterMultiSelectOptions);
   $("#overviewFilterBar")?.addEventListener("input", (event) => {
     const control = event.target.closest("[data-overview-filter]");
     if (control) {

@@ -1449,6 +1449,21 @@ select[multiple] option {
   color: var(--muted);
 }
 
+.multi-select-search {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.multi-select-search span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.multi-select-search input {
+  width: 100%;
+}
+
 .multi-check-list {
   max-height: min(58vh, 520px);
   margin-top: 14px;
