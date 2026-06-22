@@ -105,3 +105,4 @@ npm.cmd run static
 
 - [设计文档](docs/DESIGN.md)
 - [使用文档](docs/USAGE.md)
+- [优化建议](docs/OPTIMIZATION.md)
