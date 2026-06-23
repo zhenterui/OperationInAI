@@ -284,7 +284,7 @@ function matchValueFilterValue(actual, filter) {
 
 function splitDictionaryCell(value) {
   return String(value ?? "")
-    .split(/[,，;；|]/)
+    .split(/[,，;；\n|]/)
     .map((item) => item.trim())
     .filter(Boolean);
 }
@@ -309,9 +309,10 @@ function getDictionaryValuesFromRef(ref = "") {
 }
 
 function getDictionaryFilterValues(filter = {}) {
-  if (Array.isArray(filter.dictionaryValues)) return filter.dictionaryValues;
+  if (Array.isArray(filter.dictionaryValues)) return filter.dictionaryValues.flatMap((value) => splitDictionaryCell(value));
+  if (filter.dictionaryRef) return getDictionaryValuesFromRef(filter.dictionaryRef);
   if (!filter.dictionaryId || !filter.dictionaryColumn) return [];
-  const dictionary = store.dictionarySets.find((item) => item.id === filter.dictionaryId);
+  const dictionary = getDictionaryByIdOrName(filter.dictionaryId);
   if (!dictionary) return [];
   return (dictionary.rows || [])
     .filter((row) => {
@@ -336,6 +337,7 @@ function matchesDictionaryValue(actual, filter = {}) {
 function hasValueFilterCriterion(filter = {}) {
   return Boolean(
     String(filter.value || "").trim() ||
+    String(filter.dictionaryRef || "").trim() ||
     (filter.dictionaryId && filter.dictionaryColumn) ||
     Array.isArray(filter.dictionaryValues)
   );
@@ -391,7 +393,7 @@ function getValueFilterMatchDetails(record, filter = {}, responsePath = "") {
   const values = getValuesByPath(record, stripResponsePrefix(filter.field, responsePath));
   return values.flatMap((original) => {
     const candidates = transformFilterCandidate(original, filter, record, responsePath);
-    if (filter.dictionaryId || Array.isArray(filter.dictionaryValues)) {
+    if (filter.dictionaryId || filter.dictionaryRef || Array.isArray(filter.dictionaryValues)) {
       return getDictionaryMatchDetails(original, candidates, filter);
     }
     return candidates
@@ -582,8 +584,40 @@ function renderTemplate(template = "", record = {}, responsePath = "") {
   });
 }
 
+function parseRuleParamOptions(param = "") {
+  if (param && typeof param === "object") return param;
+  const text = String(param || "").trim();
+  if (!text) return {};
+  if ((text.startsWith("{") && text.endsWith("}")) || (text.startsWith("[") && text.endsWith("]"))) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return {};
+    }
+  }
+  return text
+    .split(/[;；]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .reduce((output, item) => {
+      const separatorIndex = item.indexOf("=");
+      if (separatorIndex < 0) return output;
+      const key = item.slice(0, separatorIndex).trim();
+      const value = item.slice(separatorIndex + 1).trim();
+      if (key) output[key] = unquoteValue(value);
+      return output;
+    }, {});
+}
+
+function getBooleanOption(options = {}, key, fallback = false) {
+  if (options[key] === undefined) return fallback;
+  if (typeof options[key] === "boolean") return options[key];
+  return ["true", "1", "yes", "y"].includes(String(options[key]).trim().toLowerCase());
+}
+
 function parseEnumMap(param = "") {
   return String(param || "")
+    .replace(/(?:^|[;；])\s*caseInsensitive\s*=\s*(?:true|false|1|0|yes|no)\s*(?=[;；]|$)/ig, "")
     .split(/[,，;]/)
     .map((item) => item.split("="))
     .filter(([key]) => key !== undefined && key !== "")
@@ -591,6 +625,73 @@ function parseEnumMap(param = "") {
       output[unquoteValue(key)] = unquoteValue(value ?? "");
       return output;
     }, {});
+}
+
+function decodeHtmlEntities(value = "") {
+  const entityMap = {
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: "\"",
+    apos: "'",
+    nbsp: " "
+  };
+  return String(value).replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, entity) => {
+    const key = entity.toLowerCase();
+    if (key.startsWith("#x")) return String.fromCodePoint(Number.parseInt(key.slice(2), 16));
+    if (key.startsWith("#")) return String.fromCodePoint(Number.parseInt(key.slice(1), 10));
+    return entityMap[key] ?? match;
+  });
+}
+
+function stripHtml(value = "", param = "") {
+  const options = parseRuleParamOptions(param);
+  let text = String(value ?? "");
+  if (getBooleanOption(options, "remove_script", true)) {
+    text = text.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+  }
+  if (getBooleanOption(options, "remove_style", true)) {
+    text = text.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "");
+  }
+  text = text.replace(/<!--[\s\S]*?-->/g, "").replace(/<[^>]+>/g, "");
+  if (getBooleanOption(options, "decode_entities", true)) text = decodeHtmlEntities(text);
+  if (getBooleanOption(options, "collapse_whitespace", true)) text = text.replace(/\s+/g, " ").trim();
+  return text;
+}
+
+function splitDedupeJoin(value = "", param = "") {
+  const options = {
+    separator: ",",
+    joinSeparator: ",",
+    dedupe: true,
+    sort: false,
+    limit: 0,
+    ...parseRuleParamOptions(param)
+  };
+  const separator = options.separator || ",";
+  const joinSeparator = options.joinSeparator ?? separator;
+  const parts = String(value ?? "")
+    .split(separator)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const uniqueParts = getBooleanOption(options, "dedupe", true) ? [...new Set(parts)] : parts;
+  const sortedParts = getBooleanOption(options, "sort", false) ? [...uniqueParts].sort() : uniqueParts;
+  const limit = Number(options.limit || 0);
+  const finalParts = Number.isFinite(limit) && limit > 0 ? sortedParts.slice(0, limit) : sortedParts;
+  return finalParts.join(joinSeparator);
+}
+
+function replaceAllValue(value = "", param = "") {
+  const options = parseRuleParamOptions(param);
+  const pattern = options.pattern || options.regex || "";
+  const replacement = options.replacement ?? options.replace ?? "";
+  const flags = options.flags || "g";
+  if (!pattern) return value;
+  try {
+    return String(value ?? "").replace(new RegExp(pattern, flags.includes("g") ? flags : `${flags}g`), replacement);
+  } catch {
+    return value;
+  }
 }
 
 function normalizeMappedValues(values = []) {
@@ -608,6 +709,7 @@ function applyCleaningRule(values = [], mapping = {}, record = {}, responsePath 
   const rule = store.cleaningRules.find((item) => item.id === mapping.ruleId);
   const action = rule?.config?.action || "";
   const param = rule?.config?.param || mapping.ruleParam || "";
+  const ruleOptions = parseRuleParamOptions(param);
   if (!rule || !action) return finalizeRuleOutput(normalizedValues, mapping.defaultValue);
   if (action === "combine") {
     return renderTemplate(param || mapping.sourceField || "", record, responsePath) || mapping.defaultValue || "";
@@ -627,13 +729,26 @@ function applyCleaningRule(values = [], mapping = {}, record = {}, responsePath 
       return mapping.defaultValue ?? "";
     }
   }
+  if (action === "strip_html") {
+    return finalizeRuleOutput(normalizedValues.map((value) => stripHtml(value, param)), mapping.defaultValue);
+  }
+  if (action === "split_dedupe_join") {
+    return finalizeRuleOutput(normalizedValues.map((value) => splitDedupeJoin(value, param)), mapping.defaultValue);
+  }
+  if (action === "replace_all") {
+    return finalizeRuleOutput(normalizedValues.map((value) => replaceAllValue(value, param)), mapping.defaultValue);
+  }
   const enumMap = action === "enum" ? parseEnumMap(param) : {};
+  const caseInsensitiveEnum = action === "enum" && (rule.config?.caseInsensitive || getBooleanOption(ruleOptions, "caseInsensitive", false));
+  const normalizedEnumMap = caseInsensitiveEnum
+    ? Object.fromEntries(Object.entries(enumMap).map(([key, value]) => [String(key).toLowerCase(), value]))
+    : enumMap;
   const cleaned = normalizedValues.map((value) => {
     const text = String(value ?? "");
     if (action === "trim") return text.trim();
     if (action === "lower") return text.toLowerCase();
     if (action === "upper") return text.toUpperCase();
-    if (action === "enum") return enumMap[text] ?? value;
+    if (action === "enum") return normalizedEnumMap[caseInsensitiveEnum ? text.toLowerCase() : text] ?? value;
     if (action === "default") return text ? value : param || mapping.defaultValue || "";
     if (action === "number") {
       const numeric = Number(value);

@@ -1336,8 +1336,8 @@
                   <span class="icon" data-icon="spark"></span>
                   <strong>清洗规则怎么写</strong>
                   <small>规则表达式格式为 <code>源字段 -&gt; 目标字段 | 动作(参数)</code>。目标字段为空时，默认覆盖原字段。</small>
-                  <small>常用动作：<code>trim</code>、<code>lower</code>、<code>upper</code>、<code>enum</code>、<code>default</code>、<code>filter</code>、<code>date</code>、<code>number</code>、<code>enrich</code>。</small>
-                  <small>示例：<code>level -&gt; severity | enum(P0=高,P1=中,P2=低)</code>，<code>owner -&gt; owner | default(未分配)</code>。</small>
+                  <small>常用动作：<code>trim</code>、<code>lower</code>、<code>upper</code>、<code>enum</code>、<code>default</code>、<code>strip_html</code>、<code>split_dedupe_join</code>、<code>replace_all</code>、<code>date</code>、<code>number</code>。</small>
+                  <small>示例：<code>enum(caseInsensitive=true; roma=ROMAConnect)</code>，<code>strip_html(remove_script=true; remove_style=true)</code>，<code>split_dedupe_join(separator=,; sort=true)</code>。</small>
                 </div>
                 <div class="guide-card expression-guide-card">
                   <span class="icon" data-icon="database"></span>
@@ -1713,6 +1713,9 @@
               <option value="default">空值默认</option>
               <option value="dedupe">多值去重</option>
               <option value="merge">多值合并</option>
+              <option value="split_dedupe_join">拆分去重合并</option>
+              <option value="strip_html">HTML 清洗</option>
+              <option value="replace_all">全局替换</option>
               <option value="extract">正则提取</option>
               <option value="combine">模板组合</option>
               <option value="filter">条件过滤</option>

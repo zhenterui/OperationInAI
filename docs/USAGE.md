@@ -431,6 +431,24 @@ npm.cmd run port:check
 
 如果只想输出命中的产品别名，把“命中后输出”改为“只保留命中内容”即可。
 
+## 通用清洗动作参数
+
+清洗规则动作保持通用语义，不绑定具体业务字段：
+
+```text
+strip_html(remove_script=true; remove_style=true; decode_entities=true; collapse_whitespace=true)
+split_dedupe_join(separator=,; joinSeparator=,; dedupe=true; sort=true; limit=0)
+replace_all(pattern=\d; replacement=#; flags=g)
+enum(caseInsensitive=true; roma=ROMAConnect,apm=APM)
+```
+
+- `strip_html`：移除 HTML 标签，可默认移除 `script/style` 内容、解码常见 HTML 实体并压缩空白。
+- `split_dedupe_join`：对单个字段值内部的分隔列表执行“拆分、去空、去重、可选排序、可选限长、合并”，适合执行人、标签、产品列表等多值字符串。
+- `replace_all`：对字段值做正则全局替换，适合脱敏、统一字符、删除固定噪声。
+- `enum`：枚举映射可通过 `caseInsensitive=true` 开启大小写不敏感匹配；未命中时保留原值。
+
+参数既可以写成 `key=value; key=value`，也可以写成 JSON 对象；简单动作仍可只写原来的字符串参数。
+
 ## 存储切换与旧数据处理
 
 支持配置库中的“存储配置”用于选择系统当前使用的存储位置。默认是本地存储，也可以新增一个数据库存储。

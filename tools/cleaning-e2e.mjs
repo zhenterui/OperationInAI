@@ -316,6 +316,36 @@ try {
   });
   assert(dictionaryExpressionTest.data.filteredRecordCount === 1, "filter condition should support dictionary membership");
 
+  const dictionaryRefValueFilterTest = await request("/api/data-sources/test", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E dictionaryRef value filter",
+      kind: "api",
+      responsePath: "data.products[]",
+      responseBody: {
+        data: {
+          products: [
+            { name: "pay-gateway" },
+            { name: "unknown-service" }
+          ]
+        }
+      },
+      responseConfig: {
+        fieldKeepMode: "value-filter",
+        keepFields: ["data.products[].name"],
+        valueFilters: [
+          {
+            field: "data.products[].name",
+            dictionaryRef: "产品列表.别名列表 where 产品部=交易产品部",
+            dictionaryMatchMode: "field-in-dictionary",
+            enabled: true
+          }
+        ]
+      }
+    })
+  });
+  assert(dictionaryRefValueFilterTest.data.filteredRecordCount === 1, "value filter should support dictionaryRef membership");
+
   const productAliasDictionary = await request("/api/dictionary-sets", {
     method: "POST",
     body: JSON.stringify({
@@ -480,6 +510,114 @@ try {
   });
   assert(transformTest.data.mappedRecords.length > 0, "source test should return mapped records");
   assert(transformTest.data.mappedRecords[0].queue_lag !== undefined, "mapped records should include cleaned target field");
+
+  const htmlRule = await request("/api/cleaning-rules", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E strip html",
+      type: "normalize",
+      expression: "strip_html(remove_script=true; remove_style=true)",
+      description: "Generic HTML text cleanup.",
+      config: {
+        action: "strip_html",
+        param: "remove_script=true; remove_style=true; decode_entities=true; collapse_whitespace=true"
+      }
+    })
+  });
+  const splitRule = await request("/api/cleaning-rules", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E split dedupe join",
+      type: "normalize",
+      expression: "split_dedupe_join(separator=,; sort=true)",
+      description: "Generic split, unique, optional sort, and join cleanup.",
+      config: {
+        action: "split_dedupe_join",
+        param: "separator=,; joinSeparator=,; dedupe=true; sort=true"
+      }
+    })
+  });
+  const enumInsensitiveRule = await request("/api/cleaning-rules", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E enum case insensitive",
+      type: "normalize",
+      expression: "enum(caseInsensitive=true; roma=ROMAConnect)",
+      description: "Generic case-insensitive enum cleanup.",
+      config: {
+        action: "enum",
+        param: "caseInsensitive=true; roma=ROMAConnect"
+      }
+    })
+  });
+  const replaceAllRule = await request("/api/cleaning-rules", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E replace all",
+      type: "normalize",
+      expression: "replace_all(pattern=\\d; replacement=#)",
+      description: "Generic global regex replacement.",
+      config: {
+        action: "replace_all",
+        param: "pattern=\\d; replacement=#; flags=g"
+      }
+    })
+  });
+  const genericCleanupSource = await request("/api/data-sources", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "E2E generic cleanup source",
+      kind: "api",
+      type: "POST /api/e2e/generic-cleanup",
+      method: "POST",
+      responsePath: "data.items[]",
+      responseBody: {
+        data: {
+          items: [
+            {
+              html: "<style>.red{color:red}</style><p>ROMA<strong>耗尽</strong>&nbsp;告警</p><script>alert(1)</script>",
+              owners: "王五,张三,王五",
+              product: "roma",
+              code: "A1B2"
+            }
+          ]
+        }
+      }
+    })
+  });
+  const htmlMapping = await request("/api/field-mappings", {
+    method: "POST",
+    body: JSON.stringify({ sourceId: genericCleanupSource.data.id, sourceField: "data.items[].html", targetField: "clean_html", type: "字符串", ruleId: htmlRule.data.id })
+  });
+  const splitMapping = await request("/api/field-mappings", {
+    method: "POST",
+    body: JSON.stringify({ sourceId: genericCleanupSource.data.id, sourceField: "data.items[].owners", targetField: "clean_owners", type: "字符串", ruleId: splitRule.data.id })
+  });
+  const enumMapping = await request("/api/field-mappings", {
+    method: "POST",
+    body: JSON.stringify({ sourceId: genericCleanupSource.data.id, sourceField: "data.items[].product", targetField: "clean_product", type: "字符串", ruleId: enumInsensitiveRule.data.id })
+  });
+  const replaceMapping = await request("/api/field-mappings", {
+    method: "POST",
+    body: JSON.stringify({ sourceId: genericCleanupSource.data.id, sourceField: "data.items[].code", targetField: "clean_code", type: "字符串", ruleId: replaceAllRule.data.id })
+  });
+  const genericCleanupTest = await request("/api/data-sources/test", {
+    method: "POST",
+    body: JSON.stringify({ sourceId: genericCleanupSource.data.id, ...genericCleanupSource.data })
+  });
+  assert(genericCleanupTest.data.mappedRecords[0].clean_html === "ROMA耗尽 告警", "strip_html should remove script/style and keep nested text");
+  assert(genericCleanupTest.data.mappedRecords[0].clean_owners === "张三,王五", "split_dedupe_join should dedupe and optionally sort delimited values");
+  assert(genericCleanupTest.data.mappedRecords[0].clean_product === "ROMAConnect", "enum should support case-insensitive matching through config");
+  assert(genericCleanupTest.data.mappedRecords[0].clean_code === "A#B#", "replace_all should perform global regex replacement");
+  await request(`/api/field-mappings/${htmlMapping.data.id}`, { method: "DELETE" });
+  await request(`/api/field-mappings/${splitMapping.data.id}`, { method: "DELETE" });
+  await request(`/api/field-mappings/${enumMapping.data.id}`, { method: "DELETE" });
+  await request(`/api/field-mappings/${replaceMapping.data.id}`, { method: "DELETE" });
+  await request(`/api/data-sources/${genericCleanupSource.data.id}`, { method: "DELETE" });
+  await request(`/api/cleaning-rules/${htmlRule.data.id}`, { method: "DELETE" });
+  await request(`/api/cleaning-rules/${splitRule.data.id}`, { method: "DELETE" });
+  await request(`/api/cleaning-rules/${enumInsensitiveRule.data.id}`, { method: "DELETE" });
+  await request(`/api/cleaning-rules/${replaceAllRule.data.id}`, { method: "DELETE" });
 
   const deletedMapping = await request(`/api/field-mappings/${updatedMapping.data.id}`, {
     method: "DELETE"

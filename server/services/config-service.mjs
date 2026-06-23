@@ -1,6 +1,10 @@
 import { store } from "../data/store.mjs";
 import { executeDataSourcePlan } from "./sync-service.mjs";
 
+function uniqueId(prefix = "id") {
+  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+}
+
 function normalizeList(value, fallback = []) {
   if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
   if (typeof value === "string") {
@@ -323,7 +327,7 @@ async function executeSourceNodes(flowNodes = [], sourceExecutionPlans = [], flo
 
 export function createFieldMapping(input = {}) {
   const mapping = {
-    id: `map_${Date.now()}`,
+    id: input.id || uniqueId("map"),
     sourceId: input.sourceId || store.dataSources[0]?.id || "",
     sourceField: input.sourceField || "raw.status",
     targetField: input.targetField || "status",
@@ -726,7 +730,7 @@ export function deleteDictionarySet(id) {
 
 export function createCleaningRule(input = {}) {
   const rule = {
-    id: `rule_${Date.now()}`,
+    id: input.id || uniqueId("rule"),
     name: input.name || "自定义清洗规则",
     category: input.category || "清洗规则",
     type: input.type || "mapping",
