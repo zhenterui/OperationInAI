@@ -270,31 +270,33 @@ function mergeBusinessRows(existingRows = [], newRows = [], fields = [], outputC
   return [...newRows, ...keptRows].slice(0, 1000);
 }
 
-function getNodePredecessors(nodes = [], node = {}) {
+function getNodePredecessors(nodes = [], node = {}, edges = []) {
+  const incoming = edges.filter((edge) => edge.to === node.id).map((edge) => edge.from).filter(Boolean);
+  if (incoming.length) return incoming;
   if (Array.isArray(node.predecessors) && node.predecessors.length) return node.predecessors;
   if (node.branchFromId) return [node.branchFromId];
   const index = nodes.findIndex((item) => item.id === node.id);
   return index > 0 ? [nodes[index - 1].id] : [];
 }
 
-function getSourceDependencies(node = {}, nodesById = new Map(), visited = new Set()) {
+function getSourceDependencies(node = {}, nodesById = new Map(), edges = [], visited = new Set()) {
   if (visited.has(node.id)) return [];
   visited.add(node.id);
-  return getNodePredecessors([...nodesById.values()], node).flatMap((predecessorId) => {
+  return getNodePredecessors([...nodesById.values()], node, edges).flatMap((predecessorId) => {
     const predecessor = nodesById.get(predecessorId);
     if (!predecessor) return [];
     if (predecessor.type === "source") return [predecessor.id];
-    return getSourceDependencies(predecessor, nodesById, visited);
+    return getSourceDependencies(predecessor, nodesById, edges, visited);
   });
 }
 
-async function executeSourceNodes(flowNodes = [], sourceExecutionPlans = []) {
+async function executeSourceNodes(flowNodes = [], sourceExecutionPlans = [], flowEdges = []) {
   const sourceNodes = flowNodes.filter((node) => node.type === "source");
   const nodesById = new Map(flowNodes.map((node) => [node.id, node]));
   const results = [];
   const completed = new Set();
   const remaining = new Set(sourceNodes.map((node) => node.id));
-  const dependencyMap = new Map(sourceNodes.map((node) => [node.id, [...new Set(getSourceDependencies(node, nodesById))]]));
+  const dependencyMap = new Map(sourceNodes.map((node) => [node.id, [...new Set(getSourceDependencies(node, nodesById, flowEdges))]]));
   const runNode = async (item) => {
     const source = store.dataSources.find((entry) => entry.id === item.refId);
     if (!source) return null;
@@ -788,8 +790,9 @@ export function createBusinessFlow(input = {}) {
     businessName,
     dataSourceIds: Array.isArray(input.dataSourceIds) ? input.dataSourceIds : [],
     ruleIds: Array.isArray(input.ruleIds) ? input.ruleIds : [],
-    dagVersion: input.dagVersion || 1,
+    dagVersion: input.dagVersion || 2,
     nodes: Array.isArray(input.nodes) ? input.nodes : [],
+    edges: Array.isArray(input.edges) ? input.edges : [],
     timeField: input.timeField || "event_time",
     outputMode: input.outputMode || "upsert-business",
     outputConfig: {
@@ -823,8 +826,9 @@ export function updateBusinessFlow(id, input = {}) {
     businessName: input.businessName || existing.businessName,
     dataSourceIds: Array.isArray(input.dataSourceIds) ? input.dataSourceIds : existing.dataSourceIds,
     ruleIds: Array.isArray(input.ruleIds) ? input.ruleIds : existing.ruleIds,
-    dagVersion: input.dagVersion || existing.dagVersion || 1,
+    dagVersion: input.dagVersion || existing.dagVersion || 2,
     nodes: Array.isArray(input.nodes) ? input.nodes : existing.nodes || [],
+    edges: Array.isArray(input.edges) ? input.edges : existing.edges || [],
     timeField: input.timeField || existing.timeField,
     outputMode: input.outputMode || existing.outputMode,
     outputConfig: {
@@ -908,6 +912,9 @@ export async function runBusinessFlow(input = {}) {
     join: (flow.nodes || []).filter((node) => node.executionMode === "join").length,
     branches: branchKeys.size,
     conditionalBranches: (flow.nodes || []).filter((node) => node.branchFromId && node.branchCondition).length,
+    dagVersion: flow.dagVersion || 1,
+    edges: (flow.edges || []).length,
+    conditionalEdges: (flow.edges || []).filter((edge) => edge.type === "condition" && edge.condition).length,
     sourcePlans: sourceExecutionPlans,
     maxConcurrency: Math.max(1, ...sourceExecutionPlans.map((plan) => plan.concurrency || 1)),
     lockedSources: sourceExecutionPlans.filter((plan) => plan.lockEnabled).length,
@@ -939,7 +946,7 @@ export async function runBusinessFlow(input = {}) {
     nowText,
     `${rules.length} 条规则 / ${loopCalls} 次调用`
   ];
-  const sourceResults = await executeSourceNodes(flow.nodes?.length ? flow.nodes : sourceNodes, sourceExecutionPlans);
+  const sourceResults = await executeSourceNodes(flow.nodes?.length ? flow.nodes : sourceNodes, sourceExecutionPlans, flow.edges || []);
   const materialized = toBusinessRows(sourceResults, row);
   const runFailedRows = sourceResults.filter((item) => !item.result.ok).length;
   const fetchedRows = sourceResults.reduce((sum, item) => sum + Number(item.result.recordCount || 0), 0);

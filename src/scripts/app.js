@@ -15,6 +15,7 @@ const appState = {
   businessDetailMode: "list",
   sourceDetailMode: "list",
   flowNodes: [],
+  flowEdges: [],
   lastSourceTest: null,
   viewMode: "table",
   chartType: "line",
@@ -23,6 +24,9 @@ const appState = {
   overviewFilters: {},
   overviewTimeStart: "",
   overviewTimeEnd: "",
+  displayFilters: {},
+  displayTimeStart: "",
+  displayTimeEnd: "",
   cleaningTab: "business",
   analysisTab: "config",
   editingModelConfigId: ""
@@ -406,6 +410,29 @@ function getBusinessFieldValue(business, row, field = "") {
   return aliasMap[key] !== undefined ? row?.[aliasMap[key]] : undefined;
 }
 
+const semanticFieldAliases = {
+  severity: ["等级", "级别", "风险等级", "level", "severity", "risk", "priority"],
+  owner: ["归属对象", "对象", "服务", "应用", "owner", "service", "object", "app", "application"],
+  time: ["时间", "事件时间", "event_time", "created_at", "updated_at", "occurTime", "time", "date"],
+  name: ["事件名称", "名称", "name", "event", "title"],
+  status: ["状态", "影响", "status", "impact", "state"]
+};
+
+function resolveBusinessFieldName(business, requestedField = "", semanticKey = "") {
+  const fields = getBusinessFields(business);
+  const normalized = fields.map((field) => String(field).toLowerCase());
+  const candidates = [
+    requestedField,
+    ...(semanticKey ? semanticFieldAliases[semanticKey] || [] : []),
+    ...(semanticFieldAliases[requestedField] || [])
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    const index = normalized.indexOf(String(candidate).toLowerCase());
+    if (index >= 0) return fields[index];
+  }
+  return "";
+}
+
 function getRowBySemanticField(business, row, candidates = [], fallback = 0) {
   const fields = getBusinessFields(business);
   const matchedField = candidates.find((candidate) => fields.some((field) => String(field).toLowerCase() === String(candidate).toLowerCase()));
@@ -443,56 +470,65 @@ function getSituationFilterOptions(filter) {
   if (filter.source === "manual") return parseOptionList(filter.options);
   if (filter.source === "dictionary") return getDictionaryRefValues(filter.dictionaryRef);
   const values = (window.opsData.businesses || []).flatMap((business) =>
-    (business.rows || []).map((row) => getBusinessFieldValue(business, row, filter.field)).filter(hasBusinessFieldValue)
+    (business.rows || []).map((row) => getFilterFieldValue(business, row, filter)).filter(hasBusinessFieldValue)
   );
   return [...new Set(values.map((value) => String(value)))];
 }
 
-function getSituationSelectedValue(filter) {
-  if (Object.prototype.hasOwnProperty.call(appState.overviewFilters, filter.id)) {
-    return appState.overviewFilters[filter.id];
+function getFilterFieldValue(business, row, filter = {}) {
+  const resolvedField = resolveBusinessFieldName(business, filter.field);
+  return getBusinessFieldValue(business, row, resolvedField || filter.field);
+}
+
+function getScopedFilterValue(scope, filter) {
+  const state = scope === "display" ? appState.displayFilters : appState.overviewFilters;
+  if (Object.prototype.hasOwnProperty.call(state, filter.id)) {
+    return state[filter.id];
   }
   return filter.defaultValue || "";
 }
 
-function getOverviewTimeValue(business, row) {
+function getConfiguredTimeValue(business, row) {
   const candidates = window.opsData.situationTimeFilter?.fields?.length
     ? window.opsData.situationTimeFilter.fields
     : ["event_time", "created_at", "updated_at", "time", "时间"];
   for (const field of candidates) {
-    const value = getBusinessFieldValue(business, row, field);
+    const resolvedField = resolveBusinessFieldName(business, field, "time");
+    const value = getBusinessFieldValue(business, row, resolvedField || field);
     if (hasBusinessFieldValue(value)) return value;
   }
   return undefined;
 }
 
-function passesOverviewFilters(business, row) {
+function passesConfiguredFilters(business, row, scope = "overview") {
   const activeFilters = (window.opsData.situationFilters || []).filter((filter) => filter.defaultVisible !== false);
   const filterMatched = activeFilters.every((filter) => {
-    const selected = getSituationSelectedValue(filter);
+    const selected = getScopedFilterValue(scope, filter);
     const selectedValues = Array.isArray(selected) ? selected.filter(Boolean) : [selected].filter(Boolean);
     if (!selectedValues.length) return true;
-    const value = getBusinessFieldValue(business, row, filter.field);
+    const value = getFilterFieldValue(business, row, filter);
     if (!hasBusinessFieldValue(value)) return true;
     const text = String(value);
     if (filter.type === "text") return selectedValues.some((item) => text.includes(String(item)));
     return selectedValues.includes(text);
   });
   if (!filterMatched) return false;
-  if (!appState.overviewTimeStart && !appState.overviewTimeEnd) return true;
-  const value = getOverviewTimeValue(business, row);
+  const timeStart = scope === "display" ? appState.displayTimeStart : appState.overviewTimeStart;
+  const timeEnd = scope === "display" ? appState.displayTimeEnd : appState.overviewTimeEnd;
+  if (!timeStart && !timeEnd) return true;
+  const value = getConfiguredTimeValue(business, row);
   if (!hasBusinessFieldValue(value)) return true;
   const timestamp = Date.parse(String(value).replace(" ", "T"));
   if (Number.isNaN(timestamp)) return true;
-  const start = appState.overviewTimeStart ? Date.parse(appState.overviewTimeStart) : 0;
-  const end = appState.overviewTimeEnd ? Date.parse(appState.overviewTimeEnd) : 0;
+  const start = timeStart ? Date.parse(timeStart) : 0;
+  const end = timeEnd ? Date.parse(timeEnd) : 0;
   return (!start || timestamp >= start) && (!end || timestamp <= end);
 }
 
 function getFilteredOverviewBusinesses() {
   return (window.opsData.businesses || []).map((business) => ({
     ...business,
-    rows: (business.rows || []).filter((row) => passesOverviewFilters(business, row))
+    rows: (business.rows || []).filter((row) => passesConfiguredFilters(business, row, "overview"))
   }));
 }
 
@@ -691,7 +727,7 @@ function renderOverviewFilters() {
       `;
     }
     const options = getSituationFilterOptions(filter);
-    const selected = getSituationSelectedValue(filter);
+    const selected = getScopedFilterValue("overview", filter);
     return `
       <label>
         <span>${escapeHtml(filter.label)}</span>
@@ -717,6 +753,54 @@ function renderOverviewFilters() {
         <input id="overviewTimeEndInput" type="datetime-local" value="${escapeHtml(appState.overviewTimeEnd || "")}" />
       </label>
       <button class="small-button" id="resetOverviewFiltersBtn" type="button">重置筛选</button>
+    `
+  ].join("");
+  renderIcons();
+}
+
+function renderConfiguredFilterControls(containerSelector, scope = "overview") {
+  const container = $(containerSelector);
+  if (!container) return;
+  const filters = (window.opsData.situationFilters || []).filter((filter) => filter.defaultVisible !== false);
+  const timeFields = window.opsData.situationTimeFilter?.fields || [];
+  const filterControls = filters.map((filter) => {
+    const selected = getScopedFilterValue(scope, filter);
+    if (filter.type === "text") {
+      return `
+        <label>
+          <span>${escapeHtml(filter.label)}</span>
+          <input data-${scope}-configured-filter="${escapeHtml(filter.id)}" type="search" value="${escapeHtml(String(selected || ""))}" placeholder="输入关键词" />
+        </label>
+      `;
+    }
+    const options = getSituationFilterOptions(filter);
+    return `
+      <label>
+        <span>${escapeHtml(filter.label)}</span>
+        <select data-${scope}-configured-filter="${escapeHtml(filter.id)}" ${filter.type === "multi-select" ? "multiple" : ""}>
+          ${filter.type === "multi-select" ? "" : '<option value="">全部</option>'}
+          ${options.map((option) => `<option value="${escapeHtml(option)}" ${Array.isArray(selected) ? selected.includes(option) ? "selected" : "" : selected === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+        </select>
+      </label>
+    `;
+  });
+  const timeStart = scope === "display" ? appState.displayTimeStart : appState.overviewTimeStart;
+  const timeEnd = scope === "display" ? appState.displayTimeEnd : appState.overviewTimeEnd;
+  container.innerHTML = [
+    ...filterControls,
+    `
+      <label>
+        <span class="label-with-help">
+          时间开始
+          <button class="help-dot" type="button" aria-label="筛选时间说明" data-tooltip="按配置的候选时间字段顺序查找：${escapeHtml(timeFields.join(", ") || "event_time,time")}；业务没有这些字段时不参与时间过滤。">?</button>
+        </span>
+        <input id="${scope}ConfiguredTimeStartInput" type="datetime-local" value="${escapeHtml(timeStart || "")}" />
+      </label>
+      <label>
+        <span>时间结束</span>
+        <input id="${scope}ConfiguredTimeEndInput" type="datetime-local" value="${escapeHtml(timeEnd || "")}" />
+      </label>
+      <button class="small-button" data-${scope}-filter-reset type="button">重置筛选</button>
     `
   ].join("");
   renderIcons();
@@ -1084,17 +1168,23 @@ function setFieldHelp(selector, text) {
   const element = $(selector);
   const label = element?.closest("label");
   if (!label) return;
-  let help = label.querySelector(".field-help.generated-help");
+  label.querySelector(".field-help.generated-help")?.remove();
+  let help = label.querySelector(".help-dot.generated-help-dot") || label.querySelector(".label-with-help .help-dot");
   if (!text) {
     help?.remove();
     return;
   }
   if (!help) {
-    help = document.createElement("small");
-    help.className = "field-help generated-help";
-    label.append(help);
+    help = document.createElement("button");
+    help.type = "button";
+    help.className = "help-dot generated-help-dot";
+    help.textContent = "?";
+    const title = label.querySelector("span");
+    if (title) title.append(help);
+    else label.prepend(help);
   }
-  help.textContent = text;
+  help.setAttribute("aria-label", text);
+  help.dataset.tooltip = text;
 }
 
 function updateSourceModalVisibility() {
@@ -2670,7 +2760,7 @@ function makeFlowNode(type = "source", refId = "", overrides = {}) {
 
 function defaultFlowNodesFromFlow(flow = {}) {
   if (Array.isArray(flow.nodes) && flow.nodes.length) {
-    return flow.nodes.map((node, index) => ({
+    const nodes = flow.nodes.map((node, index) => ({
       id: node.id || `node_${index}_${Date.now()}`,
       type: node.type || "source",
       refId: node.refId || "",
@@ -2682,13 +2772,17 @@ function defaultFlowNodesFromFlow(flow = {}) {
       branchCondition: node.branchCondition || "",
       executionConfig: node.type === "source" ? normalizeSourceExecutionConfig(node.executionConfig) : node.executionConfig
     }));
+    appState.flowEdges = normalizeFlowDagGraph(nodes, flow.edges || []).edges;
+    return nodes;
   }
-  return [
+  const nodes = [
     { id: "node_context", type: "context", refId: "time-window", name: "业务时间窗口", executionMode: "serial", param: "context.start_time / context.end_time" },
     ...(flow.dataSourceIds || []).map((id) => ({ id: `node_source_${id}`, type: "source", refId: id, name: getFlowRefLabel("source", id), executionMode: "parallel", param: "", executionConfig: getDefaultSourceExecutionConfig() })),
     ...(flow.ruleIds || []).map((id) => ({ id: `node_rule_${id}`, type: "rule", refId: id, name: getFlowRefLabel("rule", id), executionMode: "join", param: "" })),
     { id: "node_output", type: "output", refId: "business-table", name: flow.outputConfig?.businessTable || "业务表输出", executionMode: "serial", param: flow.outputConfig?.writeStrategy || "upsert" }
   ];
+  appState.flowEdges = normalizeFlowDagGraph(nodes, []).edges;
+  return nodes;
 }
 
 function selectFlowNode(nodeId) {
@@ -2821,11 +2915,13 @@ function renderFlowDesigner() {
   if (!appState.flowNodes.length) {
     appState.flowNodes = defaultFlowNodesFromFlow({ dataSourceIds: [], ruleIds: [], outputConfig: collectFlowForm().outputConfig });
   }
+  appState.flowEdges = normalizeFlowDagGraph(appState.flowNodes, appState.flowEdges).edges;
   if (!appState.selectedFlowNodeId || !appState.flowNodes.some((node) => node.id === appState.selectedFlowNodeId)) {
     appState.selectedFlowNodeId = appState.flowNodes[0]?.id || "";
   }
   let nodeIndex = 0;
-  $("#flowDesigner").innerHTML = buildFlowStages(appState.flowNodes)
+  const edgeSummary = renderFlowEdgeSummary(appState.flowEdges);
+  $("#flowDesigner").innerHTML = `${edgeSummary}${buildFlowStages(appState.flowNodes)
     .map((stage) => {
       if (stage.type === "parallel") {
         const branchCards = stage.nodes
@@ -2871,7 +2967,7 @@ function renderFlowDesigner() {
       const node = stage.nodes[0];
       return `<div class="flow-stage ${escapeHtml(node.executionMode || "serial")}-stage">${renderFlowNodeCard(node, nodeIndex++)}</div>`;
     })
-    .join("");
+    .join("")}`;
   selectFlowNode(appState.selectedFlowNodeId);
   renderIcons();
 }
@@ -2942,9 +3038,10 @@ function renderFlowTable() {
       const nodes = flow.nodes || [];
       const parallel = nodes.filter((node) => node.executionMode === "parallel").length;
       const branchCount = new Set(nodes.filter((node) => node.branchFromId).map((node) => `${node.branchFromId}:${node.branchName || node.id}`)).size;
+      const edgeCount = (flow.edges || []).length || normalizeFlowDagGraph(nodes, []).edges.length;
       const selected = flow.id === appState.selectedFlowId ? "selected" : "";
       const outputTable = flow.outputConfig?.businessTable || `biz_${flow.businessName || "business"}`;
-      const topology = branchCount ? `${branchCount} 分支` : parallel ? `${parallel} 并行` : "串行";
+      const topology = branchCount ? `${branchCount} 分支 / ${edgeCount} 边` : parallel ? `${parallel} 并行 / ${edgeCount} 边` : `串行 / ${edgeCount} 边`;
       return `
         <div class="flow-list-row ${selected}" data-flow-id="${escapeHtml(flow.id)}">
           <span>${escapeHtml(flow.businessName)}</span>
@@ -2968,7 +3065,7 @@ function renderFlowTable() {
   ].join("");
 }
 
-function normalizeFlowDagNodes(nodes = []) {
+function normalizeFlowDagGraph(nodes = [], explicitEdges = []) {
   const normalized = nodes.map((node) => ({
     ...node,
     predecessors: [],
@@ -3008,21 +3105,64 @@ function normalizeFlowDagNodes(nodes = []) {
     }
   });
   const byId = new Map(normalized.map((node) => [node.id, node]));
+  const inferredEdges = [];
   normalized.forEach((node) => {
     (node.predecessors || []).forEach((predecessorId) => {
       const predecessor = byId.get(predecessorId);
       if (!predecessor) return;
       predecessor.successors = [...new Set([...(predecessor.successors || []), node.id])];
+      const explicit = explicitEdges.find((edge) => edge.from === predecessorId && edge.to === node.id);
+      inferredEdges.push({
+        id: explicit?.id || `edge_${predecessorId}_${node.id}`,
+        from: predecessorId,
+        to: node.id,
+        type: node.branchFromId ? "condition" : node.executionMode === "parallel" ? "parallel" : node.executionMode === "join" ? "join" : "serial",
+        condition: explicit?.condition || node.branchCondition || "",
+        label: explicit?.label || (node.branchName ? `${node.branchName}${node.branchCondition ? `：${node.branchCondition}` : ""}` : "")
+      });
     });
   });
-  return normalized;
+  return { nodes: normalized, edges: inferredEdges };
+}
+
+function renderFlowEdgeSummary(edges = []) {
+  if (!edges.length) return "";
+  const nodeById = new Map((appState.flowNodes || []).map((node) => [node.id, node]));
+  const grouped = edges.reduce((acc, edge) => {
+    acc[edge.type] = (acc[edge.type] || 0) + 1;
+    return acc;
+  }, {});
+  const labels = {
+    serial: "串行边",
+    parallel: "并行边",
+    condition: "条件边",
+    join: "汇聚边"
+  };
+  return `
+    <div class="flow-edge-summary">
+      <span>DAG</span>
+      ${Object.entries(grouped).map(([type, count]) => `<small>${escapeHtml(labels[type] || type)} ${escapeHtml(String(count))}</small>`).join("")}
+      <div class="flow-edge-list">
+        ${edges.slice(0, 8).map((edge) => {
+          const from = nodeById.get(edge.from);
+          const to = nodeById.get(edge.to);
+          return `
+            <small class="flow-edge-chip" title="${escapeHtml(edge.condition || edge.label || "")}">
+              ${escapeHtml(from?.name || edge.from)} → ${escapeHtml(to?.name || edge.to)}
+            </small>
+          `;
+        }).join("")}
+        ${edges.length > 8 ? `<small class="flow-edge-chip">+${escapeHtml(String(edges.length - 8))} 条</small>` : ""}
+      </div>
+    </div>
+  `;
 }
 
 function collectFlowForm() {
   const dataSourceIds = appState.flowNodes.filter((node) => node.type === "source" && node.refId).map((node) => node.refId);
   const ruleIds = appState.flowNodes.filter((node) => node.type === "rule" && node.refId).map((node) => node.refId);
   const defaultTimeField = window.opsData.situationTimeFilter?.fields?.[0] || "event_time";
-  const nodes = normalizeFlowDagNodes(appState.flowNodes);
+  const graph = normalizeFlowDagGraph(appState.flowNodes, appState.flowEdges);
   return {
     name: $("#flowNameInput").value.trim() || "自定义业务流",
     businessName: $("#flowBusinessInput").value.trim() || "新业务模块",
@@ -3030,8 +3170,9 @@ function collectFlowForm() {
     outputMode: $("#flowOutputModeSelect").value,
     dataSourceIds,
     ruleIds,
-    dagVersion: 1,
-    nodes,
+    dagVersion: 2,
+    nodes: graph.nodes,
+    edges: graph.edges,
     outputConfig: {
       writeStrategy: $("#flowWriteStrategySelect").value,
       primaryKey: $("#flowPrimaryKeyInput").value.trim(),
@@ -3066,7 +3207,7 @@ function renderFlowOutput(result) {
       <li>规则：${result.rules.map((rule) => escapeHtml(rule.name)).join("、") || "未选择"}</li>
       <li>落库：原始表 ${escapeHtml(result.outputConfig?.rawTable || "-")}，清洗表 ${escapeHtml(result.outputConfig?.cleanTable || "-")}，业务表 ${escapeHtml(result.outputConfig?.businessTable || "-")}</li>
       <li>写入策略：${escapeHtml(result.outputConfig?.writeStrategy || "-")} / 主键 ${escapeHtml(result.outputConfig?.primaryKey || "-")} / 去重 ${escapeHtml(result.outputConfig?.dedupeStrategy || "-")}${result.outputConfig?.dedupeFields ? ` / 组合字段 ${escapeHtml(result.outputConfig.dedupeFields)}` : ""}</li>
-      <li>执行计划：串行 ${escapeHtml(String(result.executionPlan?.serial || 0))} 个，并行 ${escapeHtml(String(result.executionPlan?.parallel || 0))} 个，分支 ${escapeHtml(String(result.executionPlan?.branches || 0))} 条，汇聚 ${escapeHtml(String(result.executionPlan?.join || 0))} 个</li>
+      <li>执行计划：DAG v${escapeHtml(String(result.executionPlan?.dagVersion || 1))}，边 ${escapeHtml(String(result.executionPlan?.edges || 0))} 条，条件边 ${escapeHtml(String(result.executionPlan?.conditionalEdges || 0))} 条；串行 ${escapeHtml(String(result.executionPlan?.serial || 0))} 个，并行 ${escapeHtml(String(result.executionPlan?.parallel || 0))} 个，分支 ${escapeHtml(String(result.executionPlan?.branches || 0))} 条，汇聚 ${escapeHtml(String(result.executionPlan?.join || 0))} 个</li>
       <li>入参循环：${escapeHtml(String(result.parameterPlan?.loopCalls || 0))} 次调用，${escapeHtml(result.parameterPlan?.summary || "固定入参")}</li>
       ${sourcePlanItems ? `<li>数据源执行策略：<ul>${sourcePlanItems}</ul></li>` : ""}
     </ul>
@@ -3390,8 +3531,13 @@ function setupDisplayWorkbenchLayout() {
   const advancedFilter = document.createElement("div");
   advancedFilter.className = "filter-row compact display-advanced-filter";
   advancedFilter.innerHTML = `
-    <label><span>风险等级</span><select id="severityFilterSelect"><option value="">全部等级</option></select></label>
-    <label><span>对象/服务</span><select id="ownerFilterSelect"><option value="">全部对象</option></select></label>
+    <label class="full">
+      <span class="label-with-help">
+        统一业务筛选
+        <button class="help-dot" type="button" aria-label="统一筛选说明" data-tooltip="这里复用态势总览的全局筛选配置。某个业务没有对应字段时，会自动跳过该筛选，不影响其他业务。">?</button>
+      </span>
+      <div class="filter-row compact configured-filter-bar" id="displayConfiguredFilterBar"></div>
+    </label>
     <label><span>字段筛选</span><select id="fieldFilterSelect"></select></label>
     <label><span>字段值</span><input id="fieldValueFilterInput" type="search" placeholder="输入字段值关键词" /></label>
     <button class="small-button" id="resetDisplayFiltersBtn" type="button">重置筛选</button>
@@ -3436,11 +3582,8 @@ function updateSelectOptions(selector, values, allLabel) {
 }
 
 function updateDisplayFilterOptions(business) {
-  if (!$("#severityFilterSelect")) return;
-  const rows = business?.rows || [];
+  if (!$("#fieldFilterSelect")) return;
   const fields = getBusinessFields(business);
-  updateSelectOptions("#severityFilterSelect", rows.map((row) => getRowBySemanticField(business, row, ["等级", "level", "severity", "risk"], 1)), "全部等级");
-  updateSelectOptions("#ownerFilterSelect", rows.map((row) => getRowBySemanticField(business, row, ["归属对象", "owner", "service", "object"], 2)), "全部对象");
   const selectedField = $("#fieldFilterSelect")?.value || "";
   $("#fieldFilterSelect").innerHTML = [
     '<option value="">全部字段</option>',
@@ -3451,14 +3594,11 @@ function updateDisplayFilterOptions(business) {
 
 function applyDisplayFilters(business) {
   if (!business) return { fields: [], rows: [] };
+  renderConfiguredFilterControls("#displayConfiguredFilterBar", "display");
   updateDisplayFilterOptions(business);
-  const severity = $("#severityFilterSelect")?.value || "";
-  const owner = $("#ownerFilterSelect")?.value || "";
   const fieldIndex = $("#fieldFilterSelect")?.value || "";
   const fieldValue = ($("#fieldValueFilterInput")?.value || "").trim().toLowerCase();
-  let rows = [...(business.rows || [])];
-  if (severity) rows = rows.filter((row) => String(getRowBySemanticField(business, row, ["等级", "level", "severity", "risk"], 1) || "") === severity);
-  if (owner) rows = rows.filter((row) => String(getRowBySemanticField(business, row, ["归属对象", "owner", "service", "object"], 2) || "") === owner);
+  let rows = [...(business.rows || [])].filter((row) => passesConfiguredFilters(business, row, "display"));
   if (fieldValue) {
     rows = rows.filter((row) => {
       if (fieldIndex !== "") return String(row[Number(fieldIndex)] || "").toLowerCase().includes(fieldValue);
@@ -4150,6 +4290,7 @@ function bindEvents() {
       appState.flowNodes = appState.flowNodes
         .filter((node) => node.id !== nodeId)
         .map((node) => (node.branchFromId === nodeId ? { ...node, branchFromId: "", branchName: "", branchCondition: "" } : node));
+      appState.flowEdges = appState.flowEdges.filter((edge) => edge.from !== nodeId && edge.to !== nodeId);
       appState.selectedFlowNodeId = appState.flowNodes[0]?.id || "";
       renderFlowDesigner();
       return;
@@ -4185,6 +4326,7 @@ function bindEvents() {
     appState.flowNodes = appState.flowNodes
       .filter((node) => node.id !== deletedNodeId)
       .map((node) => (node.branchFromId === deletedNodeId ? { ...node, branchFromId: "", branchName: "", branchCondition: "" } : node));
+    appState.flowEdges = appState.flowEdges.filter((edge) => edge.from !== deletedNodeId && edge.to !== deletedNodeId);
     appState.selectedFlowNodeId = appState.flowNodes[0]?.id || "";
     renderFlowDesigner();
   });
@@ -4556,14 +4698,18 @@ function bindEvents() {
   $("#timeFieldSelect").addEventListener("change", queryAndRenderBusiness);
   $("#timePresetSelect").addEventListener("change", () => {
     applyTimePreset($("#timePresetSelect").value);
+    appState.displayTimeStart = $("#timeStartInput").value;
+    appState.displayTimeEnd = $("#timeEndInput").value;
     queryAndRenderBusiness();
   });
   $("#timeStartInput").addEventListener("change", () => {
     setSelectValue("#timePresetSelect", "custom");
+    appState.displayTimeStart = $("#timeStartInput").value;
     queryAndRenderBusiness();
   });
   $("#timeEndInput").addEventListener("change", () => {
     setSelectValue("#timePresetSelect", "custom");
+    appState.displayTimeEnd = $("#timeEndInput").value;
     queryAndRenderBusiness();
   });
   $("#analysisBusinessSelect").addEventListener("change", renderAnalysisFieldSelect);
@@ -4651,6 +4797,13 @@ function bindEvents() {
           comboFields: $("#analysisFieldComboInput").value,
           scope: $("#analysisScopeSelect").value,
           format: $("#analysisFormatSelect").value,
+          filterContext: {
+            filters: window.opsData.situationFilters || [],
+            selectedValues: appState.displayFilters,
+            timeStart: appState.displayTimeStart,
+            timeEnd: appState.displayTimeEnd,
+            timeFields: window.opsData.situationTimeFilter?.fields || []
+          },
           prompt: $("#promptTemplateInput").value
         })
       });
@@ -4907,13 +5060,48 @@ function bindEvents() {
     drawDisplayChart();
     renderDisplayAnalysis(appState.lastDisplayResult);
   });
-  ["severityFilterSelect", "ownerFilterSelect", "fieldFilterSelect"].forEach((id) => {
+  $("#displayConfiguredFilterBar")?.addEventListener("input", (event) => {
+    const control = event.target.closest("[data-display-configured-filter]");
+    if (control) {
+      appState.displayFilters[control.dataset.displayConfiguredFilter] = control.value;
+      queryAndRenderBusiness();
+      return;
+    }
+    if (event.target.id === "displayConfiguredTimeStartInput") {
+      appState.displayTimeStart = event.target.value;
+      queryAndRenderBusiness();
+    }
+    if (event.target.id === "displayConfiguredTimeEndInput") {
+      appState.displayTimeEnd = event.target.value;
+      queryAndRenderBusiness();
+    }
+  });
+  $("#displayConfiguredFilterBar")?.addEventListener("change", (event) => {
+    const control = event.target.closest("[data-display-configured-filter]");
+    if (control) {
+      appState.displayFilters[control.dataset.displayConfiguredFilter] = control.multiple ? getSelectedValues(control) : control.value;
+      queryAndRenderBusiness();
+      return;
+    }
+    if (event.target.id === "displayConfiguredTimeStartInput") appState.displayTimeStart = event.target.value;
+    if (event.target.id === "displayConfiguredTimeEndInput") appState.displayTimeEnd = event.target.value;
+    queryAndRenderBusiness();
+  });
+  $("#displayConfiguredFilterBar")?.addEventListener("click", (event) => {
+    if (!event.target.closest("[data-display-filter-reset]")) return;
+    appState.displayFilters = {};
+    appState.displayTimeStart = "";
+    appState.displayTimeEnd = "";
+    queryAndRenderBusiness();
+  });
+  ["fieldFilterSelect"].forEach((id) => {
     $(`#${id}`)?.addEventListener("change", queryAndRenderBusiness);
   });
   $("#fieldValueFilterInput")?.addEventListener("input", queryAndRenderBusiness);
   $("#resetDisplayFiltersBtn")?.addEventListener("click", () => {
-    setSelectValue("#severityFilterSelect", "");
-    setSelectValue("#ownerFilterSelect", "");
+    appState.displayFilters = {};
+    appState.displayTimeStart = "";
+    appState.displayTimeEnd = "";
     setSelectValue("#fieldFilterSelect", "");
     $("#fieldValueFilterInput").value = "";
     queryAndRenderBusiness();
@@ -4991,6 +5179,8 @@ async function boot() {
   setupDisplayWorkbenchLayout();
   renderBusinessSelector();
   applyTimePreset($("#timePresetSelect")?.value || "24h");
+  appState.displayTimeStart = $("#timeStartInput")?.value || "";
+  appState.displayTimeEnd = $("#timeEndInput")?.value || "";
   renderAnalysisControls();
   setAnalysisTab(appState.analysisTab);
   renderBusinessTable();
