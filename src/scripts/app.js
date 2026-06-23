@@ -406,6 +406,13 @@ function getBusinessFieldValue(business, row, field = "") {
   return aliasMap[key] !== undefined ? row?.[aliasMap[key]] : undefined;
 }
 
+function getRowBySemanticField(business, row, candidates = [], fallback = 0) {
+  const fields = getBusinessFields(business);
+  const matchedField = candidates.find((candidate) => fields.some((field) => String(field).toLowerCase() === String(candidate).toLowerCase()));
+  if (matchedField) return getBusinessFieldValue(business, row, matchedField);
+  return row?.[Math.min(fallback, Math.max(fields.length - 1, 0))];
+}
+
 function hasBusinessFieldValue(value) {
   return value !== undefined && value !== null && value !== "";
 }
@@ -492,9 +499,11 @@ function getFilteredOverviewBusinesses() {
 function renderTimeFieldOptions() {
   const business = getCurrentBusiness();
   const selected = $("#timeFieldSelect")?.value || business?.timeField || "event_time";
-  const options = [...new Set([business?.timeField, "event_time", "created_at", "updated_at", "occurTime"].filter(Boolean))];
+  const fields = getBusinessFields(business);
+  const timeLikeFields = fields.filter((field) => /time|date|时间|日期|created|updated|occur/i.test(field));
+  const options = [...new Set([business?.timeField, ...timeLikeFields, ...fields, "event_time", "created_at", "updated_at", "occurTime"].filter(Boolean))];
   $("#timeFieldSelect").innerHTML = options.map((field) => `<option value="${escapeHtml(field)}">${escapeHtml(field)}</option>`).join("");
-  setSelectValue("#timeFieldSelect", selected);
+  setSelectValue("#timeFieldSelect", options.includes(selected) ? selected : options[0]);
 }
 
 function getSelectedAnalysisBusinessNames() {
@@ -582,7 +591,7 @@ function getConfiguredBusinessSummary() {
   const branchKeys = new Set(flowNodes.filter((node) => node.branchFromId).map((node) => `${node.branchFromId}:${node.branchName || node.id}`));
   const businessRows = businesses.reduce((sum, business) => sum + (business.rows || []).length, 0);
   const highRiskRows = businesses.reduce(
-    (sum, business) => sum + (business.rows || []).filter((row) => ["P0", "P1", "高", "严重"].includes(String(row[1] || "").toUpperCase())).length,
+    (sum, business) => sum + (business.rows || []).filter((row) => ["P0", "P1", "高", "严重"].includes(String(getRowBySemanticField(business, row, ["等级", "level", "severity", "risk"], 1) || "").toUpperCase())).length,
     0
   );
   const configuredSources = sourceIds.size ? sources.filter((source) => sourceIds.has(source.id)) : sources;
@@ -644,7 +653,7 @@ function buildOverviewModel() {
     ? summary.flows.slice(0, 5).map((flow) => {
         const business = summary.businesses.find((item) => item.name === flow.businessName);
         const rows = business?.rows || [];
-        const riskRows = rows.filter((row) => ["P0", "P1", "高", "严重"].includes(String(row[1] || "").toUpperCase()));
+        const riskRows = rows.filter((row) => ["P0", "P1", "高", "严重"].includes(String(getRowBySemanticField(business, row, ["等级", "level", "severity", "risk"], 1) || "").toUpperCase()));
         const nodes = flow.nodes || [];
         const branchCount = new Set(nodes.filter((node) => node.branchFromId).map((node) => `${node.branchFromId}:${node.branchName || node.id}`)).size;
         const pending = rows.length === 0;
@@ -665,7 +674,7 @@ function buildOverviewModel() {
     Math.min(summary.configuredRuleCount / Math.max(summary.rules.length || 1, 1), 1),
     Math.min(summary.mappings.length / Math.max(summary.configuredSourceCount * 3 || 1, 1), 1),
     Math.min(cleaningScore / 100, 1)
-  ].map((value) => Math.max(0.18, value));
+  ];
   return { metrics, flowCards, signals, radarValues, highRiskCount: attentionCount };
 }
 
@@ -1065,13 +1074,78 @@ function renderParamFieldSelect(selectedFields = []) {
   refreshMultiSelectControl($("#paramFieldSelect"));
 }
 
+function setFieldVisible(selector, visible) {
+  const element = $(selector);
+  const label = element?.closest("label");
+  if (label) label.classList.toggle("hidden", !visible);
+}
+
+function setFieldHelp(selector, text) {
+  const element = $(selector);
+  const label = element?.closest("label");
+  if (!label) return;
+  let help = label.querySelector(".field-help.generated-help");
+  if (!text) {
+    help?.remove();
+    return;
+  }
+  if (!help) {
+    help = document.createElement("small");
+    help.className = "field-help generated-help";
+    label.append(help);
+  }
+  help.textContent = text;
+}
+
+function updateSourceModalVisibility() {
+  const kind = $("#sourceKindSelect")?.value || "api";
+  const method = ($("#apiMethodSelect")?.value || "GET").toUpperCase();
+  const paramSourceType = $("#paramSourceTypeSelect")?.value || "static";
+  const keepMode = $("#responseKeepModeSelect")?.value || "all";
+  const fieldKeepMode = $("#responseFieldKeepModeSelect")?.value || "all";
+  const persistMode = $("#responsePersistModeSelect")?.value || "none";
+  const isApi = kind === "api";
+  const isDatabase = kind === "database";
+  const supportsBody = isApi && !["GET", "DELETE", "HEAD"].includes(method);
+  const sourceTypeInput = $("#sourceTypeInput");
+  const sourceTypeLabel = sourceTypeInput?.closest("label")?.querySelector("span");
+  if (sourceTypeLabel) {
+    sourceTypeLabel.textContent = isApi ? "API 地址" : isDatabase ? "数据库表名 / SQL 标识" : "本地文件路径";
+  }
+  if (sourceTypeInput) {
+    sourceTypeInput.placeholder = isApi ? "如 https://example.com/api/list" : isDatabase ? "如 asset_service_relation 或 select ..." : "如 D:/ops/report.xlsx";
+  }
+  setFieldVisible("#apiMethodSelect", isApi);
+  setFieldVisible("#paginationInput", isApi);
+  setFieldVisible("#queryParamsInput", isApi);
+  setFieldVisible("#headerParamsInput", isApi);
+  setFieldVisible("#bodyParamsInput", supportsBody);
+  setFieldVisible("#paramSourceTypeSelect", isApi);
+  setFieldVisible("#paramSourceSelect", isApi && !["static", "flow"].includes(paramSourceType));
+  setFieldVisible("#paramFieldSelect", isApi && paramSourceType !== "static");
+  setFieldVisible("#paramMappingInput", isApi && !["static"].includes(paramSourceType));
+  setFieldVisible("#paramPlaceholderInput", isApi);
+  setFieldVisible("#autoParamMappingBtn", isApi);
+  setFieldVisible("#paramQueryInput", isApi ? paramSourceType !== "static" : isDatabase);
+  setFieldVisible("#paramFilterInput", isApi && !["static"].includes(paramSourceType));
+  $("#flowContextGuide")?.classList.toggle("hidden", !(isApi && paramSourceType === "flow"));
+  setFieldVisible("#responseFilterInput", keepMode === "filter");
+  setFieldVisible("#responseKeepFieldsSelect", fieldKeepMode !== "all");
+  setFieldVisible("#configureValueFiltersBtn", fieldKeepMode === "value-filter");
+  setFieldVisible("#responseTargetTableInput", persistMode !== "none");
+  setFieldHelp("#sourceAuthConfigSelect", getSourceAuthConfig() ? `${authTypeLabels[normalizeAuthType(getSourceAuthConfig().type)] || "认证配置"}，保存时只记录认证名称引用。` : "未选择认证时将按无认证处理。");
+  setFieldHelp("#responsePathInput", isApi ? "填写记录数组所在路径，如 data.items；如果接口只返回单对象，可填写对象路径或留空。" : isDatabase ? "数据库默认使用 rows；如返回结构不同，可填写实际记录路径。" : "表格文件默认使用 sheets[0].rows，可按解析结果调整。");
+}
+
 function updateRequestParamVisibility() {
   const method = ($("#apiMethodSelect")?.value || "GET").toUpperCase();
+  const isApi = ($("#sourceKindSelect")?.value || "api") === "api";
   const supportsBody = !["GET", "DELETE", "HEAD"].includes(method);
   $$("[data-request-param]").forEach((item) => {
     const param = item.dataset.requestParam;
-    item.classList.toggle("hidden", param === "body" && !supportsBody);
+    item.classList.toggle("hidden", !isApi || (param === "body" && !supportsBody));
   });
+  updateSourceModalVisibility();
 }
 
 function updateParamSourceTypeHelp() {
@@ -1128,6 +1202,7 @@ function updateParamSourceTypeHelp() {
   $("#paramSourceSelect").disabled = value === "static" || value === "flow";
   refreshMultiSelectControl($("#paramSourceSelect"));
   renderParamFieldSelect(getSelectedValues($("#paramFieldSelect")));
+  updateSourceModalVisibility();
 }
 
 function autoGenerateParamMapping() {
@@ -1190,6 +1265,7 @@ function updateResponseKeepFieldsState() {
   $("#responseKeepFieldsSelect").disabled = !selectedOnly;
   $("#configureValueFiltersBtn").disabled = mode !== "value-filter";
   refreshMultiSelectControl($("#responseKeepFieldsSelect"));
+  updateSourceModalVisibility();
 }
 
 function suggestSourceTableName(prefix = "raw") {
@@ -1212,6 +1288,7 @@ function updateResponsePersistState() {
   } else if (!tableInput.value.trim()) {
     tableInput.value = suggestSourceTableName(mode === "clean-table" ? "clean" : "raw");
   }
+  updateSourceModalVisibility();
 }
 
 function formatJsonPreview(value, maxLength = 12000) {
@@ -1398,6 +1475,7 @@ function populateSourceForm(source = getSelectedSource()) {
   if ($("#mappingSourceSelect").options.length) {
     renderMappingSourceSelect();
   }
+  updateSourceModalVisibility();
 }
 
 function resetSourceForm() {
@@ -1430,6 +1508,7 @@ function resetSourceForm() {
   $("#paramStrategyInput").value = "concurrency=5; retries=2; continueOnError=true";
   appState.lastSourceTest = null;
   renderSourceTestResult();
+  updateSourceModalVisibility();
 }
 
 function setSourceFormReadonly(readonly) {
@@ -1456,6 +1535,7 @@ function openSourceModal(mode, source = getSelectedSource()) {
     $("#sourceModalTitle").textContent = mode === "preview" ? "数据源预览" : "编辑数据源";
   }
   setSourceFormReadonly(mode === "preview");
+  updateSourceModalVisibility();
   openDialog("#sourceModal");
   renderIcons();
 }
@@ -2774,8 +2854,17 @@ function renderFlowDesigner() {
           .join("");
         return `
           <div class="flow-stage conditional-branch-stage">
-            <div class="flow-branch-label">从 ${escapeHtml(stage.parent.name || getFlowRefLabel(stage.parent.type, stage.parent.refId))} 分支</div>
+            <div class="flow-gateway fork-gateway">
+              <span>FORK</span>
+              <strong>${escapeHtml(stage.parent.name || getFlowRefLabel(stage.parent.type, stage.parent.refId))}</strong>
+              <small>${escapeHtml(String(stage.branches.length))} 条条件分支并行进入，条件不满足的分支会跳过</small>
+            </div>
             <div class="flow-conditional-branches">${branchLanes}</div>
+            <div class="flow-gateway join-gateway">
+              <span>JOIN</span>
+              <strong>等待分支汇聚</strong>
+              <small>后续 join 节点会等待本组分支输出后继续执行</small>
+            </div>
           </div>
         `;
       }
@@ -2879,10 +2968,61 @@ function renderFlowTable() {
   ].join("");
 }
 
+function normalizeFlowDagNodes(nodes = []) {
+  const normalized = nodes.map((node) => ({
+    ...node,
+    predecessors: [],
+    successors: []
+  }));
+  const branchChildrenByParent = new Map();
+  normalized.forEach((node) => {
+    if (!node.branchFromId) return;
+    if (!branchChildrenByParent.has(node.branchFromId)) branchChildrenByParent.set(node.branchFromId, []);
+    branchChildrenByParent.get(node.branchFromId).push(node.id);
+  });
+  const mainNodes = normalized.filter((node) => !node.branchFromId);
+  let previousStageIds = [];
+  for (let index = 0; index < mainNodes.length; index += 1) {
+    const node = mainNodes[index];
+    if (node.executionMode === "parallel") {
+      const group = [node];
+      while (mainNodes[index + 1]?.executionMode === "parallel") {
+        index += 1;
+        group.push(mainNodes[index]);
+      }
+      group.forEach((item) => {
+        item.predecessors = [...previousStageIds];
+      });
+      previousStageIds = group.map((item) => item.id);
+      continue;
+    }
+    const branchOutputs = node.executionMode === "join"
+      ? previousStageIds.flatMap((id) => branchChildrenByParent.get(id) || [])
+      : [];
+    node.predecessors = [...new Set([...previousStageIds, ...branchOutputs])];
+    previousStageIds = [node.id];
+  }
+  normalized.forEach((node) => {
+    if (node.branchFromId) {
+      node.predecessors = [node.branchFromId];
+    }
+  });
+  const byId = new Map(normalized.map((node) => [node.id, node]));
+  normalized.forEach((node) => {
+    (node.predecessors || []).forEach((predecessorId) => {
+      const predecessor = byId.get(predecessorId);
+      if (!predecessor) return;
+      predecessor.successors = [...new Set([...(predecessor.successors || []), node.id])];
+    });
+  });
+  return normalized;
+}
+
 function collectFlowForm() {
   const dataSourceIds = appState.flowNodes.filter((node) => node.type === "source" && node.refId).map((node) => node.refId);
   const ruleIds = appState.flowNodes.filter((node) => node.type === "rule" && node.refId).map((node) => node.refId);
   const defaultTimeField = window.opsData.situationTimeFilter?.fields?.[0] || "event_time";
+  const nodes = normalizeFlowDagNodes(appState.flowNodes);
   return {
     name: $("#flowNameInput").value.trim() || "自定义业务流",
     businessName: $("#flowBusinessInput").value.trim() || "新业务模块",
@@ -2890,7 +3030,8 @@ function collectFlowForm() {
     outputMode: $("#flowOutputModeSelect").value,
     dataSourceIds,
     ruleIds,
-    nodes: appState.flowNodes,
+    dagVersion: 1,
+    nodes,
     outputConfig: {
       writeStrategy: $("#flowWriteStrategySelect").value,
       primaryKey: $("#flowPrimaryKeyInput").value.trim(),
@@ -3298,8 +3439,8 @@ function updateDisplayFilterOptions(business) {
   if (!$("#severityFilterSelect")) return;
   const rows = business?.rows || [];
   const fields = getBusinessFields(business);
-  updateSelectOptions("#severityFilterSelect", rows.map((row) => row[1]), "全部等级");
-  updateSelectOptions("#ownerFilterSelect", rows.map((row) => row[2]), "全部对象");
+  updateSelectOptions("#severityFilterSelect", rows.map((row) => getRowBySemanticField(business, row, ["等级", "level", "severity", "risk"], 1)), "全部等级");
+  updateSelectOptions("#ownerFilterSelect", rows.map((row) => getRowBySemanticField(business, row, ["归属对象", "owner", "service", "object"], 2)), "全部对象");
   const selectedField = $("#fieldFilterSelect")?.value || "";
   $("#fieldFilterSelect").innerHTML = [
     '<option value="">全部字段</option>',
@@ -3316,8 +3457,8 @@ function applyDisplayFilters(business) {
   const fieldIndex = $("#fieldFilterSelect")?.value || "";
   const fieldValue = ($("#fieldValueFilterInput")?.value || "").trim().toLowerCase();
   let rows = [...(business.rows || [])];
-  if (severity) rows = rows.filter((row) => String(row[1] || "") === severity);
-  if (owner) rows = rows.filter((row) => String(row[2] || "") === owner);
+  if (severity) rows = rows.filter((row) => String(getRowBySemanticField(business, row, ["等级", "level", "severity", "risk"], 1) || "") === severity);
+  if (owner) rows = rows.filter((row) => String(getRowBySemanticField(business, row, ["归属对象", "owner", "service", "object"], 2) || "") === owner);
   if (fieldValue) {
     rows = rows.filter((row) => {
       if (fieldIndex !== "") return String(row[Number(fieldIndex)] || "").toLowerCase().includes(fieldValue);
@@ -3374,7 +3515,8 @@ async function queryAndRenderBusiness() {
     const endTime = timePayload.timeEnd ? Date.parse(timePayload.timeEnd) : 0;
     if (startTime || endTime) {
       rows = rows.filter((row) => {
-        const rowTime = Date.parse(String(row[3] || "").replace(" ", "T"));
+        const rowTimeValue = getRowBySemanticField(fallback, row, [$("#timeFieldSelect")?.value, fallback?.timeField, "时间", "event_time", "created_at", "updated_at"], 3);
+        const rowTime = Date.parse(String(rowTimeValue || "").replace(" ", "T"));
         if (Number.isNaN(rowTime)) return true;
         return (!startTime || rowTime >= startTime) && (!endTime || rowTime <= endTime);
       });
@@ -3562,9 +3704,9 @@ function countBy(values) {
 
 function getDisplayChartData(business) {
   const rows = business?.rows || [];
-  const severityCounts = [...countBy(rows.map((row) => row[1])).entries()];
-  const objectCounts = [...countBy(rows.map((row) => row[2])).entries()].sort((a, b) => b[1] - a[1]).slice(0, 7);
-  const timeCounts = [...countBy(rows.map((row) => String(row[3] || "").slice(5, 16))).entries()].slice(-8);
+  const severityCounts = [...countBy(rows.map((row) => getRowBySemanticField(business, row, ["等级", "level", "severity", "risk"], 1))).entries()];
+  const objectCounts = [...countBy(rows.map((row) => getRowBySemanticField(business, row, ["归属对象", "owner", "service", "object"], 2))).entries()].sort((a, b) => b[1] - a[1]).slice(0, 7);
+  const timeCounts = [...countBy(rows.map((row) => String(getRowBySemanticField(business, row, [$("#timeFieldSelect")?.value, business?.timeField, "时间", "event_time", "created_at", "updated_at", "occurTime"], 3) || "").slice(5, 16))).entries()].slice(-8);
   return {
     severityCounts: severityCounts.length ? severityCounts : [["无数据", 1]],
     objectCounts: objectCounts.length ? objectCounts : [["无数据", 0]],
@@ -3690,10 +3832,10 @@ function renderDisplayAnalysis(business = appState.lastDisplayResult) {
   if (!container) return;
   const rows = business?.rows || [];
   const total = rows.length;
-  const highRiskRows = rows.filter((row) => ["P0", "P1", "高", "严重"].includes(String(row[1] || "").toUpperCase()));
-  const severityTop = [...countBy(rows.map((row) => row[1])).entries()].sort((a, b) => b[1] - a[1])[0] || ["-", 0];
-  const objectTop = [...countBy(rows.map((row) => row[2])).entries()].sort((a, b) => b[1] - a[1])[0] || ["-", 0];
-  const latest = rows.map((row) => row[3]).filter(Boolean).sort().at(-1) || "-";
+  const highRiskRows = rows.filter((row) => ["P0", "P1", "高", "严重"].includes(String(getRowBySemanticField(business, row, ["等级", "level", "severity", "risk"], 1) || "").toUpperCase()));
+  const severityTop = [...countBy(rows.map((row) => getRowBySemanticField(business, row, ["等级", "level", "severity", "risk"], 1))).entries()].sort((a, b) => b[1] - a[1])[0] || ["-", 0];
+  const objectTop = [...countBy(rows.map((row) => getRowBySemanticField(business, row, ["归属对象", "owner", "service", "object"], 2))).entries()].sort((a, b) => b[1] - a[1])[0] || ["-", 0];
+  const latest = rows.map((row) => getRowBySemanticField(business, row, [$("#timeFieldSelect")?.value, business?.timeField, "时间", "event_time", "created_at", "updated_at"], 3)).filter(Boolean).sort().at(-1) || "-";
   container.innerHTML = `
     <div class="display-insight-grid">
       <div><strong>${escapeHtml(String(total))}</strong><small>筛选后记录</small></div>
@@ -4107,6 +4249,7 @@ function bindEvents() {
   $("#mappingResponsePathInput").addEventListener("change", () => {
     $("#responsePathInput").value = $("#mappingResponsePathInput").value;
   });
+  $("#responseKeepModeSelect").addEventListener("change", updateSourceModalVisibility);
   $("#responseFieldKeepModeSelect").addEventListener("change", updateResponseKeepFieldsState);
   $("#responsePersistModeSelect").addEventListener("change", updateResponsePersistState);
   $("#configureValueFiltersBtn").addEventListener("click", openValueFilterDialog);
@@ -4130,10 +4273,12 @@ function bindEvents() {
   $("#sourceKindSelect").addEventListener("change", () => {
     updateRequestParamVisibility();
     renderParamFieldSelect();
+    updateSourceModalVisibility();
   });
   $("#apiMethodSelect").addEventListener("change", () => {
     updateRequestParamVisibility();
     renderParamFieldSelect(getSelectedValues($("#paramFieldSelect")));
+    updateSourceModalVisibility();
   });
   $("#responseFieldSelect").addEventListener("change", () => {
     if ($("#responseFieldSelect").value) {
@@ -4159,6 +4304,7 @@ function bindEvents() {
   $("#sourceAuthConfigSelect").addEventListener("change", () => {
     const auth = getSourceAuthConfig();
     if (!auth) return;
+    updateSourceModalVisibility();
   });
   $("#authConfigList").addEventListener("click", (event) => {
     const item = event.target.closest("[data-auth-id]");

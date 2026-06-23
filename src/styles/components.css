@@ -427,6 +427,45 @@
   gap: 14px;
 }
 
+.flow-gateway {
+  display: grid;
+  gap: 4px;
+  min-width: 170px;
+  padding: 10px 12px;
+  border: 1px solid rgba(48, 232, 199, 0.34);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(48, 232, 199, 0.14), rgba(77, 141, 255, 0.08)),
+    rgba(5, 20, 28, 0.92);
+  box-shadow: 0 0 24px rgba(48, 232, 199, 0.08);
+}
+
+.flow-gateway span {
+  width: max-content;
+  padding: 2px 7px;
+  border: 1px solid rgba(48, 232, 199, 0.32);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.flow-gateway strong,
+.flow-gateway small {
+  display: block;
+}
+
+.flow-gateway small {
+  max-width: 260px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.conditional-branch-stage {
+  gap: 14px;
+}
+
 .flow-branch-lane {
   position: relative;
   min-width: 244px;
