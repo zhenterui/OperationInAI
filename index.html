@@ -370,6 +370,50 @@
                       </label>
                     </div>
                   </details>
+                  <details class="flow-inspector-section full" open>
+                    <summary>
+                      <span>
+                        <strong>DAG 连线</strong>
+                        <small>显式配置节点之间的串行、并行、条件和汇聚关系</small>
+                      </span>
+                    </summary>
+                    <div class="config-form compact flow-edge-editor-grid">
+                      <label>
+                        <span>起点节点</span>
+                        <select id="flowEdgeFromSelect"></select>
+                      </label>
+                      <label>
+                        <span>终点节点</span>
+                        <select id="flowEdgeToSelect"></select>
+                      </label>
+                      <label>
+                        <span>连线类型</span>
+                        <select id="flowEdgeTypeSelect">
+                          <option value="serial">串行</option>
+                          <option value="parallel">并行</option>
+                          <option value="condition">条件</option>
+                          <option value="join">汇聚</option>
+                          <option value="custom">自定义</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span class="label-with-help">
+                          条件表达式
+                          <button class="help-dot" type="button" aria-label="连线条件说明" data-tooltip="条件边可填写进入该下游节点的判断，例如 severity in [P0,P1]。普通串行边可留空。">?</button>
+                        </span>
+                        <input id="flowEdgeConditionInput" value="" placeholder="如 severity in [P0,P1]" />
+                      </label>
+                      <label class="full">
+                        <span>显示名称</span>
+                        <input id="flowEdgeLabelInput" value="" placeholder="如 高优先级分支 / 数据汇聚" />
+                      </label>
+                      <div class="row-actions full">
+                        <button class="small-button" id="saveFlowEdgeBtn" type="button">保存连线</button>
+                        <button class="small-button danger" id="deleteFlowEdgeBtn" type="button">删除连线</button>
+                      </div>
+                      <div class="flow-edge-editor-list full" id="flowEdgeList"></div>
+                    </div>
+                  </details>
                   <details class="flow-node-execution-config source-node-only full">
                     <summary>
                       <span>

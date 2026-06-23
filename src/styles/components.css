@@ -317,6 +317,7 @@
 }
 
 .flow-designer {
+  position: relative;
   min-height: 280px;
   padding: 18px;
   border: 1px solid rgba(48, 232, 199, 0.24);
@@ -332,8 +333,39 @@
   overflow: auto;
 }
 
+.flow-edge-svg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  min-width: 100%;
+  min-height: 100%;
+  pointer-events: none;
+}
+
+.flow-edge-line {
+  fill: none;
+  stroke: rgba(48, 232, 199, 0.58);
+  stroke-width: 2;
+  stroke-dasharray: 0;
+}
+
+.flow-edge-line.generated {
+  stroke: rgba(77, 141, 255, 0.45);
+  stroke-dasharray: 8 6;
+}
+
+.flow-edge-line.manual {
+  stroke: rgba(48, 232, 199, 0.78);
+  stroke-width: 2.4;
+}
+
+.flow-edge-arrow {
+  fill: rgba(48, 232, 199, 0.78);
+}
+
 .flow-stage {
   position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   flex: 0 0 auto;
@@ -342,7 +374,7 @@
 .flow-edge-summary {
   position: sticky;
   left: 0;
-  z-index: 2;
+  z-index: 3;
   display: grid;
   gap: 5px;
   flex: 0 0 116px;
@@ -384,6 +416,43 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   background: rgba(255, 255, 255, 0.04);
+}
+
+.flow-edge-editor-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.flow-edge-editor-list {
+  display: grid;
+  max-height: 150px;
+  gap: 8px;
+  overflow: auto;
+}
+
+.flow-edge-editor-item {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  text-align: left;
+  background: rgba(255, 255, 255, 0.045);
+  cursor: pointer;
+}
+
+.flow-edge-editor-item.selected {
+  border-color: var(--line-strong);
+  background: rgba(48, 232, 199, 0.12);
+}
+
+.flow-edge-editor-item strong,
+.flow-edge-editor-item small {
+  display: block;
+}
+
+.flow-edge-editor-item small {
+  margin-top: 4px;
+  color: var(--muted);
 }
 
 .flow-stage:not(:last-child)::after {

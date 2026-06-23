@@ -17,6 +17,12 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function assert(condition, message) {
+  if (!condition) {
+    throw new Error(message);
+  }
+}
+
 async function request(path, options) {
   const response = await fetch(`${baseUrl}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -167,6 +173,12 @@ try {
         { id: "smoke_source_cmdb", type: "source", refId: "src_cmdb_pg", name: "CMDB", executionMode: "parallel", param: "db" },
         { id: "smoke_rule", type: "rule", refId: updatedRule.data.id, name: "冒烟规则", executionMode: "join", param: "clean" }
       ],
+      edges: [
+        { id: "edge_smoke_context_api", from: "smoke_context", to: "smoke_source_api", type: "parallel", label: "API branch" },
+        { id: "edge_smoke_context_cmdb", from: "smoke_context", to: "smoke_source_cmdb", type: "parallel", label: "CMDB branch" },
+        { id: "edge_smoke_api_rule", from: "smoke_source_api", to: "smoke_rule", type: "join", label: "join API" },
+        { id: "edge_smoke_cmdb_rule", from: "smoke_source_cmdb", to: "smoke_rule", type: "join", label: "join CMDB" }
+      ],
       timeField: "event_time"
     })
   });
@@ -178,6 +190,7 @@ try {
       dataSourceIds: [updatedSource.data.id, "src_cmdb_pg"],
       ruleIds: [updatedRule.data.id],
       nodes: flow.data.nodes,
+      edges: flow.data.edges,
       timeField: "event_time"
     })
   });
@@ -185,6 +198,8 @@ try {
     method: "POST",
     body: JSON.stringify({ flowId: updatedFlow.data.id })
   });
+  assert(updatedFlow.data.edges.length >= 4, "business flow should persist explicit DAG edges");
+  assert(flowRun.data.executionPlan.edges >= 4, "business flow run should include DAG edges in execution plan");
   const business = await request("/api/businesses/query", {
     method: "POST",
     body: JSON.stringify({ businessName: "告警业务", keyword: "支付", view: "top" })
@@ -249,9 +264,15 @@ try {
       fields: ["事件名称", "等级", "归属对象", "时间"],
       comboFields: "等级 + 归属对象 + 时间",
       scope: "compare",
-      modelConfigId: updatedModelConfig.data.id
+      modelConfigId: updatedModelConfig.data.id,
+      filterContext: {
+        selectedValues: { severity: "P0" },
+        filters: [{ id: "severity", label: "Severity", field: "等级", type: "select", source: "manual", options: ["P0", "P1"] }],
+        timeFields: ["event_time", "时间"]
+      }
     })
   });
+  assert(analysis.data.filterContext.filteredRows <= analysis.data.filterContext.totalRows, "analysis should apply filter context");
   const search = await request("/api/search/query", {
     method: "POST",
     body: JSON.stringify({ question: "支付和订单告警怎么处理？" })
@@ -309,6 +330,8 @@ try {
         flow: flowRun.data.business.name,
         flowName: updatedFlow.data.name,
         flowParallel: flowRun.data.executionPlan.parallel,
+        flowEdges: updatedFlow.data.edges.length,
+        flowRunEdges: flowRun.data.executionPlan.edges,
         deletedFlow: deletedFlow.data.name,
         businessRows: business.data.rows.length,
         knowledge: knowledge.data.name,
@@ -325,6 +348,7 @@ try {
         analysisSections: analysis.data.sections.length,
         analysisBusinesses: analysis.data.businessNames.length,
         analysisModel: analysis.data.model,
+        analysisFilteredRows: analysis.data.filterContext.filteredRows,
         searchSources: search.data.sources.length
       },
       null,

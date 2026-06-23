@@ -12,6 +12,7 @@ const appState = {
   editingSituationFilterId: "",
   selectedFlowId: "",
   selectedFlowNodeId: "",
+  selectedFlowEdgeId: "",
   businessDetailMode: "list",
   sourceDetailMode: "list",
   flowNodes: [],
@@ -27,6 +28,7 @@ const appState = {
   displayFilters: {},
   displayTimeStart: "",
   displayTimeEnd: "",
+  filterControlRenderKeys: {},
   cleaningTab: "business",
   analysisTab: "config",
   editingModelConfigId: ""
@@ -758,11 +760,26 @@ function renderOverviewFilters() {
   renderIcons();
 }
 
-function renderConfiguredFilterControls(containerSelector, scope = "overview") {
+function renderConfiguredFilterControls(containerSelector, scope = "overview", options = {}) {
   const container = $(containerSelector);
   if (!container) return;
   const filters = (window.opsData.situationFilters || []).filter((filter) => filter.defaultVisible !== false);
   const timeFields = window.opsData.situationTimeFilter?.fields || [];
+  const renderKey = JSON.stringify({
+    scope,
+    filters: filters.map((filter) => ({
+      id: filter.id,
+      label: filter.label,
+      field: filter.field,
+      type: filter.type,
+      source: filter.source,
+      dictionaryRef: filter.dictionaryRef,
+      options: filter.options
+    })),
+    timeFields
+  });
+  if (!options.force && appState.filterControlRenderKeys[containerSelector] === renderKey) return;
+  appState.filterControlRenderKeys[containerSelector] = renderKey;
   const filterControls = filters.map((filter) => {
     const selected = getScopedFilterValue(scope, filter);
     if (filter.type === "text") {
@@ -2773,6 +2790,7 @@ function defaultFlowNodesFromFlow(flow = {}) {
       executionConfig: node.type === "source" ? normalizeSourceExecutionConfig(node.executionConfig) : node.executionConfig
     }));
     appState.flowEdges = normalizeFlowDagGraph(nodes, flow.edges || []).edges;
+    appState.selectedFlowEdgeId = appState.flowEdges[0]?.id || "";
     return nodes;
   }
   const nodes = [
@@ -2782,6 +2800,7 @@ function defaultFlowNodesFromFlow(flow = {}) {
     { id: "node_output", type: "output", refId: "business-table", name: flow.outputConfig?.businessTable || "业务表输出", executionMode: "serial", param: flow.outputConfig?.writeStrategy || "upsert" }
   ];
   appState.flowEdges = normalizeFlowDagGraph(nodes, []).edges;
+  appState.selectedFlowEdgeId = appState.flowEdges[0]?.id || "";
   return nodes;
 }
 
@@ -2921,7 +2940,7 @@ function renderFlowDesigner() {
   }
   let nodeIndex = 0;
   const edgeSummary = renderFlowEdgeSummary(appState.flowEdges);
-  $("#flowDesigner").innerHTML = `${edgeSummary}${buildFlowStages(appState.flowNodes)
+  $("#flowDesigner").innerHTML = `<svg class="flow-edge-svg" id="flowEdgeSvg" aria-hidden="true"></svg>${edgeSummary}${buildFlowStages(appState.flowNodes)
     .map((stage) => {
       if (stage.type === "parallel") {
         const branchCards = stage.nodes
@@ -2969,7 +2988,9 @@ function renderFlowDesigner() {
     })
     .join("")}`;
   selectFlowNode(appState.selectedFlowNodeId);
+  renderFlowEdgeEditor();
   renderIcons();
+  requestAnimationFrame(renderFlowEdgeLines);
 }
 
 function renderFlowControls() {
@@ -3105,7 +3126,31 @@ function normalizeFlowDagGraph(nodes = [], explicitEdges = []) {
     }
   });
   const byId = new Map(normalized.map((node) => [node.id, node]));
+  const validNodeIds = new Set(normalized.map((node) => node.id));
   const inferredEdges = [];
+  const mergedEdges = [];
+  const addEdge = (edge, generated = false) => {
+    if (!edge?.from || !edge?.to || edge.from === edge.to) return;
+    if (!validNodeIds.has(edge.from) || !validNodeIds.has(edge.to)) return;
+    const duplicate = mergedEdges.find((item) => item.from === edge.from && item.to === edge.to);
+    const nextEdge = {
+      id: edge.id || `edge_${edge.from}_${edge.to}`,
+      from: edge.from,
+      to: edge.to,
+      type: edge.type || "serial",
+      condition: edge.condition || "",
+      label: edge.label || "",
+      generated
+    };
+    if (duplicate) {
+      duplicate.type = edge.type || duplicate.type;
+      duplicate.condition = edge.condition || duplicate.condition;
+      duplicate.label = edge.label || duplicate.label;
+      duplicate.generated = duplicate.generated && generated;
+      return;
+    }
+    mergedEdges.push(nextEdge);
+  };
   normalized.forEach((node) => {
     (node.predecessors || []).forEach((predecessorId) => {
       const predecessor = byId.get(predecessorId);
@@ -3122,7 +3167,26 @@ function normalizeFlowDagGraph(nodes = [], explicitEdges = []) {
       });
     });
   });
-  return { nodes: normalized, edges: inferredEdges };
+  inferredEdges.forEach((edge) => addEdge(edge, true));
+  explicitEdges.forEach((edge) => addEdge(edge, Boolean(edge.generated)));
+  mergedEdges.forEach((edge) => {
+    const predecessor = byId.get(edge.from);
+    const successor = byId.get(edge.to);
+    if (!predecessor || !successor) return;
+    predecessor.successors = [...new Set([...(predecessor.successors || []), edge.to])];
+    successor.predecessors = [...new Set([...(successor.predecessors || []), edge.from])];
+  });
+  return { nodes: normalized, edges: mergedEdges };
+}
+
+function getFlowEdgeTypeLabel(type) {
+  return {
+    serial: "Serial",
+    parallel: "Parallel",
+    condition: "Condition",
+    join: "Join",
+    custom: "Custom"
+  }[type] || type || "Custom";
 }
 
 function renderFlowEdgeSummary(edges = []) {
@@ -3132,29 +3196,131 @@ function renderFlowEdgeSummary(edges = []) {
     acc[edge.type] = (acc[edge.type] || 0) + 1;
     return acc;
   }, {});
-  const labels = {
-    serial: "串行边",
-    parallel: "并行边",
-    condition: "条件边",
-    join: "汇聚边"
-  };
   return `
     <div class="flow-edge-summary">
       <span>DAG</span>
-      ${Object.entries(grouped).map(([type, count]) => `<small>${escapeHtml(labels[type] || type)} ${escapeHtml(String(count))}</small>`).join("")}
+      ${Object.entries(grouped).map(([type, count]) => `<small>${escapeHtml(getFlowEdgeTypeLabel(type))} ${escapeHtml(String(count))}</small>`).join("")}
       <div class="flow-edge-list">
         ${edges.slice(0, 8).map((edge) => {
           const from = nodeById.get(edge.from);
           const to = nodeById.get(edge.to);
           return `
             <small class="flow-edge-chip" title="${escapeHtml(edge.condition || edge.label || "")}">
-              ${escapeHtml(from?.name || edge.from)} → ${escapeHtml(to?.name || edge.to)}
+              ${escapeHtml(from?.name || edge.from)} -> ${escapeHtml(to?.name || edge.to)}${edge.generated ? " · auto" : " · manual"}
             </small>
           `;
         }).join("")}
         ${edges.length > 8 ? `<small class="flow-edge-chip">+${escapeHtml(String(edges.length - 8))} 条</small>` : ""}
       </div>
     </div>
+  `;
+}
+
+function renderFlowEdgeEditor() {
+  const fromSelect = $("#flowEdgeFromSelect");
+  const toSelect = $("#flowEdgeToSelect");
+  const list = $("#flowEdgeList");
+  if (!fromSelect || !toSelect || !list) return;
+  const nodeOptions = (appState.flowNodes || [])
+    .map((node) => `<option value="${escapeHtml(node.id)}">${escapeHtml(node.name || getFlowRefLabel(node.type, node.refId) || node.id)}</option>`)
+    .join("");
+  fromSelect.innerHTML = nodeOptions;
+  toSelect.innerHTML = nodeOptions;
+  const selectedEdge = appState.flowEdges.find((edge) => edge.id === appState.selectedFlowEdgeId) || appState.flowEdges.find((edge) => !edge.generated) || appState.flowEdges[0];
+  appState.selectedFlowEdgeId = selectedEdge?.id || "";
+  if (selectedEdge) {
+    setSelectValue("#flowEdgeFromSelect", selectedEdge.from);
+    setSelectValue("#flowEdgeToSelect", selectedEdge.to);
+    setSelectValue("#flowEdgeTypeSelect", selectedEdge.type || "serial");
+    $("#flowEdgeConditionInput").value = selectedEdge.condition || "";
+    $("#flowEdgeLabelInput").value = selectedEdge.label || "";
+  } else {
+    setSelectValue("#flowEdgeFromSelect", appState.flowNodes[0]?.id || "");
+    setSelectValue("#flowEdgeToSelect", appState.flowNodes[1]?.id || "");
+    setSelectValue("#flowEdgeTypeSelect", "serial");
+    $("#flowEdgeConditionInput").value = "";
+    $("#flowEdgeLabelInput").value = "";
+  }
+  list.innerHTML = appState.flowEdges.length
+    ? appState.flowEdges
+        .map((edge) => {
+          const from = appState.flowNodes.find((node) => node.id === edge.from);
+          const to = appState.flowNodes.find((node) => node.id === edge.to);
+          return `
+            <button class="flow-edge-editor-item ${edge.id === appState.selectedFlowEdgeId ? "selected" : ""}" type="button" data-flow-edge-id="${escapeHtml(edge.id)}">
+              <strong>${escapeHtml(from?.name || edge.from)} -> ${escapeHtml(to?.name || edge.to)}</strong>
+              <small>${escapeHtml(getFlowEdgeTypeLabel(edge.type))}${edge.generated ? " / auto" : " / manual"}${edge.condition ? ` / ${escapeHtml(edge.condition)}` : ""}</small>
+            </button>
+          `;
+        })
+        .join("")
+    : '<small class="muted-text">No DAG edge yet.</small>';
+}
+
+function saveFlowEdgeFromEditor() {
+  const from = $("#flowEdgeFromSelect")?.value || "";
+  const to = $("#flowEdgeToSelect")?.value || "";
+  if (!from || !to || from === to) return;
+  const edge = {
+    id: appState.selectedFlowEdgeId && appState.flowEdges.some((item) => item.id === appState.selectedFlowEdgeId && !item.generated)
+      ? appState.selectedFlowEdgeId
+      : `edge_${from}_${to}_${Date.now()}`,
+    from,
+    to,
+    type: $("#flowEdgeTypeSelect")?.value || "custom",
+    condition: $("#flowEdgeConditionInput")?.value.trim() || "",
+    label: $("#flowEdgeLabelInput")?.value.trim() || "",
+    generated: false
+  };
+  appState.flowEdges = appState.flowEdges.filter((item) => item.id !== edge.id && !(item.from === from && item.to === to));
+  appState.flowEdges.push(edge);
+  appState.selectedFlowEdgeId = edge.id;
+  renderFlowDesigner();
+}
+
+function deleteFlowEdgeFromEditor() {
+  if (!appState.selectedFlowEdgeId) return;
+  const selected = appState.flowEdges.find((edge) => edge.id === appState.selectedFlowEdgeId);
+  if (!selected || selected.generated) return;
+  appState.flowEdges = appState.flowEdges.filter((edge) => edge.id !== appState.selectedFlowEdgeId);
+  appState.selectedFlowEdgeId = "";
+  renderFlowDesigner();
+}
+
+function renderFlowEdgeLines() {
+  const designer = $("#flowDesigner");
+  const svg = $("#flowEdgeSvg");
+  if (!designer || !svg) return;
+  const rect = designer.getBoundingClientRect();
+  const width = Math.max(designer.scrollWidth, rect.width);
+  const height = Math.max(designer.scrollHeight, rect.height);
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", width);
+  svg.setAttribute("height", height);
+  const paths = appState.flowEdges
+    .map((edge) => {
+      const fromCard = designer.querySelector(`[data-flow-node-id="${CSS.escape(edge.from)}"]`);
+      const toCard = designer.querySelector(`[data-flow-node-id="${CSS.escape(edge.to)}"]`);
+      if (!fromCard || !toCard) return "";
+      const fromRect = fromCard.getBoundingClientRect();
+      const toRect = toCard.getBoundingClientRect();
+      const startX = fromRect.right - rect.left + designer.scrollLeft;
+      const startY = fromRect.top + fromRect.height / 2 - rect.top + designer.scrollTop;
+      const endX = toRect.left - rect.left + designer.scrollLeft;
+      const endY = toRect.top + toRect.height / 2 - rect.top + designer.scrollTop;
+      const delta = Math.max(60, Math.abs(endX - startX) * 0.45);
+      const path = `M ${startX} ${startY} C ${startX + delta} ${startY}, ${endX - delta} ${endY}, ${endX} ${endY}`;
+      const className = edge.generated ? "flow-edge-line generated" : "flow-edge-line manual";
+      return `<path class="${className}" d="${path}" marker-end="url(#flowArrow)" />`;
+    })
+    .join("");
+  svg.innerHTML = `
+    <defs>
+      <marker id="flowArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" class="flow-edge-arrow" />
+      </marker>
+    </defs>
+    ${paths}
   `;
 }
 
@@ -4297,6 +4463,23 @@ function bindEvents() {
     }
     appState.selectedFlowNodeId = nodeId;
     renderFlowDesigner();
+  });
+  $("#flowDesigner").addEventListener("scroll", () => {
+    requestAnimationFrame(renderFlowEdgeLines);
+  });
+  $("#flowEdgeList").addEventListener("click", (event) => {
+    const edgeButton = event.target.closest("[data-flow-edge-id]");
+    if (!edgeButton) return;
+    appState.selectedFlowEdgeId = edgeButton.dataset.flowEdgeId;
+    renderFlowEdgeEditor();
+  });
+  $("#saveFlowEdgeBtn").addEventListener("click", () => {
+    if (isBusinessPreviewMode()) return;
+    saveFlowEdgeFromEditor();
+  });
+  $("#deleteFlowEdgeBtn").addEventListener("click", () => {
+    if (isBusinessPreviewMode()) return;
+    deleteFlowEdgeFromEditor();
   });
   $("#saveFlowNodeBtn").addEventListener("click", () => {
     if (isBusinessPreviewMode()) return;
