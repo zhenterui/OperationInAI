@@ -121,10 +121,34 @@ try {
   assert.equal(dictionaryResult.filteredRecordCount, 1);
   assert.equal(dictionaryResult.selectedRecords[0]["data.items[].name"], "pay-gateway");
 
+  const contextPlaceholderResult = await testDataSource({
+    name: "Unit context placeholder",
+    kind: "api",
+    type: "POST /unit/context",
+    responsePath: "data.items[]",
+    responseBody: { data: { items: [] } },
+    requestConfig: {
+      method: "POST",
+      queryParams: { startTime: "{{start_time}}" },
+      headers: {},
+      body: { env: "{{env}}" }
+    },
+    parameterConfig: {
+      context: { start_time: "2026-06-23T00:00:00.000Z", env: "prod" },
+      placeholders: [
+        { name: "start_time", source: "mapping", from: "context.start_time" },
+        { name: "env", source: "mapping", from: "context.env" }
+      ]
+    }
+  });
+  assert.equal(contextPlaceholderResult.request.queryParams.startTime, "2026-06-23T00:00:00.000Z");
+  assert.equal(contextPlaceholderResult.request.body.env, "prod");
+
   console.log(JSON.stringify({
     status: "ok",
     genericCleanup: cleanupResult.mappedRecords[0],
-    dictionaryFilter: dictionaryResult.selectedRecords[0]
+    dictionaryFilter: dictionaryResult.selectedRecords[0],
+    contextPlaceholder: contextPlaceholderResult.request.body
   }, null, 2));
 } finally {
   await cleanupCreated();

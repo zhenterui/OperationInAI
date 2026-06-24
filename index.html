@@ -807,11 +807,7 @@
                       data-tooltip="用于替换 Query、Header、Body 中的 {{变量名}}。source 可填 custom、mapping、dictionary。dictionary 用 from 指向 字典名.字段名；多个字典值默认逗号拼接，可用 mode=array 保留数组、first 取首个、newline 换行、template 按模板组合，separator 可自定义分隔符。多个并发上游请选“业务节点输出”。为空表示不启用。"
                     >?</button>
                   </span>
-                  <textarea id="paramPlaceholderInput" rows="4" placeholder='[
-  { "name": "start_time", "source": "mapping", "from": "context.start_time" },
-  { "name": "env", "source": "custom", "value": "prod" },
-  { "name": "product", "source": "dictionary", "from": "产品列表.产品名", "mode": "array" }
-]'>[
+                  <textarea id="paramPlaceholderInput" rows="4" placeholder="可为空；点击问号查看 JSON 格式、字段含义和字典多值组合方式。">[
   { "name": "start_time", "source": "mapping", "from": "context.start_time" },
   { "name": "env", "source": "custom", "value": "prod" },
   { "name": "product", "source": "dictionary", "from": "产品列表.产品名", "mode": "array" }
@@ -1535,6 +1531,10 @@
             <span class="icon" data-icon="refresh"></span>
           </button>
         </div>
+        <label class="global-search value-filter-search">
+          <span class="icon" data-icon="search"></span>
+          <input id="valueFilterSearchInput" type="search" placeholder="搜索字段名，快速定位需要配置的过滤字段" />
+        </label>
         <div class="value-filter-list" id="valueFilterList"></div>
         <div class="modal-actions">
           <button class="small-button" id="cancelValueFilterBtn" type="button">取消</button>

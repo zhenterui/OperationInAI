@@ -1,5 +1,9 @@
 import { store } from "../data/store.mjs";
 
+function uniqueId(prefix = "id") {
+  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+}
+
 const semanticFieldAliases = {
   severity: ["severity", "level", "priority", "alarm_level", "risk_level", "等级", "级别", "优先级", "告警级别"],
   service: ["service", "service_name", "app", "application", "system", "module", "归属对象", "服务", "应用", "系统", "模块"],
@@ -159,7 +163,7 @@ export function runAnalysis(payload = {}) {
   };
   const filterSummary = rawRows.length === allRows.length ? "未启用额外筛选" : `已按全局筛选从 ${rawRows.length} 条收敛到 ${allRows.length} 条`;
   const result = {
-    id: `analysis_${Date.now()}`,
+    id: uniqueId("analysis"),
     businessName: businesses.map((item) => item.name).join(" + "),
     businessNames: businesses.map((item) => item.name),
     model: modelConfig?.name || payload.model || "OpenAI Compatible",

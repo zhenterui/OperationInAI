@@ -1,9 +1,13 @@
 import { store } from "../data/store.mjs";
 
+function uniqueId(prefix = "id") {
+  return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+}
+
 export function createDataSource(input = {}) {
   const patch = toSourcePatch(input);
   const created = {
-    id: `src_${Date.now()}`,
+    id: input.id || uniqueId("src"),
     ...patch,
     health: "pending",
     updatedAt: new Date().toISOString()
@@ -240,7 +244,7 @@ function evaluateSingleFilter(record, condition = "", responsePath = "") {
   return values.some((value) => compareValues(value, operator.toLowerCase(), expected));
 }
 
-function matchesFilter(record, filterCondition = "", responsePath = "") {
+export function matchesFilter(record, filterCondition = "", responsePath = "") {
   const condition = String(filterCondition || "").trim();
   if (!condition) return true;
   return condition
@@ -294,9 +298,28 @@ function getDictionaryByIdOrName(idOrName = "") {
   return store.dictionarySets.find((item) => item.id === key || item.name === key);
 }
 
-function getDictionaryValuesFromRef(ref = "") {
+export function getDictionaryValuesFromRef(ref = "") {
+  if (ref && typeof ref === "object") {
+    const dictionary = getDictionaryByIdOrName(ref.dictionaryId || ref.dictionaryName || ref.name);
+    const column = ref.column || ref.field;
+    if (!dictionary || !column) return [];
+    const where = Array.isArray(ref.where) ? ref.where : [];
+    return (dictionary.rows || [])
+      .filter((row) =>
+        where.every((item) => {
+          const left = String(row?.[item.field] ?? "");
+          const right = String(item.value ?? "");
+          if (item.op === "contains") return left.includes(right);
+          if (item.op === "!=") return left !== right;
+          return left === right;
+        })
+      )
+      .flatMap((row) => splitDictionaryCell(row[column]));
+  }
   const [target, scope] = String(ref).split(/\s+where\s+|\s*\|\s*/i);
-  const [dictionaryName, column] = target.split(".");
+  const separatorIndex = target.indexOf(".");
+  const dictionaryName = separatorIndex >= 0 ? target.slice(0, separatorIndex) : target;
+  const column = separatorIndex >= 0 ? target.slice(separatorIndex + 1) : "";
   const dictionary = getDictionaryByIdOrName(dictionaryName);
   if (!dictionary || !column) return [];
   const [scopeColumn, scopeValue] = scope ? scope.split("=").map((item) => item?.trim()) : [];
@@ -461,7 +484,7 @@ function selectValueFilteredFields(records = [], keepFields = [], valueFilters =
   });
 }
 
-function extractResponseRecords(responseBody, config = {}) {
+export function extractResponseRecords(responseBody, config = {}) {
   const responsePath = config.responsePath || "";
   const recordValue = getByPath(responseBody, responsePath);
   const records = Array.isArray(recordValue) ? recordValue : recordValue === undefined ? [] : [recordValue];
@@ -546,13 +569,18 @@ function composeDictionaryPlaceholder(values = [], config = {}) {
   return items.join(config.separator ?? ",");
 }
 
-function buildPlaceholderValues(parameterConfig = {}) {
+export function buildPlaceholderValues(parameterConfig = {}) {
   return (parameterConfig.placeholders || []).reduce((output, item) => {
     if (!item?.name) return output;
     if (item.source === "custom") {
       output[item.name] = item.value ?? "";
     } else if (item.source === "dictionary") {
       output[item.name] = composeDictionaryPlaceholder(getDictionaryValuesFromRef(item.from || item.ref || ""), item);
+    } else if (item.source === "mapping") {
+      const context = parameterConfig.context || {};
+      const path = String(item.from || item.name || "").replace(/^context\./, "");
+      const values = getValuesByPath(context.context || context, path);
+      output[item.name] = values.length > 1 ? composeDictionaryPlaceholder(values, item) : values[0] ?? `{{${item.from || item.name}}}`;
     } else {
       output[item.name] = `{{${item.from || item.name}}}`;
     }
@@ -560,7 +588,7 @@ function buildPlaceholderValues(parameterConfig = {}) {
   }, {});
 }
 
-function applyPlaceholders(value, placeholderValues = {}) {
+export function applyPlaceholders(value, placeholderValues = {}) {
   if (typeof value === "string") {
     const exactMatch = value.match(/^\{\{\s*([\w.-]+)\s*\}\}$/);
     if (exactMatch && Object.prototype.hasOwnProperty.call(placeholderValues, exactMatch[1])) {
@@ -704,64 +732,82 @@ function finalizeRuleOutput(values = [], defaultValue = "") {
   return values.length > 1 ? values : values[0];
 }
 
-function applyCleaningRule(values = [], mapping = {}, record = {}, responsePath = "") {
+function createRuleContext(values = [], mapping = {}, record = {}, responsePath = "") {
   const normalizedValues = normalizeMappedValues(values);
   const rule = store.cleaningRules.find((item) => item.id === mapping.ruleId);
   const action = rule?.config?.action || "";
   const param = rule?.config?.param || mapping.ruleParam || "";
   const ruleOptions = parseRuleParamOptions(param);
-  if (!rule || !action) return finalizeRuleOutput(normalizedValues, mapping.defaultValue);
-  if (action === "combine") {
-    return renderTemplate(param || mapping.sourceField || "", record, responsePath) || mapping.defaultValue || "";
-  }
-  if (!normalizedValues.length) return action === "default" ? param || mapping.defaultValue || "" : mapping.defaultValue ?? "";
-  if (action === "dedupe") {
-    return [...new Set(normalizedValues.map((value) => String(value)))].join(param || ",");
-  }
-  if (action === "merge") {
-    return normalizedValues.map((value) => String(value)).join(param || ",");
-  }
-  if (action === "extract") {
+  return { normalizedValues, rule, action, param, ruleOptions, mapping, record, responsePath };
+}
+
+const cleaningActions = new Map([
+  ["combine", ({ param, mapping, record, responsePath }) =>
+    renderTemplate(param || mapping.sourceField || "", record, responsePath) || mapping.defaultValue || ""],
+  ["dedupe", ({ normalizedValues, param }) =>
+    [...new Set(normalizedValues.map((value) => String(value)))].join(param || ",")],
+  ["merge", ({ normalizedValues, param }) =>
+    normalizedValues.map((value) => String(value)).join(param || ",")],
+  ["extract", ({ normalizedValues, param, mapping }) => {
     try {
       const match = String(normalizedValues[0]).match(new RegExp(param));
       return match ? match[1] || match[0] : mapping.defaultValue ?? "";
     } catch {
       return mapping.defaultValue ?? "";
     }
-  }
-  if (action === "strip_html") {
-    return finalizeRuleOutput(normalizedValues.map((value) => stripHtml(value, param)), mapping.defaultValue);
-  }
-  if (action === "split_dedupe_join") {
-    return finalizeRuleOutput(normalizedValues.map((value) => splitDedupeJoin(value, param)), mapping.defaultValue);
-  }
-  if (action === "replace_all") {
-    return finalizeRuleOutput(normalizedValues.map((value) => replaceAllValue(value, param)), mapping.defaultValue);
-  }
-  const enumMap = action === "enum" ? parseEnumMap(param) : {};
-  const caseInsensitiveEnum = action === "enum" && (rule.config?.caseInsensitive || getBooleanOption(ruleOptions, "caseInsensitive", false));
-  const normalizedEnumMap = caseInsensitiveEnum
-    ? Object.fromEntries(Object.entries(enumMap).map(([key, value]) => [String(key).toLowerCase(), value]))
-    : enumMap;
-  const cleaned = normalizedValues.map((value) => {
-    const text = String(value ?? "");
-    if (action === "trim") return text.trim();
-    if (action === "lower") return text.toLowerCase();
-    if (action === "upper") return text.toUpperCase();
-    if (action === "enum") return normalizedEnumMap[caseInsensitiveEnum ? text.toLowerCase() : text] ?? value;
-    if (action === "default") return text ? value : param || mapping.defaultValue || "";
-    if (action === "number") {
+  }],
+  ["strip_html", ({ normalizedValues, param, mapping }) =>
+    finalizeRuleOutput(normalizedValues.map((value) => stripHtml(value, param)), mapping.defaultValue)],
+  ["split_dedupe_join", ({ normalizedValues, param, mapping }) =>
+    finalizeRuleOutput(normalizedValues.map((value) => splitDedupeJoin(value, param)), mapping.defaultValue)],
+  ["replace_all", ({ normalizedValues, param, mapping }) =>
+    finalizeRuleOutput(normalizedValues.map((value) => replaceAllValue(value, param)), mapping.defaultValue)],
+  ["trim", ({ normalizedValues, mapping }) =>
+    finalizeRuleOutput(normalizedValues.map((value) => String(value ?? "").trim()), mapping.defaultValue)],
+  ["lower", ({ normalizedValues, mapping }) =>
+    finalizeRuleOutput(normalizedValues.map((value) => String(value ?? "").toLowerCase()), mapping.defaultValue)],
+  ["upper", ({ normalizedValues, mapping }) =>
+    finalizeRuleOutput(normalizedValues.map((value) => String(value ?? "").toUpperCase()), mapping.defaultValue)],
+  ["default", ({ normalizedValues, param, mapping }) =>
+    finalizeRuleOutput(normalizedValues.map((value) => (String(value ?? "") ? value : param || mapping.defaultValue || "")), mapping.defaultValue)],
+  ["number", ({ normalizedValues, param, mapping }) =>
+    finalizeRuleOutput(normalizedValues.map((value) => {
       const numeric = Number(value);
       if (Number.isNaN(numeric)) return mapping.defaultValue ?? "";
       return param === "seconds_to_minutes" ? Math.round(numeric / 60) : numeric;
-    }
-    if (action === "date") {
+    }), mapping.defaultValue)],
+  ["date", ({ normalizedValues, mapping }) =>
+    finalizeRuleOutput(normalizedValues.map((value) => {
       const date = new Date(value);
       return Number.isNaN(date.getTime()) ? value : date.toISOString();
-    }
-    return value;
-  });
-  return finalizeRuleOutput(cleaned, mapping.defaultValue);
+    }), mapping.defaultValue)],
+  ["enum", ({ normalizedValues, rule, param, ruleOptions, mapping }) => {
+    const enumMap = parseEnumMap(param);
+    const caseInsensitiveEnum = rule.config?.caseInsensitive || getBooleanOption(ruleOptions, "caseInsensitive", false);
+    const normalizedEnumMap = caseInsensitiveEnum
+      ? Object.fromEntries(Object.entries(enumMap).map(([key, value]) => [String(key).toLowerCase(), value]))
+      : enumMap;
+    return finalizeRuleOutput(normalizedValues.map((value) => {
+      const text = String(value ?? "");
+      const fallback = mapping.defaultValue !== undefined && mapping.defaultValue !== "" ? mapping.defaultValue : value;
+      return normalizedEnumMap[caseInsensitiveEnum ? text.toLowerCase() : text] ?? fallback;
+    }), mapping.defaultValue);
+  }]
+]);
+
+export function getCleaningActionMetadata() {
+  return [...cleaningActions.keys()].map((action) => ({ action }));
+}
+
+export function applyCleaningRule(values = [], mapping = {}, record = {}, responsePath = "") {
+  const context = createRuleContext(values, mapping, record, responsePath);
+  if (!context.rule || !context.action) return finalizeRuleOutput(context.normalizedValues, mapping.defaultValue);
+  if (!context.normalizedValues.length && context.action !== "default" && context.action !== "combine") {
+    return mapping.defaultValue ?? "";
+  }
+  const handler = cleaningActions.get(context.action);
+  if (!handler) return finalizeRuleOutput(context.normalizedValues, mapping.defaultValue);
+  return handler(context);
 }
 
 function applyMappingToRecord(record = {}, mapping = {}, responsePath = "") {
@@ -786,7 +832,7 @@ function applyAggregateMapping(records = [], mapping = {}, responsePath = "") {
   return finalizeAggregateMappingOutput(values, mapping);
 }
 
-function applyFieldMappings(records = [], mappings = [], responsePath = "") {
+export function applyFieldMappings(records = [], mappings = [], responsePath = "") {
   if (!mappings.length) return [];
   const hasAggregateMappings = mappings.some((mapping) => mapping.recordMode === "aggregate-records");
   if (hasAggregateMappings) {
@@ -1175,7 +1221,7 @@ export async function runSync(payload = {}) {
   const failedRows = result.ok ? 0 : Math.max(1, fetchedRows - cleanedRows);
   const sourceModeText = result.sourceMode === "real" ? "实际请求" : "模拟响应";
   const log = {
-    id: `sync_${Date.now()}`,
+    id: uniqueId("sync"),
     sourceId: source?.id,
     sourceName: source?.name || "未知数据源",
     status: result.ok ? "success" : "warning",

@@ -322,6 +322,16 @@ combine({{service.name}}-{{level}})
 
 节点支持串行、并行、条件分支和汇聚。
 
+业务流运行时会按 DAG 连线执行，而不是只按页面顺序展示：
+
+- `context` 节点会输出本次运行上下文，例如 `start_time`、`end_time`、`businessName`、`batchId`、`tenant`、`env`。
+- `source` 节点会执行数据源取数、响应解析、字段保留、字段值过滤和字段映射。
+- `rule` 节点会读取上游节点记录；如果节点或规则配置了字段映射，会再次应用映射和清洗规则，否则默认透传上游记录。
+- `join` 节点会汇聚多个上游分支输出，适合多条并行分支结束后再进入统一输出。
+- `output` 节点会把上游最终记录作为业务表数据写入系统业务数据。
+
+条件边的表达式使用同一套过滤语法，例如 `severity in [P0,P1]`。条件不满足时，下游节点会跳过；普通串行边可不填写条件。多个并发上游都需要作为入参来源时，建议在数据源入参来源中选择“业务节点输出”，并在业务流里用显式连线表达依赖关系。
+
 数据源节点可以在业务流里覆盖执行策略，用于处理大批量 API 采集和数据库记录驱动调用：
 
 - 分页查询：`不分页` 表示只请求一次；`页码分页到最后一页` 会按页码递增；`Token 分页到最后一页` 会从响应体路径读取下一页标识。
@@ -398,11 +408,13 @@ API Key 在接口返回时会脱敏展示。
 ```powershell
 npm.cmd run check
 npm.cmd run api:smoke
+npm.cmd run cleaning:unit
+npm.cmd run flow:unit
 npm.cmd run cleaning:e2e
 npm.cmd run port:check
 ```
 
-`api:smoke` 覆盖主要 API、模型配置和组合分析；`cleaning:e2e` 覆盖数据清洗主流程。
+`api:smoke` 覆盖主要 API、模型配置和组合分析；`cleaning:unit` 覆盖通用清洗动作、字典过滤和上下文占位符；`flow:unit` 覆盖 source → rule → output 的业务流 DAG 运行时；`cleaning:e2e` 覆盖数据清洗主流程。
 
 ## 出参字段值过滤、临时取值与聚合输出
 

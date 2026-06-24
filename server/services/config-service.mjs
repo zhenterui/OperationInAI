@@ -1,5 +1,5 @@
 import { store } from "../data/store.mjs";
-import { executeDataSourcePlan } from "./sync-service.mjs";
+import { applyFieldMappings, executeDataSourcePlan, matchesFilter } from "./sync-service.mjs";
 
 function uniqueId(prefix = "id") {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
@@ -18,7 +18,7 @@ function normalizeList(value, fallback = []) {
 
 function toSituationFilter(input = {}, existing = {}) {
   return {
-    id: existing.id || input.id || `situation_filter_${Date.now()}`,
+    id: existing.id || input.id || uniqueId("situation_filter"),
     label: input.label || existing.label || "自定义筛选",
     field: input.field || existing.field || "",
     type: ["select", "multi-select", "text"].includes(input.type) ? input.type : existing.type || "select",
@@ -234,6 +234,18 @@ function toBusinessRows(sourceResults = [], fallbackRow = []) {
   };
 }
 
+function toBusinessRowsFromRecords(records = [], fallbackRow = []) {
+  const flattenedRecords = records.map((record) => flattenBusinessRecord(record));
+  if (!flattenedRecords.length) {
+    return { fields: ["事件名称", "等级", "归属对象", "时间", "状态/影响"], rows: [fallbackRow] };
+  }
+  const fields = buildBusinessFields(flattenedRecords);
+  return {
+    fields,
+    rows: flattenedRecords.map((record) => fields.map((field) => record[field] ?? ""))
+  };
+}
+
 function parseFieldList(value = "") {
   return String(value || "")
     .split(/[,，\n]/)
@@ -242,6 +254,7 @@ function parseFieldList(value = "") {
 }
 
 function getDedupeFields(outputConfig = {}) {
+  if (outputConfig.dedupeStrategy === "none") return [];
   if (outputConfig.dedupeStrategy === "field-combo" && outputConfig.dedupeFields) {
     return parseFieldList(outputConfig.dedupeFields);
   }
@@ -283,6 +296,38 @@ function getNodePredecessors(nodes = [], node = {}, edges = []) {
   return index > 0 ? [nodes[index - 1].id] : [];
 }
 
+function buildFlowEdges(nodes = [], explicitEdges = []) {
+  if (Array.isArray(explicitEdges) && explicitEdges.length) return explicitEdges;
+  const edges = [];
+  const branchLeaves = new Set();
+  let previousMainNode = null;
+  nodes.forEach((node) => {
+    if (!node?.id) return;
+    if (node.branchFromId) {
+      edges.push({
+        id: uniqueId("edge"),
+        from: node.branchFromId,
+        to: node.id,
+        type: "branch",
+        condition: ""
+      });
+      branchLeaves.add(node.id);
+      return;
+    }
+    const isJoinLike = node.executionMode === "join" || node.type === "join";
+    if (isJoinLike && branchLeaves.size) {
+      branchLeaves.forEach((from) => {
+        edges.push({ id: uniqueId("edge"), from, to: node.id, type: "join", condition: "" });
+      });
+      branchLeaves.clear();
+    } else if (previousMainNode) {
+      edges.push({ id: uniqueId("edge"), from: previousMainNode.id, to: node.id, type: "serial", condition: "" });
+    }
+    previousMainNode = node;
+  });
+  return edges;
+}
+
 function getSourceDependencies(node = {}, nodesById = new Map(), edges = [], visited = new Set()) {
   if (visited.has(node.id)) return [];
   visited.add(node.id);
@@ -292,6 +337,153 @@ function getSourceDependencies(node = {}, nodesById = new Map(), edges = [], vis
     if (predecessor.type === "source") return [predecessor.id];
     return getSourceDependencies(predecessor, nodesById, edges, visited);
   });
+}
+
+function getIncomingEdges(node = {}, edges = []) {
+  return edges.filter((edge) => edge.to === node.id);
+}
+
+function getOutgoingEdges(node = {}, edges = []) {
+  return edges.filter((edge) => edge.from === node.id);
+}
+
+function getNodeOutputRecords(output = {}) {
+  return Array.isArray(output.records) ? output.records : [];
+}
+
+function mergeRecordsFromOutputs(outputs = []) {
+  return outputs.flatMap(getNodeOutputRecords);
+}
+
+function getPredecessorOutputs(node = {}, nodes = [], edges = [], outputByNode = new Map()) {
+  const predecessorIds = getNodePredecessors(nodes, node, edges);
+  return predecessorIds.map((id) => outputByNode.get(id)).filter(Boolean);
+}
+
+function shouldRunNodeByEdges(node = {}, edges = [], outputByNode = new Map()) {
+  const incoming = getIncomingEdges(node, edges).filter((edge) => edge.type === "condition" && edge.condition);
+  if (!incoming.length) return true;
+  return incoming.some((edge) => {
+    const records = getNodeOutputRecords(outputByNode.get(edge.from));
+    return records.length ? records.some((record) => matchesFilter(record, edge.condition)) : true;
+  });
+}
+
+function normalizeFlowMappings(value = []) {
+  return Array.isArray(value)
+    ? value.filter((item) => item && item.sourceField && item.targetField)
+    : [];
+}
+
+function getRuleNodeMappings(node = {}, rule = {}) {
+  const configuredMappings = normalizeFlowMappings(node.fieldMappings || node.mappings || rule.config?.mappings);
+  if (configuredMappings.length) {
+    return configuredMappings.map((mapping) => ({
+      ...mapping,
+      ruleId: mapping.ruleId || rule.id || node.refId || ""
+    }));
+  }
+  if (node.sourceField && node.targetField) {
+    return [{
+      sourceId: node.id,
+      sourceField: node.sourceField,
+      targetField: node.targetField,
+      defaultValue: node.defaultValue || "",
+      ruleId: rule.id || node.refId || "",
+      ruleParam: node.ruleParam || rule.config?.param || "",
+      recordMode: node.recordMode || "per-record",
+      recordFilter: node.recordFilter || "",
+      aggregateMode: node.aggregateMode || "join",
+      aggregateSeparator: node.aggregateSeparator || ","
+    }];
+  }
+  return [];
+}
+
+async function executeFlowNode(node = {}, context = {}) {
+  const { nodes, edges, outputByNode, sourceExecutionPlans } = context;
+  const upstreamOutputs = getPredecessorOutputs(node, nodes, edges, outputByNode);
+  const upstreamRecords = mergeRecordsFromOutputs(upstreamOutputs);
+  if (!shouldRunNodeByEdges(node, edges, outputByNode)) {
+    return { node, skipped: true, records: [], sourceResults: [], message: "edge condition not matched" };
+  }
+  if (node.type === "context") {
+    return { node, records: [{ ...(context.flowContext || {}) }], sourceResults: [] };
+  }
+  if (node.type === "source") {
+    const source = store.dataSources.find((entry) => entry.id === node.refId);
+    if (!source) return { node, records: [], sourceResults: [], error: "source not found" };
+    const plan = sourceExecutionPlans.find((entry) => entry.nodeId === node.id) || estimateSourceNodePlan(node, source);
+    const sourceWithContext = {
+      ...source,
+      parameterConfig: {
+        ...(source.parameterConfig || {}),
+        context: context.flowContext || {}
+      }
+    };
+    const result = await executeDataSourcePlan(sourceWithContext, node, plan);
+    const records = Array.isArray(result.mappedRecords) && result.mappedRecords.length
+      ? result.mappedRecords
+      : result.selectedRecords || [];
+    return { node, source, result, plan, records, sourceResults: [{ node, source, result, plan }] };
+  }
+  if (node.type === "rule") {
+    const rule = store.cleaningRules.find((item) => item.id === node.refId) || {};
+    const mappings = getRuleNodeMappings(node, rule);
+    const records = mappings.length ? applyFieldMappings(upstreamRecords, mappings, node.responsePath || "") : upstreamRecords;
+    return { node, rule, records, sourceResults: upstreamOutputs.flatMap((item) => item.sourceResults || []) };
+  }
+  if (node.type === "join") {
+    const mode = node.joinMode || node.executionMode || "append";
+    const records = mode === "first" ? getNodeOutputRecords(upstreamOutputs[0]) : upstreamRecords;
+    return { node, records, sourceResults: upstreamOutputs.flatMap((item) => item.sourceResults || []) };
+  }
+  if (node.type === "output") {
+    const records = upstreamRecords;
+    return { node, records, sourceResults: upstreamOutputs.flatMap((item) => item.sourceResults || []), outputTarget: node.refId || node.param || "" };
+  }
+  return { node, records: upstreamRecords, sourceResults: upstreamOutputs.flatMap((item) => item.sourceResults || []) };
+}
+
+async function executeFlowDag(flowNodes = [], sourceExecutionPlans = [], explicitEdges = [], flowContext = {}) {
+  const nodes = flowNodes.filter((node) => node && node.id);
+  const edges = buildFlowEdges(nodes, explicitEdges);
+  const completed = new Set();
+  const outputByNode = new Map();
+  const executionOrder = [];
+  const remaining = new Set(nodes.map((node) => node.id));
+  while (remaining.size) {
+    let ready = nodes.filter((node) => {
+      if (!remaining.has(node.id)) return false;
+      return getNodePredecessors(nodes, node, edges).every((id) => completed.has(id) || !remaining.has(id));
+    });
+    if (!ready.length) {
+      ready = [nodes.find((node) => remaining.has(node.id))].filter(Boolean);
+    }
+    const outputs = await Promise.all(ready.map((node) =>
+      executeFlowNode(node, { nodes, edges, outputByNode, sourceExecutionPlans, flowContext })
+    ));
+    ready.forEach((node, index) => {
+      outputByNode.set(node.id, outputs[index]);
+      executionOrder.push(node.id);
+      completed.add(node.id);
+      remaining.delete(node.id);
+    });
+  }
+  const terminalNodes = nodes.filter((node) => !getOutgoingEdges(node, edges).length);
+  const terminalOutputs = terminalNodes.map((node) => outputByNode.get(node.id)).filter(Boolean);
+  const outputRecords = mergeRecordsFromOutputs(terminalOutputs.length ? terminalOutputs : [...outputByNode.values()]);
+  const sourceResultByNode = new Map();
+  [...outputByNode.values()].flatMap((item) => item.sourceResults || []).forEach((item) => {
+    sourceResultByNode.set(item.node.id, item);
+  });
+  return {
+    edges,
+    executionOrder,
+    nodeResults: [...outputByNode.values()],
+    sourceResults: [...sourceResultByNode.values()],
+    outputRecords
+  };
 }
 
 async function executeSourceNodes(flowNodes = [], sourceExecutionPlans = [], flowEdges = []) {
@@ -388,7 +580,7 @@ export function deleteFieldMapping(id) {
 
 export function createAuthConfig(input = {}) {
   const config = {
-    id: `auth_${Date.now()}`,
+    id: input.id || uniqueId("auth"),
     name: input.name || "自定义认证配置",
     category: input.category || "认证配置",
     type: input.type || "cookie",
@@ -455,7 +647,7 @@ function maskApiKey(value = "") {
 
 export function createModelConfig(input = {}) {
   const config = {
-    id: `model_${Date.now()}`,
+    id: input.id || uniqueId("model"),
     name: input.name || "自定义模型配置",
     category: input.category || "模型配置",
     vendor: input.vendor || "openai-compatible",
@@ -526,7 +718,7 @@ export function createStorageConfig(input = {}) {
   }
   const password = input.password || "";
   const config = {
-    id: `storage_${Date.now()}`,
+    id: input.id || uniqueId("storage"),
     name: input.name || "数据库存储",
     category: input.category || "数据库存储",
     type: "database",
@@ -631,7 +823,7 @@ export function switchStorageConfig(input = {}) {
   const previous = store.storageConfigs.find((item) => item.id === store.currentStorageId) || store.storageConfigs[0];
   const migrationPolicy = input.migrationPolicy || "copy-config";
   const migrationLog = {
-    id: `storage_migration_${Date.now()}`,
+    id: uniqueId("storage_migration"),
     fromStorageId: previous?.id || "",
     fromStorageName: previous?.name || "",
     toStorageId: target.id,
@@ -682,7 +874,7 @@ export function createDictionarySet(input = {}) {
   const rows = Array.isArray(input.rows) ? input.rows : [];
   const columns = Array.isArray(input.columns) && input.columns.length ? input.columns : inferDictionaryColumns(rows);
   const dictionary = {
-    id: `dict_${Date.now()}`,
+    id: input.id || uniqueId("dict"),
     name: input.name || "自定义字典集",
     category: input.category || "通用字典",
     description: input.description || "",
@@ -789,7 +981,7 @@ export function createBusinessFlow(input = {}) {
     return updateBusinessFlow(existing.id, { ...input, businessName });
   }
   const flow = {
-    id: `flow_${Date.now()}`,
+    id: input.id || uniqueId("flow"),
     name: input.name || "自定义业务流",
     businessName,
     dataSourceIds: Array.isArray(input.dataSourceIds) ? input.dataSourceIds : [],
@@ -888,9 +1080,21 @@ export async function runBusinessFlow(input = {}) {
   const sourceNodes = Array.isArray(flow.nodes) && flow.nodes.length
     ? flow.nodes.filter((node) => node.type === "source")
     : sources.map((source) => ({ id: `node_source_${source.id}`, type: "source", refId: source.id, name: source.name }));
+  const flowNodes = Array.isArray(flow.nodes) && flow.nodes.length ? flow.nodes : sourceNodes;
   const rules = nodeRuleIds
     .map((id) => store.cleaningRules.find((rule) => rule.id === id))
     .filter(Boolean);
+  const runAt = new Date();
+  const defaultStart = new Date(runAt.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const flowContext = {
+    start_time: defaultStart,
+    end_time: runAt.toISOString(),
+    businessName: flow.businessName,
+    batchId: uniqueId("batch"),
+    tenant: input.context?.tenant || "default",
+    env: input.context?.env || "prod",
+    ...(input.context || {})
+  };
   flow.outputConfig = flow.outputConfig || {
     writeStrategy: "upsert",
     primaryKey: "event_id",
@@ -922,7 +1126,7 @@ export async function runBusinessFlow(input = {}) {
     sourcePlans: sourceExecutionPlans,
     maxConcurrency: Math.max(1, ...sourceExecutionPlans.map((plan) => plan.concurrency || 1)),
     lockedSources: sourceExecutionPlans.filter((plan) => plan.lockEnabled).length,
-    summary: (flow.nodes || [])
+    summary: flowNodes
       .map((node, index) => {
         const branchText = node.branchFromId ? `, 分支:${node.branchName || "未命名"}${node.branchCondition ? ` if ${node.branchCondition}` : ""}` : "";
         return `${index + 1}.${node.name || node.type}(${node.executionMode || "serial"}${branchText})`;
@@ -950,8 +1154,11 @@ export async function runBusinessFlow(input = {}) {
     nowText,
     `${rules.length} 条规则 / ${loopCalls} 次调用`
   ];
-  const sourceResults = await executeSourceNodes(flow.nodes?.length ? flow.nodes : sourceNodes, sourceExecutionPlans, flow.edges || []);
-  const materialized = toBusinessRows(sourceResults, row);
+  const flowExecution = await executeFlowDag(flowNodes, sourceExecutionPlans, flow.edges || [], flowContext);
+  const sourceResults = flowExecution.sourceResults;
+  const materialized = flowExecution.outputRecords.length
+    ? toBusinessRowsFromRecords(flowExecution.outputRecords, row)
+    : toBusinessRows(sourceResults, row);
   const runFailedRows = sourceResults.filter((item) => !item.result.ok).length;
   const fetchedRows = sourceResults.reduce((sum, item) => sum + Number(item.result.recordCount || 0), 0);
   const cleanedRows = materialized.rows.length;
@@ -960,7 +1167,7 @@ export async function runBusinessFlow(input = {}) {
   let business = store.businesses.find((item) => item.name === flow.businessName);
   if (!business) {
     business = {
-      id: `biz_${Date.now()}`,
+      id: uniqueId("biz"),
       name: flow.businessName,
       timeField: flow.timeField,
       fields: materialized.fields,
@@ -983,7 +1190,7 @@ export async function runBusinessFlow(input = {}) {
     };
   }
   store.syncLogs.unshift({
-    id: `flow_run_${Date.now()}`,
+    id: uniqueId("flow_run"),
     sourceId: flow.id,
     sourceName: flow.name,
     status: runFailedRows ? "warning" : "success",
@@ -1015,14 +1222,27 @@ export async function runBusinessFlow(input = {}) {
       error: result.error || ""
     })),
     outputConfig: flow.outputConfig,
+    context: flowContext,
     parameterPlan,
-    executionPlan
+    executionPlan: {
+      ...executionPlan,
+      executionOrder: flowExecution.executionOrder,
+      edges: flowExecution.edges.length,
+      nodeResults: flowExecution.nodeResults.map((item) => ({
+        nodeId: item.node.id,
+        type: item.node.type,
+        name: item.node.name || item.node.type,
+        skipped: Boolean(item.skipped),
+        recordCount: item.records?.length || 0,
+        error: item.error || ""
+      }))
+    }
   };
 }
 
 export function createKnowledgeSource(input = {}) {
   const source = {
-    id: `ks_${Date.now()}`,
+    id: input.id || uniqueId("ks"),
     name: input.name || "新知识源",
     desc: input.desc || `本地路径 ${input.path || "D:/ops/new-source"}，待索引`,
     icon: input.icon || (String(input.path || "").startsWith("http") ? "cloud" : "file"),

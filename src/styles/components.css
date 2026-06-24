@@ -328,7 +328,7 @@
     rgba(3, 18, 24, 0.54);
   background-size: 28px 28px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 32px;
   overflow: auto;
 }
@@ -539,6 +539,7 @@
 
 .flow-conditional-branches {
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 14px;
 }
@@ -584,7 +585,7 @@
 
 .flow-branch-lane {
   position: relative;
-  min-width: 244px;
+  min-width: clamp(244px, 22vw, 340px);
   padding: 10px;
   border: 1px solid rgba(255, 255, 255, 0.11);
   border-radius: var(--radius);
@@ -636,8 +637,8 @@
 
 .flow-node-card {
   position: relative;
-  flex: 0 0 188px;
-  width: 206px;
+  flex: 0 0 clamp(210px, 18vw, 280px);
+  width: clamp(210px, 18vw, 280px);
   min-height: 132px;
   padding: 12px;
   border: 1px solid var(--line);
@@ -649,13 +650,13 @@
 }
 
 .flow-node-card.parallel-branch {
-  width: 230px;
+  width: clamp(220px, 20vw, 300px);
   min-height: 116px;
   background: rgba(9, 33, 42, 0.95);
 }
 
 .flow-node-card.branch-node {
-  width: 224px;
+  width: clamp(220px, 20vw, 300px);
   min-height: 126px;
   background: rgba(7, 26, 42, 0.95);
 }
@@ -1714,8 +1715,13 @@ select[multiple] option {
   width: min(1120px, calc(100vw - 28px));
   max-height: min(84vh, 760px);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;
+}
+
+.value-filter-search {
+  width: 100%;
+  margin-top: 10px;
 }
 
 .value-filter-list {
