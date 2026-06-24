@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { decryptSecret, encryptSecret, maskSecret } from "../core/secrets.mjs";
+import { createStorageAdapter, storagePointerPath } from "./storage-adapter.mjs";
 
 const now = () => new Date().toISOString();
-const runtimeStorePath = resolve(process.cwd(), "server/data/runtime-store.json");
+const localStorageAdapter = createStorageAdapter();
+const pointerStorageAdapter = createStorageAdapter({ filePath: storagePointerPath });
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -18,34 +19,52 @@ function deepMerge(base, patch) {
   }, {});
 }
 
-function readPersistedStore() {
-  if (!existsSync(runtimeStorePath)) return null;
-  try {
-    return JSON.parse(readFileSync(runtimeStorePath, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
 function sanitizeSecretsForDisk(snapshot) {
   const sanitized = clone(snapshot);
   sanitized.authConfigs = (sanitized.authConfigs || []).map((item) => ({
     ...item,
-    password: item.password ? "******" : "",
-    cookieValue: "",
-    tokenHeader: ""
+    password: item.password ? encryptSecret(item.password) : "",
+    cookieValue: item.cookieValue ? encryptSecret(item.cookieValue) : "",
+    tokenHeader: item.tokenHeader ? encryptSecret(item.tokenHeader) : ""
   }));
   sanitized.modelConfigs = (sanitized.modelConfigs || []).map((item) => ({
     ...item,
-    apiKey: "",
-    apiKeyMasked: item.apiKeyMasked || (item.apiKey ? "已配置" : "未配置")
+    apiKey: item.apiKey ? encryptSecret(item.apiKey) : "",
+    apiKeyMasked: item.apiKeyMasked || (item.apiKey ? maskSecret(item.apiKey) : "未配置")
   }));
   sanitized.storageConfigs = (sanitized.storageConfigs || []).map((item) => ({
     ...item,
-    password: "",
-    passwordMasked: item.passwordMasked || (item.password ? "已配置" : "")
+    password: item.password ? encryptSecret(item.password) : "",
+    passwordMasked: item.passwordMasked || (item.password ? maskSecret(item.password) : "")
   }));
   return sanitized;
+}
+
+function restoreSecretsFromDisk(snapshot = {}) {
+  const restored = clone(snapshot);
+  restored.authConfigs = (restored.authConfigs || []).map((item) => ({
+    ...item,
+    password: decryptSecret(item.password || ""),
+    cookieValue: decryptSecret(item.cookieValue || ""),
+    tokenHeader: decryptSecret(item.tokenHeader || "")
+  }));
+  restored.modelConfigs = (restored.modelConfigs || []).map((item) => {
+    const apiKey = decryptSecret(item.apiKey || "");
+    return {
+      ...item,
+      apiKey,
+      apiKeyMasked: item.apiKeyMasked || (apiKey ? maskSecret(apiKey) : "未配置")
+    };
+  });
+  restored.storageConfigs = (restored.storageConfigs || []).map((item) => {
+    const password = decryptSecret(item.password || "");
+    return {
+      ...item,
+      password,
+      passwordMasked: item.passwordMasked || (password ? maskSecret(password) : "")
+    };
+  });
+  return restored;
 }
 
 const defaultStore = {
@@ -449,16 +468,99 @@ const defaultStore = {
   currentStorageId: "storage_local_default",
   storageMigrationLogs: [],
   syncLogs: [],
-  analysisResults: []
+  analysisResults: [],
+  auditLogs: []
 };
 
-export const store = deepMerge(defaultStore, readPersistedStore() || {});
+function getActiveStorageConfig(snapshot = {}) {
+  const restored = restoreSecretsFromDisk(snapshot);
+  const configs = restored.storageConfigs || [];
+  const currentId = restored.currentStorageId || "storage_local_default";
+  return configs.find((item) => item.id === currentId) || configs.find((item) => item.active);
+}
+
+function loadInitialStoreSnapshot() {
+  const localSnapshot = localStorageAdapter.read() || {};
+  const pointerSnapshot = pointerStorageAdapter.read() || {};
+  const activeConfig = getActiveStorageConfig(Object.keys(pointerSnapshot).length ? pointerSnapshot : localSnapshot);
+  if (activeConfig?.type === "database") {
+    try {
+      const databaseSnapshot = createStorageAdapter(activeConfig).read();
+      if (databaseSnapshot) return databaseSnapshot;
+    } catch {
+      return localSnapshot;
+    }
+  }
+  return localSnapshot;
+}
+
+function getCurrentStorageAdapter() {
+  const activeConfig = store.storageConfigs.find((item) => item.id === store.currentStorageId) || store.storageConfigs.find((item) => item.active);
+  return createStorageAdapter(activeConfig || {});
+}
+
+export const store = deepMerge(defaultStore, restoreSecretsFromDisk(loadInitialStoreSnapshot()));
+
+export function buildStorageSnapshot(policy = "copy-all") {
+  const snapshot = sanitizeSecretsForDisk(store);
+  if (policy === "copy-all") return snapshot;
+  const base = {
+    metrics: snapshot.metrics,
+    flowNodes: snapshot.flowNodes,
+    storageConfigs: snapshot.storageConfigs,
+    currentStorageId: snapshot.currentStorageId,
+    storageMigrationLogs: snapshot.storageMigrationLogs,
+    situationFilters: [],
+    situationTimeFilter: snapshot.situationTimeFilter,
+    dataSources: [],
+    authConfigs: [],
+    fieldMappings: [],
+    cleaningRules: [],
+    dictionarySets: [],
+    businessFlows: [],
+    modelConfigs: [],
+    businesses: [],
+    syncLogs: [],
+    analysisResults: [],
+    knowledge: [],
+    signals: [],
+    auditLogs: snapshot.auditLogs || []
+  };
+  if (policy === "switch-only") return base;
+  return {
+    ...base,
+    situationFilters: snapshot.situationFilters,
+    situationTimeFilter: snapshot.situationTimeFilter,
+    dataSources: snapshot.dataSources,
+    authConfigs: snapshot.authConfigs,
+    fieldMappings: snapshot.fieldMappings,
+    cleaningRules: snapshot.cleaningRules,
+    dictionarySets: snapshot.dictionarySets,
+    businessFlows: snapshot.businessFlows,
+    modelConfigs: snapshot.modelConfigs
+  };
+}
+
+export function applyStoragePolicy(policy = "copy-all") {
+  if (policy === "copy-all") return;
+  const nextStore = deepMerge(defaultStore, restoreSecretsFromDisk(buildStorageSnapshot(policy)));
+  for (const key of Object.keys(store)) delete store[key];
+  Object.assign(store, nextStore);
+}
+
+function buildPointerSnapshot(snapshot) {
+  return {
+    storageConfigs: snapshot.storageConfigs,
+    currentStorageId: snapshot.currentStorageId,
+    storageMigrationLogs: snapshot.storageMigrationLogs
+  };
+}
 
 export function persistStore() {
-  mkdirSync(dirname(runtimeStorePath), { recursive: true });
-  const tempPath = `${runtimeStorePath}.tmp`;
-  writeFileSync(tempPath, JSON.stringify(sanitizeSecretsForDisk(store), null, 2), "utf8");
-  renameSync(tempPath, runtimeStorePath);
+  const snapshot = sanitizeSecretsForDisk(store);
+  getCurrentStorageAdapter().write(snapshot);
+  pointerStorageAdapter.write(buildPointerSnapshot(snapshot));
+  if (store.currentStorageId === "storage_local_default") localStorageAdapter.write(snapshot);
 }
 
 function countHighPriorityRows() {
@@ -488,7 +590,12 @@ export function getBootstrapData() {
     metrics: getRuntimeMetrics(),
     flowNodes: store.flowNodes,
     sources: store.dataSources,
-    authConfigs: store.authConfigs,
+    authConfigs: store.authConfigs.map((item) => ({
+      ...item,
+      password: item.password ? "******" : "",
+      cookieValue: "",
+      tokenHeader: item.tokenHeader ? "******" : ""
+    })),
     fieldMappings: store.fieldMappings,
     mappings: store.fieldMappings.map((item) => [
       item.sourceField,
@@ -509,7 +616,11 @@ export function getBootstrapData() {
     situationTimeFilter: store.situationTimeFilter,
     cleaningRules: store.cleaningRules,
     businessFlows: store.businessFlows,
-    modelConfigs: store.modelConfigs,
+    modelConfigs: store.modelConfigs.map((item) => ({
+      ...item,
+      apiKey: "",
+      apiKeyMasked: item.apiKeyMasked || (item.apiKey ? maskSecret(item.apiKey) : "未配置")
+    })),
     dictionarySets: store.dictionarySets,
     storageConfigs: store.storageConfigs.map((item) => ({ ...item, active: item.id === store.currentStorageId, password: "" })),
     currentStorageId: store.currentStorageId,

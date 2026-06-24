@@ -1,4 +1,5 @@
-import { store } from "../data/store.mjs";
+import { applyStoragePolicy, store } from "../data/store.mjs";
+import { createStorageAdapter } from "../data/storage-adapter.mjs";
 import { applyFieldMappings, executeDataSourcePlan, matchesFilter } from "./sync-service.mjs";
 
 function uniqueId(prefix = "id") {
@@ -578,24 +579,41 @@ export function deleteFieldMapping(id) {
   return removed;
 }
 
+function normalizeAuthType(type = "api-cookie") {
+  if (["cookie", "api-cookie"].includes(type)) return "api-cookie";
+  if (["db", "database", "db-account-password"].includes(type)) return "db-account-password";
+  if (["none", "no-auth"].includes(type)) return "none";
+  return type || "api-cookie";
+}
+
+function sanitizeAuthConfig(config = {}) {
+  return {
+    ...config,
+    password: config.password ? "******" : "",
+    cookieValue: "",
+    tokenHeader: config.tokenHeader ? "******" : ""
+  };
+}
+
 export function createAuthConfig(input = {}) {
+  const type = normalizeAuthType(input.type);
   const config = {
     id: input.id || uniqueId("auth"),
     name: input.name || "自定义认证配置",
     category: input.category || "认证配置",
-    type: input.type || "cookie",
-    username: input.username || "",
-    password: input.password ? "******" : "",
-    cookieValue: input.cookieValue || input.password || "",
+    type,
+    username: type === "db-account-password" ? input.username || "" : "",
+    password: type === "db-account-password" ? input.password || "" : "",
+    cookieValue: type === "api-cookie" ? input.cookieValue || input.password || "" : "",
     loginUrl: input.loginUrl || "",
-    cookieName: input.cookieName || "",
+    cookieName: type === "api-cookie" ? input.cookieName || "" : "",
     tokenHeader: input.tokenHeader || "",
     refreshCycle: input.refreshCycle || "手动",
     status: "可用",
     updatedAt: new Date().toISOString()
   };
   store.authConfigs.unshift(config);
-  return config;
+  return sanitizeAuthConfig(config);
 }
 
 export function updateAuthConfig(id, input = {}) {
@@ -606,22 +624,25 @@ export function updateAuthConfig(id, input = {}) {
     throw error;
   }
   const existing = store.authConfigs[index];
+  const type = normalizeAuthType(input.type || existing.type);
+  const password = input.password && input.password !== "******" ? input.password : existing.password || "";
+  const cookieValue = input.cookieValue && input.cookieValue !== "******" ? input.cookieValue : existing.cookieValue || "";
   const updated = {
     ...existing,
     name: input.name || existing.name,
     category: input.category || existing.category || "认证配置",
-    type: input.type || existing.type,
-    username: input.username ?? existing.username,
-    password: input.password ? "******" : existing.password,
-    cookieValue: input.cookieValue || input.password || existing.cookieValue || "",
+    type,
+    username: type === "db-account-password" ? input.username ?? existing.username : "",
+    password: type === "db-account-password" ? password : "",
+    cookieValue: type === "api-cookie" ? cookieValue : "",
     loginUrl: input.loginUrl ?? existing.loginUrl,
-    cookieName: input.cookieName ?? existing.cookieName,
+    cookieName: type === "api-cookie" ? input.cookieName ?? existing.cookieName : "",
     tokenHeader: input.tokenHeader ?? existing.tokenHeader,
     refreshCycle: input.refreshCycle || existing.refreshCycle,
     updatedAt: new Date().toISOString()
   };
   store.authConfigs[index] = updated;
-  return updated;
+  return sanitizeAuthConfig(updated);
 }
 
 export function deleteAuthConfig(id) {
@@ -722,9 +743,9 @@ export function createStorageConfig(input = {}) {
     name: input.name || "数据库存储",
     category: input.category || "数据库存储",
     type: "database",
-    database: input.database || "postgresql",
-    host: input.host || "127.0.0.1",
-    port: input.port || "5432",
+    database: input.database || "sqlite",
+    host: input.host || (input.database === "sqlite" || !input.database ? "server/data/runtime-store.sqlite" : "127.0.0.1"),
+    port: input.port || (input.database === "sqlite" || !input.database ? "" : "5432"),
     username: input.username || "",
     password,
     passwordMasked: maskStoragePassword(password),
@@ -820,6 +841,14 @@ export function switchStorageConfig(input = {}) {
     error.status = 404;
     throw error;
   }
+  if (target.type === "database") {
+    try {
+      createStorageAdapter(target).probe();
+    } catch (error) {
+      error.status = error.status || 501;
+      throw error;
+    }
+  }
   const previous = store.storageConfigs.find((item) => item.id === store.currentStorageId) || store.storageConfigs[0];
   const migrationPolicy = input.migrationPolicy || "copy-config";
   const migrationLog = {
@@ -830,13 +859,13 @@ export function switchStorageConfig(input = {}) {
     toStorageName: target.name,
     migrationPolicy,
     dataScope: getStorageDataScope(migrationPolicy),
-    status: migrationPolicy === "switch-only" ? "switched-without-copy" : "migration-plan-recorded",
+    status: migrationPolicy === "switch-only" ? "switched-without-copy" : "migrated",
     message:
       migrationPolicy === "switch-only"
         ? "已切换当前存储，旧存储中的数据不会自动复制。"
         : migrationPolicy === "copy-all"
-          ? "已记录全量数据复制计划；接入数据库适配器后可执行真实迁移。"
-          : "已记录配置数据复制计划；业务运行数据仍保留在旧存储。",
+          ? "已完成全量数据复制，后续写入会进入当前存储。"
+          : "已完成配置数据复制；业务运行数据仍保留在旧存储。",
     createdAt: new Date().toISOString()
   };
   store.currentStorageId = target.id;
@@ -846,6 +875,7 @@ export function switchStorageConfig(input = {}) {
     status: item.id === target.id ? "当前使用" : item.status === "当前使用" ? "已配置" : item.status
   }));
   store.storageMigrationLogs.unshift(migrationLog);
+  applyStoragePolicy(migrationPolicy);
   return {
     currentStorageId: store.currentStorageId,
     currentStorage: sanitizeStorageConfig(store.storageConfigs.find((item) => item.id === store.currentStorageId)),

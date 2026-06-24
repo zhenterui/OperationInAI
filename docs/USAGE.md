@@ -389,6 +389,15 @@ combine({{service.name}}-{{level}})
 
 API Key 在接口返回时会脱敏展示。
 
+真实模型调用默认关闭，便于离线调试和内网部署前自检。需要让“智能分析”和“智能搜索”实际调用模型时，先配置模型 URL、模型名和 API Key，再在后端启动前设置：
+
+```powershell
+$env:OPERATION_ENABLE_LIVE_MODEL="true"
+$env:OPERATION_LLM_TIMEOUT_MS="12000"
+```
+
+模型接口优先按 OpenAI Chat Completions 兼容协议调用，即 `baseUrl + /chat/completions`；Anthropic 类型会按 `/messages` 协议调用。调用失败、超时或未配置 Key 时，系统会自动回退到本地规则分析结果，页面不会因为模型不可用而中断。
+
 ### 分析配置
 
 进入“智能分析 / 分析配置”后：
@@ -401,7 +410,97 @@ API Key 在接口返回时会脱敏展示。
 
 ## 智能搜索
 
-维护知识源名称和路径后，输入问题并提交。当前后端会返回模拟问答结果，包含行动建议和引用来源。
+维护知识源名称和路径后，输入问题并提交。搜索会先按关键词命中知识源，再复用当前模型配置生成答案；未开启真实模型调用或模型调用失败时，会返回本地规则问答结果，包含行动建议和引用来源。
+
+## 运行安全与后端能力
+
+### 访问令牌与角色
+
+本地开发环境默认不配置令牌，此时后端按管理员权限运行，方便直接调试页面。
+
+部署到共享环境或生产环境时，建议配置：
+
+```powershell
+$env:OPERATION_API_TOKEN="your-token"
+$env:OPERATION_API_ROLE="admin"
+```
+
+接口请求需要携带：
+
+```text
+X-Operation-Token: your-token
+X-Operation-User: 用户名或系统账号
+```
+
+启用令牌后，权限角色由服务端环境变量决定，不信任浏览器传入的 `X-Operation-Role`。如果需要多个令牌和不同角色，使用：
+
+```powershell
+$env:OPERATION_API_TOKENS='{"reader-token":{"role":"reader","user":"viewer"},"operator-token":{"role":"operator","user":"ops"},"admin-token":{"role":"admin","user":"admin"}}'
+```
+
+角色含义：
+
+- `reader`：查看配置、业务数据、分析结果和审计日志。
+- `operator`：执行新增、测试、同步、分析等常规操作。
+- `admin`：修改存储配置、删除配置、管理高风险资源。
+
+未配置 `OPERATION_API_TOKEN` 或 `OPERATION_API_TOKENS` 时不会拦截请求；配置后，令牌不匹配会返回 401，权限不足会返回 403。本地无令牌开发模式下，才会读取 `X-Operation-Role` 方便调试。
+
+前端请求会自动从浏览器 `localStorage` 读取以下值并写入请求头：
+
+```text
+operation_api_token
+operation_api_user
+```
+
+内网联调时可在浏览器控制台执行：
+
+```javascript
+localStorage.setItem("operation_api_token", "your-token");
+localStorage.setItem("operation_api_user", "pj");
+```
+
+### 密钥加密与脱敏
+
+认证配置、模型 API Key、数据库密码等敏感字段会在写入本地运行存储前加密，格式类似 `enc:v1:...`。接口返回给前端时只返回脱敏值或空值，不回显真实 Cookie、密码和 API Key。
+
+建议在部署环境固定配置：
+
+```powershell
+$env:OPERATION_SECRET_KEY="长度足够的随机密钥"
+```
+
+如果不配置，系统会使用本地开发密钥；这适合调试，不适合作为正式环境长期密钥。更换密钥前需要先导出或迁移旧敏感配置，否则旧密文无法用新密钥解密。
+
+### 审计日志
+
+后端会记录主要写操作，包括新增、编辑、删除、测试同步、分析触发等。审计日志包含用户、角色、请求方法、路径、操作状态和简要对象信息，可通过：
+
+```text
+GET /api/audit-logs
+```
+
+查看最近记录。默认最多保留 1000 条，可通过 `OPERATION_AUDIT_LIMIT` 调整。
+
+### 存储适配器
+
+当前运行时已经通过存储适配器读写数据：
+
+- 本地 JSON 存储：默认可用，文件位于 `server/data/runtime-store.json`。
+- SQLite 数据库存储：内置可用，默认文件位于 `server/data/runtime-store.sqlite`。在“支持配置库 / 存储配置”中新建 SQLite 存储并设为当前后，后续写入会进入 SQLite；本地 `runtime-store.json` 不会被 SQLite 运行数据覆盖，系统会用 `server/data/storage-pointer.json` 记录当前存储指针。
+- PostgreSQL / MySQL / MariaDB / SQL Server / Oracle：页面配置项已保留，当前后端不会假装写入。设为当前存储时如果未接企业驱动，会返回 501，避免误以为已经持久化到外部数据库。
+
+后续接入企业数据库时，只需要在存储适配器中实现对应数据库的 `read/write/probe`，不需要改动上层业务接口。
+
+### 正则安全限制
+
+过滤条件和清洗规则中支持正则，但后端会阻断明显高风险表达式，例如过长正则、嵌套量词和连续 `.*`。默认正则最大长度为 180，可通过：
+
+```powershell
+$env:OPERATION_MAX_REGEX_LENGTH="180"
+```
+
+调整。被阻断的正则会按“不命中”处理，避免异常表达式拖慢同步任务。
 
 ## 验证命令
 
@@ -465,10 +564,10 @@ enum(caseInsensitive=true; roma=ROMAConnect,apm=APM)
 
 支持配置库中的“存储配置”用于选择系统当前使用的存储位置。默认是本地存储，也可以新增一个数据库存储。
 
-切换存储时需要选择旧数据处理策略：
+切换存储时需要选择旧数据处理策略，SQLite 会按策略生成目标存储快照：
 
 - 复制配置数据：复制数据源、认证、字段映射、清洗规则、字典集、业务流和模型配置等配置数据；业务运行数据和历史日志仍保留在旧存储。推荐首次从本地切到数据库时使用。
-- 复制全部数据：复制配置数据、业务数据、同步日志、分析结果和知识源索引等全部数据。当前版本会记录迁移计划；接入真实数据库适配器后可执行实际迁移。
+- 复制全部数据：复制配置数据、业务数据、同步日志、分析结果和知识源索引等全部数据。
 - 仅切换，不复制旧数据：只把当前存储指向目标存储，不复制旧数据。旧数据仍留在原存储中，切换后目标存储为空时页面可能只看到新数据。
 
 默认本地存储不可编辑、不可删除；当前正在使用的存储不可删除。数据库密码只保存用于连接，接口返回和页面编辑时不会明文回显。

@@ -1,10 +1,23 @@
 import { spawn } from "node:child_process";
+import { rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 
 const port = 4189;
 const baseUrl = `http://127.0.0.1:${port}`;
+const smokeSqlitePath = "server/data/smoke-runtime-store.sqlite";
+const adminToken = "smoke-admin-token";
+rmSync(smokeSqlitePath, { force: true });
 const server = spawn(process.execPath, ["./server/index.mjs"], {
   cwd: process.cwd(),
-  env: { ...process.env, PORT: String(port) },
+  env: {
+    ...process.env,
+    PORT: String(port),
+    OPERATION_API_TOKENS: JSON.stringify({
+      "smoke-reader-token": { role: "reader", user: "smoke-reader" },
+      "smoke-operator-token": { role: "operator", user: "smoke-operator" },
+      [adminToken]: { role: "admin", user: "smoke-admin" }
+    })
+  },
   stdio: ["ignore", "pipe", "pipe"]
 });
 
@@ -24,14 +37,25 @@ function assert(condition, message) {
 }
 
 async function request(path, options) {
+  const { headers = {}, ...rest } = options || {};
   const response = await fetch(`${baseUrl}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options
+    ...rest,
+    headers: { "Content-Type": "application/json", "X-Operation-Token": adminToken, ...headers }
   });
   if (!response.ok) {
     throw new Error(`${path} returned ${response.status}`);
   }
   return response.json();
+}
+
+async function expectStatus(path, status, options) {
+  const { headers = {}, ...rest } = options || {};
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...rest,
+    headers: { "Content-Type": "application/json", ...headers }
+  });
+  assert(response.status === status, `${path} expected ${status}, got ${response.status}`);
+  return response;
 }
 
 async function requestText(path) {
@@ -58,6 +82,10 @@ try {
   await waitForServer();
   const html = await requestText("/");
   const bootstrap = await request("/api/bootstrap");
+  await expectStatus("/api/storage-configs/storage_local_default", 403, {
+    method: "DELETE",
+    headers: { "X-Operation-Token": "smoke-reader-token", "X-Operation-Role": "admin" }
+  });
   const authList = await request("/api/auth-configs");
   const auth = await request("/api/auth-configs", {
     method: "POST",
@@ -72,6 +100,21 @@ try {
     method: "PUT",
     body: JSON.stringify({ name: "冒烟 Cookie 认证已编辑", type: "cookie", cookieName: "SMOKE_SESSION", cookieValue: "edited_cookie_value" })
   });
+  const dbAuth = await request("/api/auth-configs", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "冒烟数据库认证",
+      type: "db-account-password",
+      username: "smoke_db",
+      password: "db-secret"
+    })
+  });
+  const updatedDbAuth = await request(`/api/auth-configs/${dbAuth.data.id}`, {
+    method: "PUT",
+    body: JSON.stringify({ name: "冒烟数据库认证已编辑", type: "db-account-password", username: "smoke_db", password: "" })
+  });
+  assert(updatedDbAuth.data.password === "******", "db auth password should be preserved and masked");
+  assert(updatedDbAuth.data.cookieValue === "", "db auth should not store password in cookieValue");
   const source = await request("/api/data-sources", {
     method: "POST",
     body: JSON.stringify({
@@ -231,22 +274,22 @@ try {
   const storageConfig = await request("/api/storage-configs", {
     method: "POST",
     body: JSON.stringify({
-      name: "Smoke PostgreSQL Storage",
-      database: "postgresql",
-      host: "127.0.0.1",
-      port: "5432",
-      username: "ops_user",
-      password: "ops-secret"
+      name: "Smoke SQLite Storage",
+      database: "sqlite",
+      host: smokeSqlitePath,
+      port: "",
+      username: "",
+      password: ""
     })
   });
   const updatedStorageConfig = await request(`/api/storage-configs/${storageConfig.data.id}`, {
     method: "PUT",
     body: JSON.stringify({
-      name: "Smoke PostgreSQL Storage Edited",
-      database: "postgresql",
-      host: "db.ops.local",
-      port: "5432",
-      username: "ops_reader",
+      name: "Smoke SQLite Storage Edited",
+      database: "sqlite",
+      host: smokeSqlitePath,
+      port: "",
+      username: "",
       password: ""
     })
   });
@@ -257,6 +300,10 @@ try {
       migrationPolicy: "copy-all"
     })
   });
+  const sqliteDb = new DatabaseSync(smokeSqlitePath);
+  const sqliteRow = sqliteDb.prepare("select store_value from operation_store where store_key = ?").get("runtime");
+  sqliteDb.close();
+  assert(sqliteRow?.store_value?.includes(updatedStorageConfig.data.id), "sqlite storage should contain switched runtime snapshot");
   const analysis = await request("/api/analysis/run", {
     method: "POST",
     body: JSON.stringify({
@@ -273,10 +320,12 @@ try {
     })
   });
   assert(analysis.data.filterContext.filteredRows <= analysis.data.filterContext.totalRows, "analysis should apply filter context");
+  assert(analysis.data.modelProvider === "local", "analysis should default to local fallback when live model is disabled");
   const search = await request("/api/search/query", {
     method: "POST",
-    body: JSON.stringify({ question: "支付和订单告警怎么处理？" })
+    body: JSON.stringify({ question: "支付和订单告警怎么处理？", modelConfigId: updatedModelConfig.data.id })
   });
+  assert(search.data.modelProvider === "local", "search should default to local fallback when live model is disabled");
   const deletedSource = await request(`/api/data-sources/${updatedSource.data.id}`, {
     method: "DELETE"
   });
@@ -293,6 +342,9 @@ try {
     method: "DELETE"
   });
   const deletedModelConfig = await request(`/api/model-configs/${updatedModelConfig.data.id}`, {
+    method: "DELETE"
+  });
+  const deletedDbAuth = await request(`/api/auth-configs/${updatedDbAuth.data.id}`, {
     method: "DELETE"
   });
   const storageSwitchToLocal = await request("/api/storage-configs/switch", {
@@ -357,4 +409,6 @@ try {
   );
 } finally {
   server.kill();
+  await wait(50);
+  rmSync(smokeSqlitePath, { force: true });
 }

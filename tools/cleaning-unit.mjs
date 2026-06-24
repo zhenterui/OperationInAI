@@ -144,11 +144,36 @@ try {
   assert.equal(contextPlaceholderResult.request.queryParams.startTime, "2026-06-23T00:00:00.000Z");
   assert.equal(contextPlaceholderResult.request.body.env, "prod");
 
+  const unsafeRegexResult = await testDataSource({
+    name: "Unit unsafe regex guard",
+    kind: "api",
+    responsePath: "data.items[]",
+    responseBody: {
+      data: {
+        items: [{ value: "aaaaaaaaaaaaaaaaaaaa!" }]
+      }
+    },
+    responseConfig: {
+      fieldKeepMode: "value-filter",
+      keepFields: ["data.items[].value"],
+      valueFilters: [
+        {
+          field: "data.items[].value",
+          matchMode: "regex",
+          value: "(a+)+$",
+          enabled: true
+        }
+      ]
+    }
+  });
+  assert.equal(unsafeRegexResult.filteredRecordCount, 0);
+
   console.log(JSON.stringify({
     status: "ok",
     genericCleanup: cleanupResult.mappedRecords[0],
     dictionaryFilter: dictionaryResult.selectedRecords[0],
-    contextPlaceholder: contextPlaceholderResult.request.body
+    contextPlaceholder: contextPlaceholderResult.request.body,
+    unsafeRegexGuard: unsafeRegexResult.filteredRecordCount
   }, null, 2));
 } finally {
   await cleanupCreated();

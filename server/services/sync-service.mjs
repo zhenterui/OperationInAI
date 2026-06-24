@@ -209,6 +209,22 @@ function compareValues(actual, operator, expected) {
   return false;
 }
 
+function createSafeRegExp(pattern = "", flags = "") {
+  const text = String(pattern || "");
+  const maxLength = Number(process.env.OPERATION_MAX_REGEX_LENGTH || 180);
+  if (!text || text.length > maxLength) {
+    const error = new Error(`Regex pattern must be 1-${maxLength} characters`);
+    error.status = 400;
+    throw error;
+  }
+  if (/\([^)]*[+*][^)]*\)[+*{]/.test(text) || /(\.\*){2,}/.test(text)) {
+    const error = new Error("Potentially unsafe nested regex quantifier is not allowed");
+    error.status = 400;
+    throw error;
+  }
+  return new RegExp(text, flags);
+}
+
 function evaluateSingleFilter(record, condition = "", responsePath = "") {
   const text = String(condition || "").trim();
   if (!text) return true;
@@ -278,7 +294,7 @@ function matchValueFilterValue(actual, filter) {
   if (filter.matchMode === "endsWith") return left.endsWith(right);
   if (filter.matchMode === "regex") {
     try {
-      return new RegExp(right).test(left);
+      return createSafeRegExp(right).test(left);
     } catch {
       return false;
     }
@@ -386,7 +402,7 @@ function transformFilterCandidate(value, filter = {}, record = {}, responsePath 
     }
     if (mode === "regex") {
       try {
-        const match = text.match(new RegExp(filter.extractRegex || filter.regex || ""));
+        const match = text.match(createSafeRegExp(filter.extractRegex || filter.regex || ""));
         return match ? [match[1] || match[0]] : [];
       } catch {
         return [];
@@ -716,7 +732,7 @@ function replaceAllValue(value = "", param = "") {
   const flags = options.flags || "g";
   if (!pattern) return value;
   try {
-    return String(value ?? "").replace(new RegExp(pattern, flags.includes("g") ? flags : `${flags}g`), replacement);
+    return String(value ?? "").replace(createSafeRegExp(pattern, flags.includes("g") ? flags : `${flags}g`), replacement);
   } catch {
     return value;
   }
@@ -750,7 +766,7 @@ const cleaningActions = new Map([
     normalizedValues.map((value) => String(value)).join(param || ",")],
   ["extract", ({ normalizedValues, param, mapping }) => {
     try {
-      const match = String(normalizedValues[0]).match(new RegExp(param));
+      const match = String(normalizedValues[0]).match(createSafeRegExp(param));
       return match ? match[1] || match[0] : mapping.defaultValue ?? "";
     } catch {
       return mapping.defaultValue ?? "";

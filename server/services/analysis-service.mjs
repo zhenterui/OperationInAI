@@ -1,4 +1,5 @@
 import { store } from "../data/store.mjs";
+import { callConfiguredModel } from "./model-service.mjs";
 
 function uniqueId(prefix = "id") {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
@@ -141,7 +142,35 @@ function passesFilterContext(business, row, filterContext = {}) {
   return hasSelection || start || end ? true : true;
 }
 
-export function runAnalysis(payload = {}) {
+function buildAnalysisPrompt({ businesses, allRows, fields, comboFields, scope, filterSummary }) {
+  const samples = allRows.slice(0, 30).map(({ business, row }) => {
+    const values = Object.fromEntries(fields.map((field) => [field, getRowValueByField(business, row, field) ?? getSemanticValue(business, row, normalizeFieldName(field))]));
+    return { business: business.name, values };
+  });
+  return [
+    {
+      role: "system",
+      content: "你是一个智能运维分析助手。请基于业务数据给出高信号密度结论、风险判断和可执行改进措施，避免编造未出现在数据中的事实。"
+    },
+    {
+      role: "user",
+      content: JSON.stringify(
+        {
+          businesses: businesses.map((item) => item.name),
+          scope,
+          fields,
+          comboFields,
+          filterSummary,
+          sampleRows: samples
+        },
+        null,
+        2
+      )
+    }
+  ];
+}
+
+export async function runAnalysis(payload = {}) {
   // Accept both the old single-business payload and the newer multi-business analysis payload.
   const businessNames = normalizeList(payload.businessNames || payload.businessName, [store.businesses[0]?.name].filter(Boolean));
   const selectedBusinesses = businessNames
@@ -202,6 +231,24 @@ export function runAnalysis(payload = {}) {
       time: getSemanticValue(business, row, "time", 3)
     }))
   };
+  const modelResponse = await callConfiguredModel(
+    modelConfig,
+    buildAnalysisPrompt({ businesses, allRows, fields, comboFields, scope: result.scope, filterSummary }),
+    {
+      enableLiveModel: payload.enableLiveModel,
+      temperature: 0.2,
+      maxTokens: 1200
+    }
+  );
+  result.modelProvider = modelResponse.used ? "live" : "local";
+  if (modelResponse.used) {
+    result.sections[0] = {
+      title: "模型结论",
+      content: modelResponse.content
+    };
+  } else if (modelResponse.reason && modelResponse.reason !== "live model disabled") {
+    result.modelFallbackReason = modelResponse.reason;
+  }
   store.analysisResults.unshift(result);
   return result;
 }

@@ -75,30 +75,8 @@ const popularModelPresets = [
   { id: "preset_gemini_flash", name: "Gemini Flash", category: "美国热门模型", vendor: "gemini", model: "gemini-1.5-flash", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" }
 ];
 
-const placeholderConfigExample = [
-  { name: "start_time", source: "mapping", from: "context.start_time" },
-  { name: "env", source: "custom", value: "prod" },
-  { name: "product", source: "dictionary", from: "产品列表.产品名", mode: "array" }
-];
-
-const ruleActionGuides = {
-  trim: { placeholder: "无需参数", help: "去除输入值首尾空格。字段映射中选择此规则后，源字段作为输入，目标字段作为输出。" },
-  lower: { placeholder: "无需参数", help: "把输入值转换为小写，适合统一英文编码、环境名、状态值。" },
-  upper: { placeholder: "无需参数", help: "把输入值转换为大写，适合统一等级、区域、状态编码。" },
-  enum: { placeholder: "caseInsensitive=true; roma=ROMAConnect; apm=APM", help: "按 key=value 做枚举归一；可用 caseInsensitive=true 忽略大小写。也可以引用字典集辅助表达业务含义。", dictionary: true },
-  default: { placeholder: "未分配", help: "当输入为空时使用该参数作为默认值；输入非空时保留原值。" },
-  dedupe: { placeholder: ",", help: "对多个输入值去重后按参数作为分隔符合并；参数为空时默认用英文逗号。" },
-  merge: { placeholder: ",", help: "把多个输入值直接按分隔符合并，不做去重。" },
-  split_dedupe_join: { placeholder: "separator=,; joinSeparator=,; dedupe=true; sort=false; limit=0", help: "先按 separator 拆分，再可去重、排序、限制数量，最后按 joinSeparator 合并。" },
-  strip_html: { placeholder: "remove_script=true; remove_style=true; decode_entities=true; collapse_whitespace=true", help: "移除 HTML 标签、脚本样式并解码实体，适合接口返回富文本说明。" },
-  replace_all: { placeholder: "pattern=\\d; replacement=#; flags=g", help: "用正则全局替换文本。pattern 是正则表达式，replacement 是替换值，flags 默认 g。" },
-  extract: { placeholder: "^([^|]+)\\|([^|]+)\\|", help: "用正则从输入值中提取内容；优先返回第一个捕获组，没有捕获组时返回完整命中。" },
-  combine: { placeholder: "{{product}}-{{version}}", help: "用模板组合当前记录字段，字段名写在双大括号里，例如 {{product}}。" },
-  filter: { placeholder: "level in [P0,P1] && env == prod", help: "条件表达式用于记录过滤。支持 ==、!=、contains、in [...]、exists、&&、||。" },
-  date: { placeholder: "无需参数", help: "把可识别的时间输入转换为 ISO 时间；无法识别时保留原值。" },
-  number: { placeholder: "seconds_to_minutes", help: "数值转换。当前支持 seconds_to_minutes，也可留空只做数字化校验。" },
-  enrich: { placeholder: "暂作为语义配置", help: "关联补齐动作当前作为配置语义保留；实际补齐建议在业务流中用数据源节点和字段映射完成。" }
-};
+const placeholderConfigExample = window.opsCleaningGuides?.placeholderConfigExample || [];
+const ruleActionGuides = window.opsCleaningGuides?.ruleActionGuides || {};
 
 function getPlaceholderConfigExample() {
   return JSON.stringify(placeholderConfigExample, null, 2);
@@ -114,15 +92,7 @@ function syncPlaceholderTextareaHint() {
 }
 
 async function apiRequest(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options
-  });
-  if (!response.ok) {
-    throw new Error(`API ${path} returned ${response.status}`);
-  }
-  const payload = await response.json();
-  return payload.data;
+  return window.opsApi.request(path, options);
 }
 
 async function loadBootstrapData() {
@@ -135,8 +105,9 @@ async function loadBootstrapData() {
     $("#apiStatus").classList.add("ok");
   } catch (error) {
     normalizeOpsData();
-    document.body.dataset.api = "offline";
-    $("#apiStatus").textContent = "离线模拟";
+    const authFailed = [401, 403].includes(error.status);
+    document.body.dataset.api = authFailed ? "unauthorized" : "offline";
+    $("#apiStatus").textContent = authFailed ? "鉴权失败" : "离线模拟";
     $("#apiStatus").classList.remove("ok");
     console.warn("Using local mock data:", error.message);
   }
@@ -1490,6 +1461,9 @@ function syncAuthFormByCategory() {
   if ($("#authSecretLabel")) {
     $("#authSecretLabel").textContent = type === "db-account-password" ? "密码" : "Cookie 值";
   }
+  if ($("#authPasswordInput") && !$("#authPasswordInput").placeholder.includes("已配置")) {
+    $("#authPasswordInput").placeholder = type === "db-account-password" ? "请输入数据库密码" : "请输入 Cookie 值";
+  }
   if (type === "none") {
     $("#authUsernameInput").value = "";
     $("#authCookieNameInput").value = "";
@@ -1506,7 +1480,8 @@ function populateAuthForm(auth = getSelectedAuthConfig()) {
   setSelectValue("#authConfigTypeSelect", normalizeAuthType(auth.type));
   $("#authUsernameInput").value = auth.username || "";
   $("#authCookieNameInput").value = auth.cookieName || "";
-  $("#authPasswordInput").value = auth.cookieValue || auth.password || "";
+  $("#authPasswordInput").value = "";
+  $("#authPasswordInput").placeholder = auth.password || auth.cookieValue ? "已配置，留空表示不修改" : "请输入密钥";
   syncAuthFormByCategory();
   renderAuthConfigs();
 }
@@ -1520,6 +1495,7 @@ function resetAuthForm() {
   $("#authUsernameInput").value = "";
   $("#authCookieNameInput").value = "OPS_SESSION";
   $("#authPasswordInput").value = "";
+  $("#authPasswordInput").placeholder = "请输入 Cookie 值";
   syncAuthFormByCategory();
 }
 
@@ -1890,6 +1866,7 @@ function renderStorageConfigs() {
 
 function syncStorageDefaultPort() {
   const defaults = {
+    sqlite: "",
     postgresql: "5432",
     mysql: "3306",
     mariadb: "3306",
@@ -1901,19 +1878,25 @@ function syncStorageDefaultPort() {
   if (portInput && !portInput.value.trim()) {
     portInput.value = defaults[database] || "";
   }
+  const hostInput = $("#storageHostInput");
+  if (hostInput && portInput) {
+    hostInput.placeholder = database === "sqlite" ? "默认 server/data/runtime-store.sqlite，也可填文件路径" : "如 127.0.0.1 或 db.ops.local";
+    portInput.placeholder = database === "sqlite" ? "SQLite 不需要端口" : "如 5432";
+  }
 }
 
 function resetStorageConfigForm() {
   appState.editingStorageConfigId = "";
   $("#storageConfigModalTitle").textContent = "新增数据库存储";
   $("#storageNameInput").value = "业务数据库存储";
-  setSelectValue("#storageDatabaseSelect", "postgresql");
-  $("#storageHostInput").value = "127.0.0.1";
-  $("#storagePortInput").value = "5432";
+  setSelectValue("#storageDatabaseSelect", "sqlite");
+  $("#storageHostInput").value = "server/data/runtime-store.sqlite";
+  $("#storagePortInput").value = "";
   $("#storageUsernameInput").value = "";
   $("#storagePasswordInput").value = "";
   $("#storagePasswordInput").placeholder = "请输入数据库密码";
   $("#deleteStorageConfigBtn").classList.add("hidden");
+  syncStorageDefaultPort();
 }
 
 function populateStorageConfigForm(config) {
@@ -1928,6 +1911,7 @@ function populateStorageConfigForm(config) {
   $("#storagePasswordInput").value = "";
   $("#storagePasswordInput").placeholder = config.passwordMasked ? "已配置，留空表示不修改" : "请输入数据库密码";
   $("#deleteStorageConfigBtn").classList.remove("hidden");
+  syncStorageDefaultPort();
 }
 
 function collectStorageConfigForm() {
@@ -4019,10 +4003,11 @@ function renderAnswer(fallbackQuestion) {
 function renderSearchResult(result) {
   $("#answerCard").innerHTML = `
     <h3>回答</h3>
-    <p>${result.answer}</p>
+    <p>${escapeHtml(result.answer || "")}</p>
     <ul>
-      ${result.actions.map((action) => `<li>${action}</li>`).join("")}
-      <li>引用来源：${result.sources.join("、")}。</li>
+      ${(result.actions || []).map((action) => `<li>${escapeHtml(action)}</li>`).join("")}
+      <li>引用来源：${escapeHtml((result.sources || []).join("、"))}。</li>
+      <li>模型来源：${escapeHtml(result.modelProvider === "live" ? "已调用模型配置" : "本地规则回退")}。</li>
     </ul>
   `;
 }
@@ -5058,7 +5043,7 @@ function bindEvents() {
     try {
       const result = await apiRequest("/api/search/query", {
         method: "POST",
-        body: JSON.stringify({ question })
+        body: JSON.stringify({ question, modelConfigId: $("#analysisModelSelect")?.value || "" })
       });
       renderSearchResult(result);
     } catch (error) {
