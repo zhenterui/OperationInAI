@@ -2,3 +2,6 @@ server.log
 server.err.log
 *.log
 server/data/runtime-store.json
+server/data/runtime-store.sqlite
+server/data/business-data.sqlite
+server/data/storage-pointer.json

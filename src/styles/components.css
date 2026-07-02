@@ -305,6 +305,9 @@
 
 .flow-inspector.pagination-page-number .pagination-field,
 .flow-inspector.pagination-next-token .pagination-field,
+.flow-inspector.pagination-auto .pagination-field,
+.flow-inspector.pagination-has-more .pagination-field,
+.flow-inspector.pagination-empty-result .pagination-field,
 .flow-inspector.iteration-per-record .iteration-field,
 .flow-inspector.iteration-batch .iteration-field {
   display: grid;

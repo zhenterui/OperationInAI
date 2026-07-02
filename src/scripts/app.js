@@ -174,6 +174,7 @@ function normalizeOpsData() {
   window.opsData.currentStorageId = window.opsData.currentStorageId || window.opsData.storageConfigs.find((item) => item.active)?.id || "storage_local_default";
   window.opsData.storageMigrationLogs = window.opsData.storageMigrationLogs || [];
   window.opsData.businessFlows = window.opsData.businessFlows || [];
+  window.opsData.schedules = window.opsData.schedules || [];
   window.opsData.modelConfigs = window.opsData.modelConfigs || [
     {
       id: "model_openai_compatible",
@@ -284,6 +285,9 @@ function setPanel(panelId) {
   }
   if (panelId === "display") {
     requestAnimationFrame(() => renderBusinessTable());
+  }
+  if (panelId === "schedule") {
+    requestAnimationFrame(() => renderSchedulePanel());
   }
 }
 
@@ -1471,6 +1475,141 @@ function syncAuthFormByCategory() {
   }
 }
 
+function getSchedules() {
+  return window.opsData.schedules || [];
+}
+
+function renderSchedulePanel() {
+  renderSchedulerStatus();
+  renderScheduleTable();
+}
+
+async function renderSchedulerStatus() {
+  const pill = $("#schedulerStatusPill");
+  if (!pill) return;
+  try {
+    const status = await apiRequest("/api/scheduler/status");
+    pill.textContent = `调度器：${status.started ? "运行中" : "未启动"} · ${status.enabled}/${status.total} 启用`;
+    pill.classList.toggle("danger", !status.started);
+  } catch {
+    pill.textContent = "调度器：离线";
+    pill.classList.add("danger");
+  }
+}
+
+function renderScheduleTable() {
+  const tbody = $("#scheduleTableBody");
+  if (!tbody) return;
+  const schedules = getSchedules();
+  if (!schedules.length) {
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);">暂无调度，点"新增调度"创建</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = schedules.map((sched) => {
+    const cycle = sched.mode === "cron" ? sched.cronExpr : sched.mode === "interval" ? `${sched.intervalSeconds}s` : "单次";
+    const modeText = { interval: "周期", cron: "定时", once: "单次" }[sched.mode] || sched.mode;
+    const lastStatus = sched.lastRunStatus ? ` <small>(${sched.lastRunStatus})</small>` : "";
+    return `<tr>
+      <td>${escapeHtml(sched.name || "")}</td>
+      <td>${escapeHtml(sched.flowName || sched.flowId || "")}</td>
+      <td>${modeText}</td>
+      <td><code>${escapeHtml(cycle)}</code></td>
+      <td>${sched.enabled !== false ? "✅" : "⏸"}</td>
+      <td>${sched.nextRunAt ? sched.nextRunAt.slice(0, 19).replace("T", " ") : "—"}</td>
+      <td>${sched.lastRunAt ? sched.lastRunAt.slice(0, 19).replace("T", " ") : "—"}</td>
+      <td>${sched.lastRunStatus || "待运行"}${lastStatus}</td>
+      <td>
+        <button class="small-button" data-sched-action="run" data-id="${sched.id}">运行</button>
+        <button class="small-button" data-sched-action="toggle" data-id="${sched.id}">${sched.enabled !== false ? "停用" : "启用"}</button>
+        <button class="small-button" data-sched-action="edit" data-id="${sched.id}">编辑</button>
+        <button class="small-button" data-sched-action="delete" data-id="${sched.id}">删除</button>
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+function renderScheduleFlowOptions(selectedId = "") {
+  const select = $("#scheduleFlowSelect");
+  if (!select) return;
+  const flows = window.opsData.businessFlows || [];
+  select.innerHTML = flows.map((flow) => `<option value="${flow.id}">${escapeHtml(flow.businessName || flow.name || flow.id)}</option>`).join("");
+  if (selectedId) select.value = selectedId;
+}
+
+function populateScheduleForm(sched = {}) {
+  appState.editingScheduleId = sched.id || "";
+  $("#scheduleModalTitle").textContent = sched.id ? "编辑调度" : "新增调度";
+  $("#scheduleNameInput").value = sched.name || "定时采集";
+  renderScheduleFlowOptions(sched.flowId || (window.opsData.businessFlows?.[0]?.id || ""));
+  setSelectValue("#scheduleModeSelect", sched.mode || "interval");
+  $("#scheduleIntervalInput").value = sched.intervalSeconds || 300;
+  $("#scheduleCronInput").value = sched.cronExpr || "*/5 * * * *";
+  setSelectValue("#scheduleEnabledSelect", sched.enabled !== false ? "true" : "false");
+}
+
+function collectScheduleForm() {
+  return {
+    name: $("#scheduleNameInput").value.trim() || "定时采集",
+    flowId: $("#scheduleFlowSelect").value,
+    mode: $("#scheduleModeSelect").value,
+    intervalSeconds: Number($("#scheduleIntervalInput").value) || 300,
+    cronExpr: $("#scheduleCronInput").value.trim(),
+    enabled: $("#scheduleEnabledSelect").value === "true"
+  };
+}
+
+async function saveScheduleItem() {
+  const payload = collectScheduleForm();
+  if (!payload.flowId) { alert("请先创建业务流"); return; }
+  const editingId = appState.editingScheduleId;
+  try {
+    const saved = await apiRequest(editingId ? `/api/schedules/${encodeURIComponent(editingId)}` : "/api/schedules", {
+      method: editingId ? "PUT" : "POST",
+      body: JSON.stringify(payload)
+    });
+    window.opsData.schedules = editingId
+      ? window.opsData.schedules.map((item) => (item.id === saved.id ? saved : item))
+      : [saved, ...window.opsData.schedules];
+  } catch (err) {
+    alert(`保存调度失败: ${err?.detail || err?.message || ""}`);
+  }
+  closeDialog("#scheduleModal");
+  renderSchedulePanel();
+}
+
+async function toggleScheduleItem(sched) {
+  try {
+    const saved = await apiRequest(`/api/schedules/${encodeURIComponent(sched.id)}`, {
+      method: "PUT",
+      body: JSON.stringify({ ...sched, enabled: sched.enabled === false })
+    });
+    window.opsData.schedules = window.opsData.schedules.map((item) => (item.id === saved.id ? saved : item));
+  } catch (err) {
+    alert(`切换失败: ${err?.detail || err?.message || ""}`);
+  }
+  renderSchedulePanel();
+}
+
+async function runScheduleItem(sched) {
+  try {
+    await apiRequest("/api/schedules/run", { method: "POST", body: JSON.stringify({ id: sched.id }) });
+  } catch (err) {
+    alert(`运行失败: ${err?.detail || err?.message || ""}`);
+  }
+  renderSchedulePanel();
+}
+
+async function deleteScheduleItem(sched) {
+  if (!confirm(`确认删除调度「${sched.name}」？`)) return;
+  try {
+    await apiRequest(`/api/schedules/${encodeURIComponent(sched.id)}`, { method: "DELETE" });
+  } catch (err) {
+    alert(`删除失败: ${err?.detail || err?.message || ""}`);
+  }
+  window.opsData.schedules = window.opsData.schedules.filter((item) => item.id !== sched.id);
+  renderSchedulePanel();
+}
+
 function populateAuthForm(auth = getSelectedAuthConfig()) {
   if (!auth) return;
   appState.selectedAuthId = auth.id;
@@ -1482,6 +1621,7 @@ function populateAuthForm(auth = getSelectedAuthConfig()) {
   $("#authCookieNameInput").value = auth.cookieName || "";
   $("#authPasswordInput").value = "";
   $("#authPasswordInput").placeholder = auth.password || auth.cookieValue ? "已配置，留空表示不修改" : "请输入密钥";
+  $("#authRefreshInput").value = auth.refresh ? JSON.stringify(auth.refresh, null, 2) : "";
   syncAuthFormByCategory();
   renderAuthConfigs();
 }
@@ -1496,12 +1636,18 @@ function resetAuthForm() {
   $("#authCookieNameInput").value = "OPS_SESSION";
   $("#authPasswordInput").value = "";
   $("#authPasswordInput").placeholder = "请输入 Cookie 值";
+  $("#authRefreshInput").value = "";
   syncAuthFormByCategory();
 }
 
 function collectAuthForm() {
   const type = getAuthTypeFromCategory($("#authCategoryInput").value);
   const secret = $("#authPasswordInput").value;
+  let refresh = null;
+  const refreshText = $("#authRefreshInput").value.trim();
+  if (refreshText) {
+    try { refresh = JSON.parse(refreshText); } catch { refresh = null; }
+  }
   return {
     name: $("#authNameInput").value.trim() || "自定义认证配置",
     category: $("#authCategoryInput").value.trim() || "认证配置",
@@ -1512,7 +1658,8 @@ function collectAuthForm() {
     loginUrl: "",
     cookieName: type === "api-cookie" ? $("#authCookieNameInput").value.trim() : "",
     tokenHeader: "",
-    refreshCycle: "手动"
+    refreshCycle: "手动",
+    refresh: refresh || undefined
   };
 }
 
@@ -2707,8 +2854,11 @@ function getDefaultSourceExecutionConfig() {
       pageSizeParam: "pageSize",
       pageSize: 100,
       startPage: 1,
+      paginateIn: "query",
       nextTokenPath: "data.pageInfo.nextPageToken",
       hasNextPath: "data.pageInfo.hasNext",
+      totalCountPath: "data.total",
+      totalPagesPath: "data.totalPages",
       maxPages: 100,
       totalPages: 0,
       pagesPerShard: 0
@@ -2751,8 +2901,11 @@ function collectSourceExecutionConfig() {
       pageSizeParam: $("#flowNodePageSizeParamInput").value.trim() || "pageSize",
       pageSize: Math.max(1, readIntegerInput("#flowNodePageSizeInput", 100)),
       startPage: Math.max(0, readIntegerInput("#flowNodeStartPageInput", 1)),
+      paginateIn: $("#flowNodePaginateInSelect").value || "query",
       nextTokenPath: $("#flowNodeNextTokenPathInput").value.trim(),
       hasNextPath: $("#flowNodeHasNextPathInput").value.trim(),
+      totalCountPath: $("#flowNodeTotalCountPathInput").value.trim(),
+      totalPagesPath: $("#flowNodeTotalPagesPathInput").value.trim(),
       maxPages: Math.max(1, readIntegerInput("#flowNodeMaxPagesInput", 100)),
       totalPages: Math.max(0, readIntegerInput("#flowNodeTotalPagesInput", 0)),
       pagesPerShard: Math.max(0, readIntegerInput("#flowNodePagesPerShardInput", 0))
@@ -2775,8 +2928,11 @@ function populateSourceExecutionConfig(config = {}) {
   $("#flowNodePageSizeParamInput").value = normalized.pagination.pageSizeParam;
   $("#flowNodePageSizeInput").value = normalized.pagination.pageSize;
   $("#flowNodeStartPageInput").value = normalized.pagination.startPage;
+  setSelectValue("#flowNodePaginateInSelect", normalized.pagination.paginateIn || "query");
   $("#flowNodeNextTokenPathInput").value = normalized.pagination.nextTokenPath;
   $("#flowNodeHasNextPathInput").value = normalized.pagination.hasNextPath;
+  $("#flowNodeTotalCountPathInput").value = normalized.pagination.totalCountPath || "data.total";
+  $("#flowNodeTotalPagesPathInput").value = normalized.pagination.totalPagesPath || "data.totalPages";
   $("#flowNodeMaxPagesInput").value = normalized.pagination.maxPages;
   $("#flowNodeTotalPagesInput").value = normalized.pagination.totalPages;
   $("#flowNodePagesPerShardInput").value = normalized.pagination.pagesPerShard;
@@ -2868,6 +3024,9 @@ function updateFlowInspectorMode() {
   inspector.classList.toggle("source-node-mode", nodeType === "source");
   inspector.classList.toggle("pagination-page-number", paginationMode === "page-number");
   inspector.classList.toggle("pagination-next-token", paginationMode === "next-token");
+  inspector.classList.toggle("pagination-auto", paginationMode === "auto");
+  inspector.classList.toggle("pagination-has-more", paginationMode === "has-more");
+  inspector.classList.toggle("pagination-empty-result", paginationMode === "empty-result");
   inspector.classList.toggle("iteration-per-record", iterationMode === "per-record");
   inspector.classList.toggle("iteration-batch", iterationMode === "batch");
 }
@@ -3804,15 +3963,46 @@ function applyDisplayFilters(business) {
   return { ...business, rows };
 }
 
+function getDisplayColumns(business) {
+  const fields = getBusinessFields(business);
+  const schema = Array.isArray(business?.fieldSchema) ? business.fieldSchema : [];
+  const byName = new Map(schema.map((meta) => [meta.name, meta]));
+  return fields.map((field, index) => {
+    const meta = byName.get(field) || {};
+    return {
+      index,
+      name: field,
+      alias: meta.alias || field,
+      isDisplay: meta.isDisplay !== false,
+      isHtml: meta.isHtml === true,
+      isJump: meta.isJump === true,
+      jumpIndex: -1
+    };
+  }).map((col) => {
+    if (col.isJump) col.jumpIndex = fields.indexOf(`_jumpurl_${col.name}`);
+    return col;
+  });
+}
+
 function renderBusinessRows(current) {
   const filtered = applyDisplayFilters(current);
   appState.lastDisplayResult = filtered;
-  const rows = [getBusinessFields(filtered), ...(filtered?.rows || [])];
+  const allColumns = getDisplayColumns(filtered);
+  const columns = allColumns.filter((col) => col.isDisplay);
+  const renderCell = (col, row) => {
+    const raw = row[col.index];
+    if (col.isJump && col.jumpIndex >= 0 && row[col.jumpIndex]) {
+      return `<a href="${escapeHtml(row[col.jumpIndex])}" target="_blank" rel="noopener noreferrer">${escapeHtml(raw)}</a>`;
+    }
+    if (col.isHtml) return String(raw ?? "");
+    return escapeHtml(raw);
+  };
+  const rows = [columns.map((col) => col.alias), ...(filtered?.rows || []).map((row) => columns.map((col) => renderCell(col, row)))];
   $("#businessTable").innerHTML = rows
     .map(
       (row, index) => `
         <div class="table-row ${index === 0 ? "header" : ""}">
-          ${row.map((cell) => `<span>${escapeHtml(cell)}</span>`).join("")}
+          ${row.map((cell) => `<span>${cell}</span>`).join("")}
         </div>
       `
     )
@@ -4905,6 +5095,29 @@ function bindEvents() {
     appState.selectedAuthId = window.opsData.authConfigs[0]?.id || "auth_none";
     renderAuthConfigs();
   }
+  $("#addScheduleBtn")?.addEventListener("click", () => {
+    populateScheduleForm();
+    openDialog("#scheduleModal");
+  });
+  $("#saveScheduleBtn")?.addEventListener("click", async (event) => {
+    event.preventDefault();
+    await saveScheduleItem();
+  });
+  $("#scheduleTable")?.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-sched-action]");
+    if (!btn) return;
+    const sched = getSchedules().find((item) => item.id === btn.dataset.id);
+    if (!sched) return;
+    const action = btn.dataset.schedAction;
+    if (action === "run") runScheduleItem(sched);
+    else if (action === "toggle") toggleScheduleItem(sched);
+    else if (action === "edit") { populateScheduleForm(sched); openDialog("#scheduleModal"); }
+    else if (action === "delete") deleteScheduleItem(sched);
+  });
+  setInterval(() => {
+    if ($("#schedule")?.classList.contains("active")) renderSchedulerStatus();
+  }, 15000);
+
   if ($("#analysisMode")) {
     $("#analysisMode").addEventListener("click", (event) => {
       const button = event.target.closest("[data-analysis-tab]");

@@ -36,7 +36,11 @@ function toSourcePatch(input = {}) {
       queryParams: input.queryParams || input.requestConfig?.queryParams || {},
       headers: input.headers || input.requestConfig?.headers || {},
       body: input.body || input.requestConfig?.body || {},
-      pagination: input.pagination || input.requestConfig?.pagination || ""
+      bodyType: input.bodyType || input.requestConfig?.bodyType || "json",
+      pagination: input.pagination || input.requestConfig?.pagination || "",
+      retry: Number.isFinite(Number(input.retry ?? input.requestConfig?.retry)) ? Number(input.retry ?? input.requestConfig?.retry) : 0,
+      retryDelaySeconds: Number.isFinite(Number(input.retryDelaySeconds ?? input.requestConfig?.retryDelaySeconds)) ? Number(input.retryDelaySeconds ?? input.requestConfig?.retryDelaySeconds) : 5,
+      requestTimeoutMs: Number.isFinite(Number(input.requestTimeoutMs ?? input.requestConfig?.requestTimeoutMs)) ? Number(input.requestTimeoutMs ?? input.requestConfig?.requestTimeoutMs) : 8000
     },
     responseConfig: {
       keepMode: input.responseConfig?.keepMode || input.responseKeepMode || "all",
@@ -169,7 +173,7 @@ function getValuesByPath(value, path = "") {
   return visit(value, 0);
 }
 
-function getByPath(value, path = "") {
+export function getByPath(value, path = "") {
   const values = getValuesByPath(value, path);
   if (!path) return values;
   return path.includes("[]") || path.includes("[*]") ? values : values[0];
@@ -532,7 +536,7 @@ function normalizeSourceUrl(type = "") {
   return withoutMethod;
 }
 
-function assertSafeSourceUrl(url) {
+export function assertSafeSourceUrl(url) {
   const parsed = new URL(url);
   if (!["http:", "https:"].includes(parsed.protocol)) {
     const error = new Error("Only HTTP/HTTPS data source URLs are allowed");
@@ -594,8 +598,10 @@ export function buildPlaceholderValues(parameterConfig = {}) {
       output[item.name] = composeDictionaryPlaceholder(getDictionaryValuesFromRef(item.from || item.ref || ""), item);
     } else if (item.source === "mapping") {
       const context = parameterConfig.context || {};
-      const path = String(item.from || item.name || "").replace(/^context\./, "");
-      const values = getValuesByPath(context.context || context, path);
+      const rawFrom = String(item.from || item.name || "");
+      const path = rawFrom.replace(/^context\./, "").replace(/^record\./, "record.").replace(/^upstream\./, "upstream.");
+      const root = context.context || context;
+      const values = getValuesByPath(root, path);
       output[item.name] = values.length > 1 ? composeDictionaryPlaceholder(values, item) : values[0] ?? `{{${item.from || item.name}}}`;
     } else {
       output[item.name] = `{{${item.from || item.name}}}`;
@@ -667,6 +673,33 @@ function parseEnumMap(param = "") {
     .filter(([key]) => key !== undefined && key !== "")
     .reduce((output, [key, value]) => {
       output[unquoteValue(key)] = unquoteValue(value ?? "");
+      return output;
+    }, {});
+}
+
+function parseDictionaryEnumMap(param = "") {
+  const match = String(param || "").match(/^dict:([^=]+)=([^\s;]+)/i);
+  if (!match) return null;
+  const keySpec = match[1].trim();
+  const valueColumn = match[2].trim();
+  const whereMatch = String(param || "").match(/\bwhere\s+(.+)$/i);
+  const where = whereMatch ? whereMatch[1].trim() : "";
+  const dotIndex = keySpec.lastIndexOf(".");
+  if (dotIndex < 0) return null;
+  const dictionaryName = keySpec.slice(0, dotIndex);
+  const keyColumn = keySpec.slice(dotIndex + 1);
+  const dictionary = getDictionaryByIdOrName(dictionaryName);
+  if (!dictionary) return {};
+  const [scopeColumn, scopeValue] = where ? where.split("=").map((item) => item?.trim()) : [];
+  return (dictionary.rows || [])
+    .filter((row) => {
+      if (!scopeColumn || !scopeValue) return true;
+      return String(row[scopeColumn] ?? "") === unquoteValue(scopeValue);
+    })
+    .reduce((output, row) => {
+      const variant = String(row[keyColumn] ?? "").trim();
+      const standard = String(row[valueColumn] ?? "").trim();
+      if (variant) output[variant] = standard;
       return output;
     }, {});
 }
@@ -790,23 +823,101 @@ const cleaningActions = new Map([
     finalizeRuleOutput(normalizedValues.map((value) => {
       const numeric = Number(value);
       if (Number.isNaN(numeric)) return mapping.defaultValue ?? "";
-      return param === "seconds_to_minutes" ? Math.round(numeric / 60) : numeric;
+      switch (param) {
+        case "ms_to_seconds": return numeric / 1000;
+        case "seconds_to_minutes": return Math.round(numeric / 60);
+        case "minutes_to_hours": return numeric / 60;
+        case "hours_to_days": return numeric / 24;
+        case "bytes_to_mb": return numeric / (1024 * 1024);
+        case "bytes_to_gb": return numeric / (1024 * 1024 * 1024);
+        default: return numeric;
+      }
     }), mapping.defaultValue)],
   ["date", ({ normalizedValues, mapping }) =>
     finalizeRuleOutput(normalizedValues.map((value) => {
       const date = new Date(value);
       return Number.isNaN(date.getTime()) ? value : date.toISOString();
     }), mapping.defaultValue)],
+  ["lookup", ({ normalizedValues, rule, param, mapping }) => {
+    const cfg = rule?.config || {};
+    let dictionaryName = cfg.dictionary || cfg.dictionaryName || "";
+    let keyColumn = cfg.keyColumn || cfg.keyField || "";
+    let valueColumn = cfg.valueColumn || cfg.valueField || "";
+    let scopeColumn = cfg.scopeColumn || "";
+    let scopeValue = cfg.scopeValue ?? "";
+    if (!dictionaryName || !keyColumn || !valueColumn) {
+      const match = String(param || "").match(/^dict:([^=]+)=([^\s;]+)/i);
+      if (!match) return finalizeRuleOutput(normalizedValues, mapping.defaultValue);
+      const keySpec = match[1].trim();
+      valueColumn = match[2].trim();
+      const whereMatch = String(param || "").match(/\bwhere\s+(.+)$/i);
+      const where = whereMatch ? whereMatch[1].trim() : "";
+      const dotIndex = keySpec.lastIndexOf(".");
+      if (dotIndex < 0) return finalizeRuleOutput(normalizedValues, mapping.defaultValue);
+      dictionaryName = keySpec.slice(0, dotIndex);
+      keyColumn = keySpec.slice(dotIndex + 1);
+      [scopeColumn, scopeValue] = where ? where.split("=").map((item) => item?.trim()) : [];
+    }
+    const dictionary = getDictionaryByIdOrName(dictionaryName);
+    if (!dictionary) return finalizeRuleOutput(normalizedValues, mapping.defaultValue);
+    const lookupMap = (dictionary.rows || [])
+      .filter((row) => {
+        if (!scopeColumn || scopeValue === undefined || scopeValue === "") return true;
+        return String(row[scopeColumn] ?? "") === unquoteValue(String(scopeValue));
+      })
+      .reduce((output, row) => {
+        const key = String(row[keyColumn] ?? "").trim();
+        if (key) output[key] = String(row[valueColumn] ?? "").trim();
+        return output;
+      }, {});
+    const multi = cfg.multi === true || mapping.aggregateOutput === true;
+    const separator = mapping.aggregateSeparator ?? cfg.separator ?? ",";
+    return finalizeRuleOutput(normalizedValues.flatMap((value) => {
+      const text = String(value ?? "").trim();
+      if (multi && text) {
+        const parts = text.split(separator).map((p) => p.trim()).filter(Boolean);
+        const mapped = parts.map((p) => lookupMap[p] ?? mapping.defaultValue ?? p);
+        return [uniqueValues(mapped).join(separator)];
+      }
+      return [lookupMap[text] ?? mapping.defaultValue ?? value];
+    }), mapping.defaultValue);
+  }],
   ["enum", ({ normalizedValues, rule, param, ruleOptions, mapping }) => {
-    const enumMap = parseEnumMap(param);
-    const caseInsensitiveEnum = rule.config?.caseInsensitive || getBooleanOption(ruleOptions, "caseInsensitive", false);
+    const cfg = rule?.config || {};
+    let enumMap = null;
+    if (cfg.dictionary && (cfg.keyColumn || cfg.keyField) && (cfg.valueColumn || cfg.valueField)) {
+      const dictionary = getDictionaryByIdOrName(cfg.dictionary || cfg.dictionaryName);
+      if (dictionary) {
+        const keyCol = cfg.keyColumn || cfg.keyField;
+        const valCol = cfg.valueColumn || cfg.valueField;
+        const scopeCol = cfg.scopeColumn || "";
+        const scopeVal = cfg.scopeValue ?? "";
+        enumMap = (dictionary.rows || [])
+          .filter((row) => !scopeCol || scopeVal === undefined || scopeVal === "" || String(row[scopeCol] ?? "") === String(scopeVal))
+          .reduce((output, row) => {
+            const variant = String(row[keyCol] ?? "").trim();
+            if (variant) output[variant] = String(row[valCol] ?? "").trim();
+            return output;
+          }, {});
+      }
+    }
+    if (!enumMap) {
+      const dictEnumMap = parseDictionaryEnumMap(param);
+      enumMap = dictEnumMap || parseEnumMap(param);
+    }
+    const caseInsensitiveEnum = cfg.caseInsensitive || getBooleanOption(ruleOptions, "caseInsensitive", false);
     const normalizedEnumMap = caseInsensitiveEnum
       ? Object.fromEntries(Object.entries(enumMap).map(([key, value]) => [String(key).toLowerCase(), value]))
       : enumMap;
+    const onMiss = cfg.onMiss || "keep";
     return finalizeRuleOutput(normalizedValues.map((value) => {
       const text = String(value ?? "");
+      const matched = normalizedEnumMap[caseInsensitiveEnum ? text.toLowerCase() : text];
+      if (matched !== undefined) return matched;
+      if (onMiss === "blank") return "";
+      if (onMiss === "default") return mapping.defaultValue ?? "";
       const fallback = mapping.defaultValue !== undefined && mapping.defaultValue !== "" ? mapping.defaultValue : value;
-      return normalizedEnumMap[caseInsensitiveEnum ? text.toLowerCase() : text] ?? fallback;
+      return fallback;
     }), mapping.defaultValue);
   }]
 ]);
@@ -848,26 +959,115 @@ function applyAggregateMapping(records = [], mapping = {}, responsePath = "") {
   return finalizeAggregateMappingOutput(values, mapping);
 }
 
+function resolveJumpUrlTemplate(template = "", record = {}) {
+  if (!template) return "";
+  return String(template).replace(/\[([\w.-]+)\]/g, (match, fieldName) => {
+    const value = record?.[fieldName];
+    return value === undefined || value === null ? "" : String(value);
+  });
+}
+
+function assignTarget(output, targetField, value) {
+  if (Array.isArray(targetField)) {
+    targetField.forEach((field) => { output[field] = value; });
+  } else {
+    output[targetField] = value;
+  }
+}
+
+// 通用 1:N 父子展开(对齐老系统 save_mode=replicate 的展开语义: 父记录 × 子数组)
+// mapping: { recordMode: "explode", sourceField: 子数组路径, explodeMapping: [{from, to}] }
+function explodeRecords(records, explodeMapping, otherMappings, responsePath) {
+  const result = [];
+  for (const record of records) {
+    const childArray = getByPath(record, explodeMapping.sourceField);
+    const children = Array.isArray(childArray) ? childArray : (childArray === undefined || childArray === null ? [] : [childArray]);
+    const applyOthers = (base) => otherMappings.reduce((output, mapping) => {
+      const value = applyMappingToRecord(base, mapping, responsePath);
+      assignTarget(output, mapping.targetField, value);
+      if (mapping.isJump && mapping.jumpUrl) {
+        assignTarget(output, Array.isArray(mapping.targetField) ? mapping.targetField.map((f) => `_jumpurl_${f}`) : `_jumpurl_${mapping.targetField}`, resolveJumpUrlTemplate(mapping.jumpUrl, base));
+      }
+      return output;
+    }, { ...base });
+    if (!children.length) {
+      result.push(applyOthers(record));
+      continue;
+    }
+    for (const child of children) {
+      const row = { ...record };
+      (explodeMapping.explodeMapping || []).forEach(({ from, to }) => {
+        if (to) row[to] = child?.[from] ?? "";
+      });
+      result.push(applyOthers(row));
+    }
+  }
+  return result;
+}
+
 export function applyFieldMappings(records = [], mappings = [], responsePath = "") {
   if (!mappings.length) return [];
+  const explodeMapping = mappings.find((mapping) => mapping.recordMode === "explode");
+  if (explodeMapping) {
+    const otherMappings = mappings.filter((mapping) => mapping.recordMode !== "explode");
+    return explodeRecords(records, explodeMapping, otherMappings, responsePath);
+  }
   const hasAggregateMappings = mappings.some((mapping) => mapping.recordMode === "aggregate-records");
   if (hasAggregateMappings) {
     const firstRecord = records[0] || {};
     return [
       mappings.reduce((output, mapping) => {
-        output[mapping.targetField] = mapping.recordMode === "aggregate-records"
+        const value = mapping.recordMode === "aggregate-records"
           ? applyAggregateMapping(records, mapping, responsePath)
           : applyMappingToRecord(firstRecord, mapping, responsePath);
+        assignTarget(output, mapping.targetField, value);
         return output;
       }, {})
     ];
   }
   return records.map((record) =>
     mappings.reduce((output, mapping) => {
-      output[mapping.targetField] = applyMappingToRecord(record, mapping, responsePath);
+      const value = applyMappingToRecord(record, mapping, responsePath);
+      assignTarget(output, mapping.targetField, value);
+      if (mapping.isJump && mapping.jumpUrl) {
+        assignTarget(output, Array.isArray(mapping.targetField) ? mapping.targetField.map((f) => `_jumpurl_${f}`) : `_jumpurl_${mapping.targetField}`, resolveJumpUrlTemplate(mapping.jumpUrl, record));
+      }
       return output;
     }, {})
   );
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildRequestBody(method, body, bodyType) {
+  if (["GET", "DELETE", "HEAD"].includes(method)) return undefined;
+  if (body === undefined || body === null) return undefined;
+  if (bodyType === "form") {
+    const form = new URLSearchParams();
+    Object.entries(body).forEach(([key, value]) => {
+      if (value === undefined || value === null) return;
+      form.append(key, typeof value === "object" ? JSON.stringify(value) : String(value));
+    });
+    return form;
+  }
+  return JSON.stringify(body || {});
+}
+
+function applyBodyTypeHeaders(headers, bodyType) {
+  const next = { ...headers };
+  if (bodyType === "form" && !next["Content-Type"] && !next["content-type"]) {
+    next["Content-Type"] = "application/x-www-form-urlencoded";
+  } else if (bodyType !== "form" && !next["Content-Type"] && !next["content-type"]) {
+    next["Content-Type"] = "application/json";
+  }
+  return next;
+}
+
+function responseCacheKey(method, url, queryParams, body, bodyType) {
+  if (!url) return "";
+  return `${method}|${url}|${bodyType}|${JSON.stringify(queryParams || {})}|${JSON.stringify(body || {})}`;
 }
 
 async function fetchRealSource(config = {}) {
@@ -877,39 +1077,94 @@ async function fetchRealSource(config = {}) {
   const method = String(config.method || config.requestConfig?.method || "GET").toUpperCase();
   const placeholderValues = buildPlaceholderValues(config.parameterConfig || {});
   const queryParams = applyPlaceholders(config.queryParams || config.requestConfig?.queryParams || {}, placeholderValues);
-  const headers = { ...applyPlaceholders(config.headers || config.requestConfig?.headers || {}, placeholderValues) };
-  const body = applyPlaceholders(config.body || config.requestConfig?.body || {}, placeholderValues);
+  const requestConfig = config.requestConfig || {};
+  const bodyType = config.bodyType || requestConfig.bodyType || "json";
+  const headers = applyBodyTypeHeaders(applyPlaceholders(config.headers || requestConfig.headers || {}, placeholderValues), bodyType);
+  const body = applyPlaceholders(config.body || requestConfig.body || {}, placeholderValues);
   const authConfig = store.authConfigs.find((item) => item.id === config.authConfigId);
   if (authConfig?.cookieName && authConfig?.cookieValue) {
     headers.Cookie = `${authConfig.cookieName}=${authConfig.cookieValue}`;
   }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const retry = Math.max(0, Number(config.retry ?? requestConfig.retry ?? 0) || 0);
+  const retryDelaySeconds = Math.max(0, Number(config.retryDelaySeconds ?? requestConfig.retryDelaySeconds ?? 5) || 5);
+  const requestTimeoutMs = Math.max(1000, Number(config.requestTimeoutMs ?? requestConfig.requestTimeoutMs ?? 8000) || 8000);
+  const maxAttempts = retry + 1;
+  const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
   const startedAt = Date.now();
-  try {
-    const response = await fetch(appendQueryParams(sourceUrl, queryParams), {
-      method,
-      headers,
-      body: ["GET", "DELETE", "HEAD"].includes(method) ? undefined : JSON.stringify(body || {}),
-      signal: controller.signal
-    });
-    const text = await response.text();
-    let responseBody;
-    try {
-      responseBody = text ? JSON.parse(text) : {};
-    } catch {
-      responseBody = { text };
-    }
+  let lastError = "";
+  const responseCache = config._responseCache;
+  const cacheKey = responseCacheKey(method, sourceUrl, queryParams, body, bodyType);
+  if (responseCache && cacheKey && responseCache.has(cacheKey)) {
+    const cached = responseCache.get(cacheKey);
     return {
-      responseBody,
-      status: response.status,
-      durationMs: Date.now() - startedAt,
+      responseBody: cached.responseBody,
+      status: cached.status,
+      durationMs: 0,
       sourceMode: "real",
-      error: response.ok ? "" : `HTTP ${response.status}`
+      error: cached.status >= 200 && cached.status < 400 ? "" : `HTTP ${cached.status}`,
+      attempts: 0,
+      cached: true
     };
-  } finally {
-    clearTimeout(timeout);
   }
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+    try {
+      const response = await fetch(appendQueryParams(sourceUrl, queryParams), {
+        method,
+        headers,
+        body: buildRequestBody(method, body, bodyType),
+        signal: controller.signal
+      });
+      const text = await response.text();
+      let responseBody;
+      try {
+        responseBody = text ? JSON.parse(text) : {};
+      } catch {
+        responseBody = { text };
+      }
+      clearTimeout(timeout);
+      const retryableStatus = !response.ok && RETRYABLE_STATUS.has(response.status);
+      if (response.ok || attempt >= maxAttempts || !retryableStatus) {
+        if (responseCache && cacheKey && response.ok) {
+          responseCache.set(cacheKey, { responseBody, status: response.status });
+        }
+        return {
+          responseBody,
+          status: response.status,
+          durationMs: Date.now() - startedAt,
+          sourceMode: "real",
+          error: response.ok ? "" : `HTTP ${response.status}`,
+          attempts: attempt
+        };
+      }
+      lastError = `HTTP ${response.status}`;
+    } catch (err) {
+      clearTimeout(timeout);
+      lastError = err?.name === "AbortError" ? `请求超时(${requestTimeoutMs}ms)` : (err?.message || "请求失败");
+      if (attempt >= maxAttempts) {
+        return {
+          responseBody: { error: lastError },
+          status: 599,
+          durationMs: Date.now() - startedAt,
+          sourceMode: "real",
+          error: lastError,
+          attempts: attempt
+        };
+      }
+    }
+    if (attempt < maxAttempts && retryDelaySeconds > 0) {
+      await wait(retryDelaySeconds * 1000);
+    }
+  }
+  return {
+    responseBody: { error: lastError || "请求失败" },
+    status: 599,
+    durationMs: Date.now() - startedAt,
+    sourceMode: "real",
+    error: lastError,
+    attempts: maxAttempts
+  };
 }
 
 function uniqueObjects(items = []) {
@@ -922,7 +1177,7 @@ function uniqueObjects(items = []) {
   });
 }
 
-function buildPagedRequestConfig(source = {}, node = {}, plan = {}, pageNumber = 1) {
+export function buildPagedRequestConfig(source = {}, node = {}, plan = {}, pageNumber = 1) {
   const pagination = node.executionConfig?.pagination || {};
   const requestConfig = source.requestConfig || {};
   const pageParam = pagination.pageParam || "page";
@@ -932,7 +1187,9 @@ function buildPagedRequestConfig(source = {}, node = {}, plan = {}, pageNumber =
   const body = requestConfig.body && typeof requestConfig.body === "object" && !Array.isArray(requestConfig.body)
     ? { ...requestConfig.body }
     : requestConfig.body;
-  const target = pagination.paramLocation === "body" && body && typeof body === "object" && !Array.isArray(body)
+  // 命名收敛: 统一用 paginateIn(query|body); paramLocation 作为 legacy 别名兼容
+  const paginateIn = pagination.paginateIn || pagination.paramLocation || "query";
+  const target = paginateIn === "body" && body && typeof body === "object" && !Array.isArray(body)
     ? body
     : queryParams;
   if ((pagination.mode || plan.paginationMode) === "page-number") {
@@ -946,7 +1203,7 @@ function buildPagedRequestConfig(source = {}, node = {}, plan = {}, pageNumber =
   };
 }
 
-async function runWithConcurrency(tasks = [], concurrency = 1) {
+export async function runWithConcurrency(tasks = [], concurrency = 1) {
   const results = [];
   let cursor = 0;
   async function worker() {
@@ -960,7 +1217,7 @@ async function runWithConcurrency(tasks = [], concurrency = 1) {
   return results;
 }
 
-function mergeDataSourceResults(results = [], source = {}, node = {}, plan = {}) {
+export function mergeDataSourceResults(results = [], source = {}, node = {}, plan = {}) {
   const ok = results.every((result) => result.ok);
   const mappedRecords = uniqueObjects(results.flatMap((result) => result.mappedRecords || []));
   const selectedRecords = uniqueObjects(results.flatMap((result) => result.selectedRecords || []));
@@ -997,6 +1254,7 @@ export async function testDataSource(input = {}) {
     ...input
   };
   const kind = config.kind || "api";
+  const mode = input.mode === "live" ? "live" : "preview";
   const now = new Date().toISOString();
   const responsePath = config.responsePath || "data.items";
   const keepMode = config.responseConfig?.keepMode || config.responseKeepMode || "all";
@@ -1037,6 +1295,14 @@ export async function testDataSource(input = {}) {
     }
   }
   if (!responseBody) {
+    if (mode === "live" && kind === "api") {
+      // live 模式(调度器/真实业务流执行): 真实采集未取到响应时禁止 mock 兜底,
+      // 返回空响应 + 599 失败, 使重试/原子写/聚合在真实失败时正确生效
+      responseBody = {};
+      status = 599;
+      sourceMode = "real";
+      error = error || "live 模式：未取到真实响应且禁止 mock 兜底（请检查数据源 URL 与认证）";
+    } else {
     responseBody =
       kind === "database"
       ? {
@@ -1154,6 +1420,7 @@ export async function testDataSource(input = {}) {
               }
             }
           };
+    }
   }
   const extraction = extractResponseRecords(responseBody, {
     responsePath,
@@ -1206,24 +1473,176 @@ export async function testDataSource(input = {}) {
   };
 }
 
-export async function executeDataSourcePlan(source = {}, node = {}, plan = {}) {
+function extractNumber(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function detectPaginationFromResponse(responseBody, paginationConfig) {
+  const mode = paginationConfig.mode;
+  if (!["auto", "has-more", "empty-result", "next-token"].includes(mode)) {
+    return { detectedPages: 0, detectedHasMore: null, nextToken: "", stop: false };
+  }
+  const total = extractNumber(getByPath(responseBody, paginationConfig.totalCountPath));
+  const totalPages = extractNumber(getByPath(responseBody, paginationConfig.totalPagesPath));
+  const hasMore = getByPath(responseBody, paginationConfig.hasNextPath);
+  const nextToken = getByPath(responseBody, paginationConfig.nextTokenPath);
+  if (mode === "auto") {
+    if (totalPages !== null) return { detectedPages: totalPages, detectedHasMore: null, nextToken: "", stop: totalPages <= 0 };
+    if (total !== null) {
+      const pageSize = Math.max(1, paginationConfig.pageSize || 1);
+      const computedPages = Math.ceil(total / pageSize);
+      return { detectedPages: computedPages, detectedHasMore: null, nextToken: "", stop: computedPages <= 0 };
+    }
+    if (hasMore !== undefined && hasMore !== null) {
+      return { detectedPages: 0, detectedHasMore: Boolean(hasMore), nextToken: "", stop: false };
+    }
+    return { detectedPages: 0, detectedHasMore: null, nextToken: "", stop: true };
+  }
+  if (mode === "has-more") {
+    return { detectedPages: 0, detectedHasMore: Boolean(hasMore), nextToken: "", stop: !hasMore };
+  }
+  if (mode === "next-token") {
+    return { detectedPages: 0, detectedHasMore: null, nextToken: nextToken || "", stop: !nextToken };
+  }
+  return { detectedPages: 0, detectedHasMore: null, nextToken: "", stop: false };
+}
+
+// 按批节奏(pagesPerBatch)并发拉取分页, 替代一次性全量并发(P1-2)
+async function runPagedBatches(pageNumbers, source, node, plan, mode, pagesPerBatch, concurrency) {
+  const all = [];
+  for (let i = 0; i < pageNumbers.length; i += pagesPerBatch) {
+    const batch = pageNumbers.slice(i, i + pagesPerBatch);
+    const tasks = batch.map((pageNumber) => () => testDataSource({
+      sourceId: source.id,
+      ...source,
+      requestConfig: buildPagedRequestConfig(source, node, plan, pageNumber),
+      previewLimit: 0,
+      mode
+    }));
+    const batchResults = await runWithConcurrency(tasks, concurrency);
+    all.push(...batchResults);
+  }
+  return all;
+}
+
+export async function executeDataSourcePlan(source = {}, node = {}, plan = {}, mode = "preview") {
+  const paginationMode = plan.paginationMode || "off";
+  const needsProbe = ["auto", "has-more", "empty-result", "next-token"].includes(paginationMode);
   const pageCount = Math.max(1, Number(plan.pageCount || 1));
   const batchCount = Math.max(1, Number(plan.batchCount || 1));
   const plannedCalls = Math.max(1, pageCount * batchCount);
   const maxCalls = Math.max(1, Number(process.env.OPERATION_FLOW_MAX_CALLS || 500));
-  const actualCalls = Math.min(plannedCalls, maxCalls);
   const concurrency = Math.max(1, Number(plan.concurrency || 1));
   const startPage = Number(node.executionConfig?.pagination?.startPage || 1);
-  const tasks = Array.from({ length: actualCalls }, (_, index) => {
-    const pageNumber = startPage + (index % pageCount);
-    return () => testDataSource({
-      sourceId: source.id,
-      ...source,
-      requestConfig: buildPagedRequestConfig(source, node, plan, pageNumber),
-      previewLimit: 0
+  const pageSize = Number(plan.pageSize || 100);
+  if (!needsProbe) {
+    const actualCalls = Math.min(plannedCalls, maxCalls);
+    const tasks = Array.from({ length: actualCalls }, (_, index) => {
+      const pageNumber = startPage + (index % pageCount);
+      return () => testDataSource({
+        sourceId: source.id,
+        ...source,
+        requestConfig: buildPagedRequestConfig(source, node, plan, pageNumber),
+        previewLimit: 0,
+        mode
+      });
     });
+    const results = await runWithConcurrency(tasks, concurrency);
+    return mergeDataSourceResults(results, source, node, plan);
+  }
+  const paginationConfig = {
+    mode: paginationMode,
+    pageSize,
+    pageParam: node.executionConfig?.pagination?.pageParam || "page",
+    pageSizeParam: node.executionConfig?.pagination?.pageSizeParam || "pageSize",
+    startPage,
+    totalCountPath: node.executionConfig?.pagination?.totalCountPath || "data.total",
+    totalPagesPath: node.executionConfig?.pagination?.totalPagesPath || "data.totalPages",
+    hasNextPath: node.executionConfig?.pagination?.hasNextPath || "data.has_more",
+    nextTokenPath: node.executionConfig?.pagination?.nextTokenPath || ""
+  };
+  const firstResult = await testDataSource({
+    sourceId: source.id,
+    ...source,
+    requestConfig: buildPagedRequestConfig(source, node, plan, startPage),
+    previewLimit: 0,
+    mode
   });
-  const results = await runWithConcurrency(tasks, concurrency);
+  if (!firstResult.ok) {
+    return mergeDataSourceResults([firstResult], source, node, plan);
+  }
+  const probe = detectPaginationFromResponse(firstResult.responseBody, paginationConfig);
+  const results = [firstResult];
+  const pagesPerBatch = Math.max(1, Number(node.executionConfig?.pagination?.pagesPerBatch || Math.max(concurrency * 5, 10)));
+  if (probe.stop) {
+    return mergeDataSourceResults(results, source, node, plan);
+  }
+  if (probe.detectedPages > 0) {
+    const totalPages = Math.min(probe.detectedPages, maxCalls);
+    const remainingPages = [];
+    for (let page = startPage + 1; page < startPage + totalPages; page += 1) {
+      remainingPages.push(page);
+    }
+    const batchResults = await runPagedBatches(remainingPages, source, node, plan, mode, pagesPerBatch, concurrency);
+    results.push(...batchResults);
+    return mergeDataSourceResults(results, source, node, plan);
+  }
+  if (paginationMode === "has-more" || (paginationMode === "auto" && probe.detectedHasMore !== null)) {
+    let currentPage = startPage + 1;
+    while (results.length < maxCalls) {
+      const pageResult = await testDataSource({
+        sourceId: source.id,
+        ...source,
+        requestConfig: buildPagedRequestConfig(source, node, plan, currentPage),
+        previewLimit: 0,
+        mode
+      });
+      results.push(pageResult);
+      if (!pageResult.ok) break;
+      const pageProbe = detectPaginationFromResponse(pageResult.responseBody, paginationConfig);
+      if (pageProbe.stop) break;
+      currentPage += 1;
+    }
+    return mergeDataSourceResults(results, source, node, plan);
+  }
+  if (paginationMode === "empty-result") {
+    let currentPage = startPage + 1;
+    while (results.length < maxCalls) {
+      const pageResult = await testDataSource({
+        sourceId: source.id,
+        ...source,
+        requestConfig: buildPagedRequestConfig(source, node, plan, currentPage),
+        previewLimit: 0,
+        mode
+      });
+      if (!pageResult.ok) break;
+      const pageRecordCount = Number(pageResult.recordCount || 0);
+      if (pageRecordCount === 0) break;
+      results.push(pageResult);
+      if (pageRecordCount < pageSize) break;
+      currentPage += 1;
+    }
+    return mergeDataSourceResults(results, source, node, plan);
+  }
+  if (paginationMode === "next-token" && probe.nextToken) {
+    let currentToken = probe.nextToken;
+    while (results.length < maxCalls && currentToken) {
+      const pageResult = await testDataSource({
+        sourceId: source.id,
+        ...source,
+        requestConfig: { ...buildPagedRequestConfig(source, node, plan, startPage), nextToken: currentToken },
+        previewLimit: 0,
+        mode
+      });
+      results.push(pageResult);
+      if (!pageResult.ok) break;
+      const pageProbe = detectPaginationFromResponse(pageResult.responseBody, paginationConfig);
+      currentToken = pageProbe.nextToken;
+    }
+    return mergeDataSourceResults(results, source, node, plan);
+  }
   return mergeDataSourceResults(results, source, node, plan);
 }
 
@@ -1231,7 +1650,8 @@ export async function runSync(payload = {}) {
   const sourceId = payload.sourceId || store.dataSources[0]?.id;
   const source = store.dataSources.find((item) => item.id === sourceId) || store.dataSources[0];
   const startedAt = new Date().toISOString();
-  const result = await testDataSource({ sourceId, ...payload });
+  const mode = payload.mode === "live" ? "live" : "preview";
+  const result = await testDataSource({ sourceId, ...payload, mode });
   const fetchedRows = Number(result.recordCount ?? result.filteredRecordCount ?? 0);
   const cleanedRows = Number(result.filteredRecordCount ?? fetchedRows);
   const failedRows = result.ok ? 0 : Math.max(1, fetchedRows - cleanedRows);

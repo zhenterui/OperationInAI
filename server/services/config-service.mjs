@@ -1,6 +1,7 @@
-import { applyStoragePolicy, store } from "../data/store.mjs";
+import { applyStoragePolicy, persistStore, store } from "../data/store.mjs";
 import { createStorageAdapter } from "../data/storage-adapter.mjs";
-import { applyFieldMappings, executeDataSourcePlan, matchesFilter } from "./sync-service.mjs";
+import { persistBusinessTable } from "./business-data-service.mjs";
+import { applyFieldMappings, assertSafeSourceUrl, executeDataSourcePlan, getByPath, matchesFilter, mergeDataSourceResults, runWithConcurrency, testDataSource } from "./sync-service.mjs";
 
 function uniqueId(prefix = "id") {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
@@ -90,17 +91,22 @@ function getSourceExecutionConfig(node = {}, source = {}) {
   const sourceParameterConfig = source.parameterConfig || {};
   const sourcePagination = source.kind === "api" ? source.requestConfig?.pagination || source.pagination || "" : "";
   const config = node.executionConfig || {};
+  const supportedModes = ["off", "page-number", "auto", "has-more", "empty-result", "next-token", "inherit"];
+  const rawMode = config.pagination?.mode || (sourcePagination ? "page-number" : "off");
   const pagination = {
-    mode: config.pagination?.mode || (sourcePagination ? "page-number" : "off"),
+    mode: supportedModes.includes(rawMode) ? rawMode : "off",
     pageSize: positiveNumber(config.pagination?.pageSize, 100),
     maxPages: positiveNumber(config.pagination?.maxPages, sourcePagination ? 2 : 1),
     pageParam: config.pagination?.pageParam || "page",
     pageSizeParam: config.pagination?.pageSizeParam || "pageSize",
     startPage: nonNegativeNumber(config.pagination?.startPage, 1),
     nextTokenPath: config.pagination?.nextTokenPath || "",
-    hasNextPath: config.pagination?.hasNextPath || "",
+    hasNextPath: config.pagination?.hasNextPath || "data.has_more",
+    totalCountPath: config.pagination?.totalCountPath || "data.total",
+    totalPagesPath: config.pagination?.totalPagesPath || "data.totalPages",
     totalPages: nonNegativeNumber(config.pagination?.totalPages, 0),
-    pagesPerShard: nonNegativeNumber(config.pagination?.pagesPerShard, 0)
+    pagesPerShard: nonNegativeNumber(config.pagination?.pagesPerShard, 0),
+    paginateIn: config.pagination?.paginateIn || "query"
   };
   if (pagination.mode === "inherit") {
     pagination.mode = sourcePagination ? "page-number" : "off";
@@ -145,9 +151,15 @@ function estimateSourceNodePlan(node = {}, source = {}) {
   const { pagination, iteration } = getSourceExecutionConfig(node, source);
   const sourceType = iteration.sourceType;
   const defaultRecordCount = sourceType === "database" ? 2 : 1;
-  const recordCount = iteration.mode === "single"
-    ? 1
-    : iteration.recordLimit || defaultRecordCount;
+  let recordCount;
+  if (iteration.mode === "domain-driven") {
+    const domainCfg = node.executionConfig?.iteration?.domain || {};
+    recordCount = Math.max(1, buildDomainValues(domainCfg).length);
+  } else if (iteration.mode === "single") {
+    recordCount = 1;
+  } else {
+    recordCount = iteration.recordLimit || defaultRecordCount;
+  }
   const batchCount = iteration.mode === "batch" ? Math.max(1, Math.ceil(recordCount / iteration.batchSize)) : recordCount;
   const pageCount = pagination.mode === "off" ? 1 : pagination.totalPages || pagination.maxPages;
   const pageShards = buildPageShards(pagination, iteration.concurrency);
@@ -271,21 +283,203 @@ function rowKey(fields = [], row = [], keyFields = []) {
   return parts.some(Boolean) ? parts.join("\u0001") : "";
 }
 
+function readBusinessTableAsRecords(inputTable = "") {
+  if (!inputTable) return [];
+  const business = store.businesses.find((item) => item.name === inputTable || item.id === inputTable);
+  if (!business) return [];
+  const fields = Array.isArray(business.fields) ? business.fields : [];
+  return (business.rows || []).map((row) => {
+    if (Array.isArray(row)) {
+      const obj = {};
+      fields.forEach((field, index) => { obj[field] = row[index]; });
+      return obj;
+    }
+    return { ...row };
+  });
+}
+
+function sourceFieldsFromPlan(plan = {}, source = {}) {
+  const fields = Array.isArray(plan.fields) && plan.fields.length ? plan.fields : [];
+  if (fields.length) return fields;
+  const sourceFields = Array.isArray(source.responseConfig?.keepFields) ? source.responseConfig.keepFields : [];
+  return sourceFields;
+}
+
+// 参数维度展开(通用化老系统 start_year 年份展开): range/dictionary/list 生成取值域
+function buildDomainValues(domain = {}) {
+  if (!domain || typeof domain !== "object") return [];
+  const source = domain.source || "list";
+  if (source === "list") {
+    return Array.isArray(domain.values) ? domain.values.filter((v) => v !== undefined && v !== null && v !== "") : [];
+  }
+  if (source === "range") {
+    const rangeCfg = domain.range || {};
+    const from = Number(rangeCfg.from);
+    const to = Number(rangeCfg.to);
+    const step = Math.max(1, Number(rangeCfg.step || 1));
+    const format = rangeCfg.format || "";
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return [];
+    const values = [];
+    for (let v = from; v <= to; v += step) {
+      values.push(format ? String(format).replace(/\{value\}/g, String(v)) : v);
+    }
+    return values;
+  }
+  if (source === "dictionary") {
+    const cfg = domain.dictionary || {};
+    const dict = store.dictionarySets.find((item) => item.id === cfg.dictionaryId || item.name === cfg.dictionaryName);
+    if (!dict) return [];
+    const column = cfg.column || dict.columns?.[0];
+    return (dict.rows || []).map((row) => row?.[column]).filter((v) => v !== undefined && v !== null && v !== "");
+  }
+  return [];
+}
+
+// 字段级展示元数据(E4): alias/isDisplay/isCreateTime/isHtml/isJump
+// 首次产出按启发式生成草稿, 已有字段保留用户编辑, 新字段补默认值
+const FIELD_SCHEMA_TIME_HINTS = new Set([
+  "event_time", "created_at", "updated_at", "occur_time", "occurtime",
+  "time", "时间", "fetched_at", "_fetched_at", "checked_at"
+]);
+
+export function reconcileFieldSchema(existingSchema, fields = []) {
+  const existing = Array.isArray(existingSchema) ? existingSchema : [];
+  const byName = new Map(existing.filter((s) => s && s.name).map((s) => [s.name, s]));
+  const jumpFields = new Set(
+    fields.filter((f) => String(f).startsWith("_jumpurl_")).map((f) => String(f).slice("_jumpurl_".length))
+  );
+  return fields.map((field) => {
+    const f = String(field);
+    const prev = byName.get(f);
+    if (prev) return { ...prev, name: f };
+    return {
+      name: f,
+      alias: f,
+      isDisplay: !f.startsWith("_"),
+      isCreateTime: FIELD_SCHEMA_TIME_HINTS.has(f.toLowerCase()),
+      isHtml: false,
+      isJump: jumpFields.has(f)
+    };
+  });
+}
+
+export function normalizeFieldSchemaInput(input = []) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((item) => item && item.name)
+    .map((item) => ({
+      name: String(item.name),
+      alias: item.alias != null ? String(item.alias) : String(item.name),
+      isDisplay: item.isDisplay !== false,
+      isCreateTime: item.isCreateTime === true,
+      isHtml: item.isHtml === true,
+      isJump: item.isJump === true,
+      jumpUrl: item.jumpUrl || ""
+    }));
+}
+
+function extractAggregateValues(recordRows = [], fields = [], aggregateConfig = {}) {
+  if (!recordRows.length) return [];
+  const extractField = aggregateConfig.extractField;
+  const extractPath = aggregateConfig.extractPath;
+  if (extractPath) {
+    return recordRows.flatMap((row) => {
+      const value = getByPath(row, extractPath);
+      return Array.isArray(value) ? value.filter((v) => v !== undefined && v !== null && v !== "") : (value === undefined || value === null || value === "" ? [] : [value]);
+    }).map((value) => String(value));
+  }
+  if (!extractField) return [];
+  return recordRows.map((row) => {
+    if (Array.isArray(row)) {
+      const index = fields.indexOf(extractField);
+      return index >= 0 ? row[index] : "";
+    }
+    return row?.[extractField] ?? "";
+  }).filter((value) => value !== undefined && value !== null && value !== "").map((value) => String(value));
+}
+
+function applyAggregateTools(values = [], tools = []) {
+  let result = [...values];
+  for (const tool of tools) {
+    if (!tool?.name) continue;
+    const params = tool.params || {};
+    if (tool.name === "filter_empty") {
+      result = result.filter((value) => value !== "" && value !== null && value !== undefined);
+    } else if (tool.name === "unique") {
+      const seen = new Set();
+      result = result.filter((value) => {
+        if (seen.has(value)) return false;
+        seen.add(value);
+        return true;
+      });
+    } else if (tool.name === "sort") {
+      result = result.sort((a, b) => params.reverse ? String(b).localeCompare(String(a)) : String(a).localeCompare(String(b)));
+    } else if (tool.name === "limit") {
+      result = result.slice(0, Math.max(0, Number(params.maxCount ?? params.limit ?? params.max_count ?? 100)));
+    } else if (tool.name === "join") {
+      result = [result.join(params.separator ?? ",")];
+    }
+  }
+  return result;
+}
+
 function mergeBusinessRows(existingRows = [], newRows = [], fields = [], outputConfig = {}) {
   const strategy = outputConfig.writeStrategy || "upsert";
+  const rowLimit = 1000;
+  // replicate 与 preserve-unmatched / upsert-keep-others 同义(保留未匹配旧行);
+  // 老系统的 1:N 展开用 explode action 实现, 不在此处
+  const isPreserveUnmatched = ["replicate", "preserve-unmatched", "upsert-keep-others"].includes(strategy);
+  if (strategy === "overwrite") {
+    return [...newRows].slice(0, rowLimit);
+  }
   if (strategy === "append") {
-    return [...newRows, ...existingRows].slice(0, 1000);
+    return [...newRows, ...existingRows].slice(0, rowLimit);
+  }
+  if (isPreserveUnmatched) {
+    const keyFields = getDedupeFields(outputConfig);
+    if (!keyFields.length) return [...newRows, ...existingRows].slice(0, rowLimit);
+    const newKeys = new Set(newRows.map((row) => rowKey(fields, row, keyFields)).filter(Boolean));
+    const replicated = existingRows.filter((row) => {
+      const key = rowKey(fields, row, keyFields);
+      return !key || !newKeys.has(key);
+    });
+    return [...newRows, ...replicated].slice(0, rowLimit);
   }
   const keyFields = getDedupeFields(outputConfig);
   if (!keyFields.length) {
-    return [...newRows, ...existingRows].slice(0, 1000);
+    return [...newRows, ...existingRows].slice(0, rowLimit);
   }
   const newKeys = new Set(newRows.map((row) => rowKey(fields, row, keyFields)).filter(Boolean));
-  const keptRows = existingRows.filter((row) => {
+  const updateFields = Array.isArray(outputConfig.updateFields) && outputConfig.updateFields.length
+    ? new Set(outputConfig.updateFields)
+    : null;
+  if (!updateFields) {
+    const keptRows = existingRows.filter((row) => {
+      const key = rowKey(fields, row, keyFields);
+      return !key || !newKeys.has(key);
+    });
+    return [...newRows, ...keptRows].slice(0, rowLimit);
+  }
+  const updatedRows = existingRows.map((row) => {
     const key = rowKey(fields, row, keyFields);
-    return !key || !newKeys.has(key);
+    if (!key || !newKeys.has(key)) return row;
+    const matchingNew = newRows.find((newRow) => rowKey(fields, newRow, keyFields) === key);
+    if (!matchingNew) return row;
+    const newRow = [...row];
+    updateFields.forEach((field) => {
+      const index = fields.indexOf(field);
+      if (index >= 0 && matchingNew[index] !== undefined && matchingNew[index] !== null) {
+        newRow[index] = matchingNew[index];
+      }
+    });
+    return newRow;
   });
-  return [...newRows, ...keptRows].slice(0, 1000);
+  const existingKeys = new Set(existingRows.map((row) => rowKey(fields, row, keyFields)).filter(Boolean));
+  const insertedRows = newRows.filter((row) => {
+    const key = rowKey(fields, row, keyFields);
+    return key && !existingKeys.has(key);
+  });
+  return [...insertedRows, ...updatedRows].slice(0, rowLimit);
 }
 
 function getNodePredecessors(nodes = [], node = {}, edges = []) {
@@ -409,20 +603,128 @@ async function executeFlowNode(node = {}, context = {}) {
     return { node, skipped: true, records: [], sourceResults: [], message: "edge condition not matched" };
   }
   if (node.type === "context") {
-    return { node, records: [{ ...(context.flowContext || {}) }], sourceResults: [] };
+    const preActions = Array.isArray(node.preActions) ? node.preActions : (Array.isArray(node.executionConfig?.preActions) ? node.executionConfig.preActions : []);
+    const flowContext = { ...(context.flowContext || {}) };
+    const sourceResults = [];
+    const mode = context.mode || "preview";
+    if (preActions.length) {
+      for (const action of preActions) {
+        if (!action?.sourceId && !action?.refId) continue;
+        const actionSource = store.dataSources.find((entry) => entry.id === (action.sourceId || action.refId));
+        if (!actionSource) continue;
+        const actionResult = await testDataSource({
+          sourceId: actionSource.id,
+          ...actionSource,
+          parameterConfig: { ...(actionSource.parameterConfig || {}), context: flowContext },
+          previewLimit: 0,
+          mode
+        });
+        sourceResults.push({ node, source: actionSource, result: actionResult });
+        if (!actionResult.ok) {
+          // P1-3: preAction 失败默认 fail-flow, 可被 action.onError=continue 覆盖
+          if (action.onError !== "continue") {
+            return { node, records: [flowContext], sourceResults, error: `preAction ${action.sourceId || action.refId} 失败: ${actionResult.error || ""}` };
+          }
+          continue;
+        }
+        const variables = Array.isArray(action.variables) ? action.variables : (action.variableName ? [{ name: action.variableName, valuePath: action.valuePath || "" }] : []);
+        variables.forEach((variable) => {
+          if (!variable?.name) return;
+          const extracted = variable.valuePath ? getByPath(actionResult.responseBody, variable.valuePath) : actionResult.responseBody;
+          flowContext[variable.name] = extracted;
+        });
+      }
+    }
+    context.flowContext = flowContext;
+    return { node, records: [flowContext], sourceResults };
   }
   if (node.type === "source") {
     const source = store.dataSources.find((entry) => entry.id === node.refId);
     if (!source) return { node, records: [], sourceResults: [], error: "source not found" };
     const plan = sourceExecutionPlans.find((entry) => entry.nodeId === node.id) || estimateSourceNodePlan(node, source);
+    const mode = context.mode || "preview";
+    const responseCache = context.responseCache;
+    const cachedSource = responseCache ? { ...source, _responseCache: responseCache } : source;
+    const inputTable = node.executionConfig?.inputTable || node.inputTable || source.parameterConfig?.inputTable || "";
+    if (source.parameterConfig?.sourceType === "database" && inputTable) {
+      const tableRecords = readBusinessTableAsRecords(inputTable);
+      const result = { ok: true, recordCount: tableRecords.length, mappedRecords: tableRecords, selectedRecords: tableRecords, fields: [], responseBody: { records: tableRecords }, durationMs: 0, attempts: 1 };
+      return { node, source, result, plan, records: tableRecords, sourceResults: [{ node, source, result, plan }] };
+    }
+    const iterationMode = plan.iterationMode || node.executionConfig?.iteration?.mode || "single";
+    if (iterationMode === "record-driven" && upstreamRecords.length) {
+      const concurrency = Math.max(1, Number(plan.concurrency || node.executionConfig?.iteration?.concurrency || 1));
+      const maxRecordCalls = Math.max(1, Number(process.env.OPERATION_FLOW_MAX_CALLS || 500));
+      const limit = upstreamRecords.length > maxRecordCalls ? upstreamRecords.slice(0, maxRecordCalls) : upstreamRecords;
+      const aggregateConfig = node.executionConfig?.aggregate || node.aggregate || null;
+      const tasks = limit.map((record) => {
+        const sourceWithRecord = {
+          ...cachedSource,
+          parameterConfig: {
+            ...(source.parameterConfig || {}),
+            context: { ...(context.flowContext || {}), record, upstream: record }
+          }
+        };
+        return () => executeDataSourcePlan(sourceWithRecord, node, plan, mode);
+      });
+      const perRecordResults = await runWithConcurrency(tasks, concurrency);
+      const mergedResult = mergeDataSourceResults(perRecordResults, source, node, plan);
+      let records;
+      if (aggregateConfig?.targetField && (aggregateConfig.extractField || aggregateConfig.extractPath)) {
+        records = limit.map((record, index) => {
+          const recordResult = perRecordResults[index];
+          const recordRows = Array.isArray(recordResult?.mappedRecords) && recordResult.mappedRecords.length
+            ? recordResult.mappedRecords
+            : (recordResult?.selectedRecords || []);
+          const sourceFields = recordResult?.fields || sourceFieldsFromPlan(plan, source);
+          let values = extractAggregateValues(recordRows, sourceFields, aggregateConfig);
+          values = applyAggregateTools(values, aggregateConfig.tools || []);
+          const aggregated = aggregateConfig.joinSeparator !== undefined
+            ? values.join(aggregateConfig.joinSeparator)
+            : values;
+          return { ...record, [aggregateConfig.targetField]: aggregated };
+        });
+      } else {
+        records = Array.isArray(mergedResult.mappedRecords) && mergedResult.mappedRecords.length
+          ? mergedResult.mappedRecords
+          : mergedResult.selectedRecords || [];
+      }
+      return { node, source, result: mergedResult, plan, records, sourceResults: [{ node, source, result: mergedResult, plan }] };
+    }
+    if (iterationMode === "domain-driven") {
+      const domainCfg = node.executionConfig?.iteration?.domain || node.domain || {};
+      const domainValues = buildDomainValues(domainCfg);
+      if (domainValues.length) {
+        const domainConcurrency = Math.max(1, Number(plan.concurrency || node.executionConfig?.iteration?.concurrency || 1));
+        const maxDomainCalls = Math.max(1, Number(process.env.OPERATION_FLOW_MAX_CALLS || 500));
+        const domainLimit = domainValues.length > maxDomainCalls ? domainValues.slice(0, maxDomainCalls) : domainValues;
+        const paramField = domainCfg.paramField || "domain_value";
+        const tasks = domainLimit.map((value) => {
+          const sourceWithDomain = {
+            ...cachedSource,
+            parameterConfig: {
+              ...(source.parameterConfig || {}),
+              context: { ...(context.flowContext || {}), [paramField]: value }
+            }
+          };
+          return () => executeDataSourcePlan(sourceWithDomain, node, plan, mode);
+        });
+        const perDomainResults = await runWithConcurrency(tasks, domainConcurrency);
+        const mergedResult = mergeDataSourceResults(perDomainResults, source, node, plan);
+        const records = Array.isArray(mergedResult.mappedRecords) && mergedResult.mappedRecords.length
+          ? mergedResult.mappedRecords
+          : mergedResult.selectedRecords || [];
+        return { node, source, result: mergedResult, plan, records, sourceResults: [{ node, source, result: mergedResult, plan }] };
+      }
+    }
     const sourceWithContext = {
-      ...source,
+      ...cachedSource,
       parameterConfig: {
         ...(source.parameterConfig || {}),
         context: context.flowContext || {}
       }
     };
-    const result = await executeDataSourcePlan(sourceWithContext, node, plan);
+    const result = await executeDataSourcePlan(sourceWithContext, node, plan, mode);
     const records = Array.isArray(result.mappedRecords) && result.mappedRecords.length
       ? result.mappedRecords
       : result.selectedRecords || [];
@@ -446,7 +748,7 @@ async function executeFlowNode(node = {}, context = {}) {
   return { node, records: upstreamRecords, sourceResults: upstreamOutputs.flatMap((item) => item.sourceResults || []) };
 }
 
-async function executeFlowDag(flowNodes = [], sourceExecutionPlans = [], explicitEdges = [], flowContext = {}) {
+async function executeFlowDag(flowNodes = [], sourceExecutionPlans = [], explicitEdges = [], flowContext = {}, mode = "preview", responseCache = null) {
   const nodes = flowNodes.filter((node) => node && node.id);
   const edges = buildFlowEdges(nodes, explicitEdges);
   const completed = new Set();
@@ -462,7 +764,7 @@ async function executeFlowDag(flowNodes = [], sourceExecutionPlans = [], explici
       ready = [nodes.find((node) => remaining.has(node.id))].filter(Boolean);
     }
     const outputs = await Promise.all(ready.map((node) =>
-      executeFlowNode(node, { nodes, edges, outputByNode, sourceExecutionPlans, flowContext })
+      executeFlowNode(node, { nodes, edges, outputByNode, sourceExecutionPlans, flowContext, mode, responseCache })
     ));
     ready.forEach((node, index) => {
       outputByNode.set(node.id, outputs[index]);
@@ -533,7 +835,9 @@ export function createFieldMapping(input = {}) {
     recordFilter: input.recordFilter || "",
     aggregateMode: ["first", "join", "array"].includes(input.aggregateMode) ? input.aggregateMode : "join",
     aggregateSeparator: input.aggregateSeparator ?? ",",
-    output: input.output || "内部业务库"
+    output: input.output || "内部业务库",
+    isJump: input.isJump === true,
+    jumpUrl: input.jumpUrl || ""
   };
   store.fieldMappings.push(mapping);
   return mapping;
@@ -562,6 +866,8 @@ export function updateFieldMapping(id, input = {}) {
     aggregateMode: ["first", "join", "array"].includes(input.aggregateMode) ? input.aggregateMode : existing.aggregateMode || "join",
     aggregateSeparator: input.aggregateSeparator ?? existing.aggregateSeparator ?? ",",
     output: input.output || existing.output,
+    isJump: input.isJump === true ? true : (input.isJump === false ? false : existing.isJump === true),
+    jumpUrl: input.jumpUrl ?? existing.jumpUrl ?? "",
     updatedAt: new Date().toISOString()
   };
   store.fieldMappings[index] = updated;
@@ -586,6 +892,37 @@ function normalizeAuthType(type = "api-cookie") {
   return type || "api-cookie";
 }
 
+// 声明式登录刷新配置(对齐老系统 cookie_updater)
+// login: 声明登录请求(method/url/body/bodyType/headers), body 支持 {{username}}/{{password}} 占位
+// extract: cookie 提取方式(from=header 读 Set-Cookie | from=body 读响应体路径)
+// cycleSeconds: 刷新周期, 由调度器按周期触发
+function normalizeRefresh(input) {
+  if (!input || typeof input !== "object") return undefined;
+  const loginInput = input.login && typeof input.login === "object" ? input.login : {};
+  const extractInput = input.extract && typeof input.extract === "object" ? input.extract : {};
+  const cycleSeconds = Number(input.cycleSeconds || 0);
+  return {
+    enabled: input.enabled === true,
+    cycleSeconds: Number.isFinite(cycleSeconds) && cycleSeconds > 0 ? Math.max(60, Math.round(cycleSeconds)) : 0,
+    timeoutMs: Math.max(1000, Number(input.timeoutMs || 10000)),
+    login: {
+      method: String(loginInput.method || "POST").toUpperCase(),
+      url: String(loginInput.url || "").trim(),
+      bodyType: loginInput.bodyType === "form" ? "form" : "json",
+      body: loginInput.body && typeof loginInput.body === "object" ? loginInput.body : {},
+      headers: loginInput.headers && typeof loginInput.headers === "object" ? loginInput.headers : {}
+    },
+    extract: {
+      from: extractInput.from === "body" ? "body" : "header",
+      cookieName: String(extractInput.cookieName || "").trim(),
+      cookiePath: String(extractInput.cookiePath || "").trim()
+    },
+    lastRefreshAt: input.lastRefreshAt || "",
+    lastRefreshStatus: input.lastRefreshStatus || "",
+    lastError: input.lastError || ""
+  };
+}
+
 function sanitizeAuthConfig(config = {}) {
   return {
     ...config,
@@ -597,18 +934,22 @@ function sanitizeAuthConfig(config = {}) {
 
 export function createAuthConfig(input = {}) {
   const type = normalizeAuthType(input.type);
+  const refresh = normalizeRefresh(input.refresh);
+  // 启用刷新的 cookie 认证需要保留登录凭据(对齐老系统 cookie_updater)
+  const keepCreds = type === "db-account-password" || Boolean(refresh && refresh.enabled);
   const config = {
     id: input.id || uniqueId("auth"),
     name: input.name || "自定义认证配置",
     category: input.category || "认证配置",
     type,
-    username: type === "db-account-password" ? input.username || "" : "",
-    password: type === "db-account-password" ? input.password || "" : "",
+    username: keepCreds ? input.username || "" : "",
+    password: keepCreds ? input.password || "" : "",
     cookieValue: type === "api-cookie" ? input.cookieValue || input.password || "" : "",
     loginUrl: input.loginUrl || "",
     cookieName: type === "api-cookie" ? input.cookieName || "" : "",
     tokenHeader: input.tokenHeader || "",
     refreshCycle: input.refreshCycle || "手动",
+    refresh,
     status: "可用",
     updatedAt: new Date().toISOString()
   };
@@ -625,6 +966,8 @@ export function updateAuthConfig(id, input = {}) {
   }
   const existing = store.authConfigs[index];
   const type = normalizeAuthType(input.type || existing.type);
+  const refresh = normalizeRefresh(input.refresh ?? existing.refresh);
+  const keepCreds = type === "db-account-password" || Boolean(refresh && refresh.enabled);
   const password = input.password && input.password !== "******" ? input.password : existing.password || "";
   const cookieValue = input.cookieValue && input.cookieValue !== "******" ? input.cookieValue : existing.cookieValue || "";
   const updated = {
@@ -632,13 +975,14 @@ export function updateAuthConfig(id, input = {}) {
     name: input.name || existing.name,
     category: input.category || existing.category || "认证配置",
     type,
-    username: type === "db-account-password" ? input.username ?? existing.username : "",
-    password: type === "db-account-password" ? password : "",
+    username: keepCreds ? (input.username ?? existing.username) : "",
+    password: keepCreds ? password : "",
     cookieValue: type === "api-cookie" ? cookieValue : "",
     loginUrl: input.loginUrl ?? existing.loginUrl,
     cookieName: type === "api-cookie" ? input.cookieName ?? existing.cookieName : "",
     tokenHeader: input.tokenHeader ?? existing.tokenHeader,
     refreshCycle: input.refreshCycle || existing.refreshCycle,
+    refresh,
     updatedAt: new Date().toISOString()
   };
   store.authConfigs[index] = updated;
@@ -657,6 +1001,149 @@ export function deleteAuthConfig(id) {
     source.authConfigId === id ? { ...source, authConfigId: "auth_none", authType: "none" } : source
   );
   return removed;
+}
+
+function escapeRegExp(value = "") {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function resolveRefreshTemplate(value, authConfig) {
+  return String(value ?? "")
+    .replace(/\{\{\s*username\s*\}\}/g, authConfig.username || "")
+    .replace(/\{\{\s*password\s*\}\}/g, authConfig.password || "");
+}
+
+// 按声明式 login spec 发起登录请求, 提取 cookie
+async function performLoginRefresh(authConfig) {
+  const refresh = authConfig.refresh || {};
+  const login = refresh.login || {};
+  const url = String(login.url || "").trim();
+  if (!url) throw new Error("刷新配置缺少 login.url");
+  assertSafeSourceUrl(url);
+  const method = String(login.method || "POST").toUpperCase();
+  const bodyType = login.bodyType === "form" ? "form" : "json";
+  const body = login.body && typeof login.body === "object"
+    ? Object.fromEntries(Object.entries(login.body).map(([key, value]) => [key, resolveRefreshTemplate(value, authConfig)]))
+    : {};
+  const headers = { ...(login.headers || {}) };
+  let requestBody;
+  if (["GET", "HEAD"].includes(method)) {
+    requestBody = undefined;
+  } else if (bodyType === "form") {
+    const form = new URLSearchParams();
+    Object.entries(body).forEach(([key, value]) => {
+      if (value === undefined || value === null) return;
+      form.append(key, typeof value === "object" ? JSON.stringify(value) : String(value));
+    });
+    requestBody = form;
+    if (!headers["Content-Type"] && !headers["content-type"]) headers["Content-Type"] = "application/x-www-form-urlencoded";
+  } else {
+    requestBody = JSON.stringify(body);
+    if (!headers["Content-Type"] && !headers["content-type"]) headers["Content-Type"] = "application/json";
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Number(refresh.timeoutMs || 10000));
+  try {
+    const response = await fetch(url, { method, headers, body: requestBody, signal: controller.signal, redirect: "manual" });
+    const extract = refresh.extract || {};
+    const cookieName = extract.cookieName || authConfig.cookieName;
+    let cookieValue = "";
+    if (extract.from === "body") {
+      const text = await response.text();
+      let parsed = {};
+      try {
+        parsed = text ? JSON.parse(text) : {};
+      } catch {
+        parsed = { text };
+      }
+      cookieValue = String(extract.cookiePath ? getByPath(parsed, extract.cookiePath) : "") || "";
+    } else {
+      const setCookie = typeof response.headers.getSetCookie === "function"
+        ? response.headers.getSetCookie()
+        : (response.headers.get("set-cookie") ? [response.headers.get("set-cookie")] : []);
+      for (const entry of setCookie) {
+        if (!cookieName) {
+          const match = String(entry).match(/^([^=]+)=([^;]+)/);
+          if (match) {
+            cookieValue = match[2];
+            break;
+          }
+          continue;
+        }
+        const match = String(entry).match(new RegExp(`${escapeRegExp(cookieName)}=([^;]+)`));
+        if (match) {
+          cookieValue = match[1];
+          break;
+        }
+      }
+    }
+    if (!cookieValue) {
+      throw new Error(cookieName ? `登录响应未提取到 cookie(${cookieName})` : "登录响应未提取到任何 cookie");
+    }
+    return { cookieName: cookieName || "", cookieValue };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function refreshAuthConfig(authId) {
+  const authConfig = store.authConfigs.find((item) => item.id === authId);
+  if (!authConfig) {
+    const error = new Error("Auth config not found");
+    error.status = 404;
+    throw error;
+  }
+  const refresh = authConfig.refresh;
+  if (!refresh || !refresh.enabled) {
+    const error = new Error("该认证配置未启用自动刷新");
+    error.status = 400;
+    throw error;
+  }
+  try {
+    const { cookieName, cookieValue } = await performLoginRefresh(authConfig);
+    if (cookieName) authConfig.cookieName = cookieName;
+    authConfig.cookieValue = cookieValue;
+    authConfig.status = "可用";
+    refresh.lastRefreshAt = new Date().toISOString();
+    refresh.lastRefreshStatus = "success";
+    refresh.lastError = "";
+    authConfig.updatedAt = new Date().toISOString();
+    persistStore();
+    return sanitizeAuthConfig(authConfig);
+  } catch (error) {
+    refresh.lastRefreshAt = new Date().toISOString();
+    refresh.lastRefreshStatus = "failed";
+    refresh.lastError = error?.message || "登录刷新失败";
+    authConfig.status = "刷新失败";
+    authConfig.updatedAt = new Date().toISOString();
+    persistStore();
+    throw error;
+  }
+}
+
+export function listAuthConfigsDueForRefresh() {
+  const now = Date.now();
+  return store.authConfigs.filter((item) => {
+    const refresh = item.refresh;
+    if (!refresh || !refresh.enabled || !refresh.cycleSeconds) return false;
+    if (!refresh.lastRefreshAt) return true;
+    const last = Date.parse(refresh.lastRefreshAt);
+    if (Number.isNaN(last)) return true;
+    return now - last >= refresh.cycleSeconds * 1000;
+  });
+}
+
+// 由调度器每 tick 调用: 刷新所有到期的认证配置
+export async function refreshDueAuths() {
+  const due = listAuthConfigsDueForRefresh();
+  for (const item of due) {
+    try {
+      await refreshAuthConfig(item.id);
+    } catch {
+      // 失败已记录到 refresh.lastError, 不阻断其他刷新
+    }
+  }
+  return due.length;
 }
 
 function maskApiKey(value = "") {
@@ -1028,7 +1515,9 @@ export function createBusinessFlow(input = {}) {
       cleanTable: input.outputConfig?.cleanTable || `clean_${input.businessName || "business"}`,
       businessTable: input.outputConfig?.businessTable || `biz_${input.businessName || "business"}`,
       dedupeStrategy: input.outputConfig?.dedupeStrategy || "primary-key",
-      dedupeFields: input.outputConfig?.dedupeFields || ""
+      dedupeFields: input.outputConfig?.dedupeFields || "",
+      updateFields: Array.isArray(input.outputConfig?.updateFields) ? input.outputConfig.updateFields : [],
+      atomicWrite: input.outputConfig?.atomicWrite === true
     },
     status: "ready",
     lastRunAt: "",
@@ -1184,7 +1673,9 @@ export async function runBusinessFlow(input = {}) {
     nowText,
     `${rules.length} 条规则 / ${loopCalls} 次调用`
   ];
-  const flowExecution = await executeFlowDag(flowNodes, sourceExecutionPlans, flow.edges || [], flowContext);
+  const mode = input.mode === "live" ? "live" : "preview";
+  const responseCache = new Map();
+  const flowExecution = await executeFlowDag(flowNodes, sourceExecutionPlans, flow.edges || [], flowContext, mode, responseCache);
   const sourceResults = flowExecution.sourceResults;
   const materialized = flowExecution.outputRecords.length
     ? toBusinessRowsFromRecords(flowExecution.outputRecords, row)
@@ -1207,8 +1698,23 @@ export async function runBusinessFlow(input = {}) {
   }
   business.timeField = flow.timeField;
   business.fields = materialized.fields;
-  business.rows = mergeBusinessRows(business.rows || [], materialized.rows, materialized.fields, flow.outputConfig);
-  flow.status = "success";
+  business.fieldSchema = reconcileFieldSchema(business.fieldSchema, materialized.fields);
+  const atomicWrite = flow.outputConfig?.atomicWrite === true || flow.outputConfig?.writeStrategy === "overwrite";
+  let tableStorageResult = null;
+  if (atomicWrite && runFailedRows > 0 && fetchedRows > 0) {
+    flow.status = "failed";
+  } else {
+    business.rows = mergeBusinessRows(business.rows || [], materialized.rows, materialized.fields, flow.outputConfig);
+    flow.status = runFailedRows > 0 ? "warning" : "success";
+    if (flow.outputConfig?.useTableStorage && flow.outputConfig.businessTable) {
+      tableStorageResult = persistBusinessTable(
+        flow.outputConfig.businessTable,
+        materialized.fields,
+        business.rows,
+        { writeStrategy: flow.outputConfig.writeStrategy, primaryKeys: parseFieldList(flow.outputConfig.primaryKey) }
+      );
+    }
+  }
   flow.lastRunAt = new Date().toISOString();
   flow.updatedAt = flow.lastRunAt;
   if (storedIndex >= 0) {
@@ -1253,6 +1759,8 @@ export async function runBusinessFlow(input = {}) {
     })),
     outputConfig: flow.outputConfig,
     context: flowContext,
+    mode,
+    tableStorage: tableStorageResult,
     parameterPlan,
     executionPlan: {
       ...executionPlan,
@@ -1308,13 +1816,32 @@ function findFieldIndex(fields = [], candidates = [], fallback = 0) {
   return index ?? fallback;
 }
 
+export function updateBusinessFieldSchema(businessId, fieldSchemaInput) {
+  const business = store.businesses.find((item) => item.id === businessId || item.name === businessId);
+  if (!business) {
+    const error = new Error("Business not found");
+    error.status = 404;
+    throw error;
+  }
+  const normalized = normalizeFieldSchemaInput(fieldSchemaInput);
+  const allowed = new Set((business.fields || []).map(String));
+  business.fieldSchema = normalized.filter((item) => allowed.has(item.name));
+  // 确保当前 fields 中存在但 schema 缺失的字段补默认
+  business.fieldSchema = reconcileFieldSchema(business.fieldSchema, business.fields);
+  return business;
+}
+
 export function queryBusiness(input = {}) {
   const business = store.businesses.find((item) => item.name === input.businessName) || store.businesses[0];
   let rows = [...business.rows];
   const keyword = String(input.keyword || "").trim().toLowerCase();
   const fields = business.fields || [];
+  const fieldSchema = Array.isArray(business.fieldSchema) ? business.fieldSchema : [];
   const severityIndex = findFieldIndex(fields, ["等级", "level", "severity", "alarmLevel", "result"], 1);
-  const timeIndex = findFieldIndex(fields, ["时间", "occurTime", "event_time", "time", "updated_at", "checked_at", "created_at"], 3);
+  const createTimeName = fieldSchema.find((item) => item.isCreateTime)?.name;
+  const timeIndex = createTimeName && fields.includes(createTimeName)
+    ? fields.indexOf(createTimeName)
+    : findFieldIndex(fields, ["时间", "occurTime", "event_time", "time", "updated_at", "checked_at", "created_at"], 3);
   const impactIndex = findFieldIndex(fields, ["状态/影响", "duration", "queue_lag", "lag", "impact"], 4);
 
   if (keyword) {

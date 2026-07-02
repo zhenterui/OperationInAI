@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "node ./server/index.mjs",
     "static": "node ./tools/dev-server.mjs",
-    "check": "node --check ./src/scripts/app.js && node --check ./src/scripts/data.js && node --check ./src/scripts/api-client.js && node --check ./src/scripts/cleaning-guides.js && node --check ./tools/dev-server.mjs && node --check ./server/index.mjs && node --check ./server/core/http.mjs && node --check ./server/core/router.mjs && node --check ./server/data/store.mjs && node --check ./server/data/storage-adapter.mjs && node --check ./server/core/security.mjs && node --check ./server/core/secrets.mjs && node --check ./server/services/audit-service.mjs && node --check ./server/services/model-service.mjs && node --check ./server/services/analysis-service.mjs && node --check ./server/services/config-service.mjs && node --check ./server/services/search-service.mjs && node --check ./server/services/sync-service.mjs && node --check ./tools/api-smoke.mjs && node --check ./tools/cleaning-e2e.mjs && node --check ./tools/cleaning-unit.mjs && node --check ./tools/flow-unit.mjs && node --check ./tools/security-unit.mjs && node --check ./tools/port-check.mjs",
+    "check": "node --check ./src/scripts/app.js && node --check ./src/scripts/data.js && node --check ./src/scripts/api-client.js && node --check ./src/scripts/cleaning-guides.js && node --check ./tools/dev-server.mjs && node --check ./server/index.mjs && node --check ./server/core/http.mjs && node --check ./server/core/router.mjs && node --check ./server/data/store.mjs && node --check ./server/data/storage-adapter.mjs && node --check ./server/core/security.mjs && node --check ./server/core/secrets.mjs && node --check ./server/services/audit-service.mjs && node --check ./server/services/model-service.mjs && node --check ./server/services/analysis-service.mjs && node --check ./server/services/config-service.mjs && node --check ./server/services/search-service.mjs && node --check ./server/services/sync-service.mjs && node --check ./tools/api-smoke.mjs && node --check ./tools/cleaning-e2e.mjs && node --check ./tools/cleaning-unit.mjs && node --check ./tools/flow-unit.mjs && node --check ./tools/scheduler-unit.mjs && node --check ./tools/design-unit.mjs && node --check ./tools/security-unit.mjs && node --check ./tools/port-check.mjs",
     "api:smoke": "node ./tools/api-smoke.mjs",
     "cleaning:unit": "node ./tools/cleaning-unit.mjs",
     "flow:unit": "node ./tools/flow-unit.mjs",
+    "scheduler:unit": "node ./tools/scheduler-unit.mjs",
+    "design:unit": "node ./tools/design-unit.mjs",
     "security:unit": "node ./tools/security-unit.mjs",
     "cleaning:e2e": "node ./tools/cleaning-e2e.mjs",
     "port:check": "node ./tools/port-check.mjs"

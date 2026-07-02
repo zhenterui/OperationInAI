@@ -41,6 +41,10 @@
             <span class="icon" data-icon="search"></span>
             <span>智能搜索</span>
           </button>
+          <button class="nav-item" data-panel="schedule">
+            <span class="icon" data-icon="refresh"></span>
+            <span>调度管理</span>
+          </button>
           <button class="nav-item" data-panel="guide">
             <span class="icon" data-icon="file"></span>
             <span>使用说明</span>
@@ -437,6 +441,24 @@
                           <option value="off">不分页</option>
                           <option value="page-number">页码分页到最后一页</option>
                           <option value="next-token">Token 分页到最后一页</option>
+                          <option value="auto">自动探测(响应特征)</option>
+                          <option value="has-more">hasMore 字段判断</option>
+                          <option value="empty-result">空结果终止</option>
+                        </select>
+                      </label>
+                      <label class="pagination-field">
+                        <span class="label-with-help">
+                          分页参数位置
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="分页参数位置说明"
+                            data-tooltip="页码与每页条数放在查询参数(URL query)还是请求体(body)。GET 一般用 query，POST 表单分页用 body。"
+                          >?</button>
+                        </span>
+                        <select id="flowNodePaginateInSelect">
+                          <option value="query">查询参数(query)</option>
+                          <option value="body">请求体(body)</option>
                         </select>
                       </label>
                       <label class="pagination-field page-number-field">
@@ -510,6 +532,30 @@
                           >?</button>
                         </span>
                         <input id="flowNodeHasNextPathInput" value="data.pageInfo.hasNext" />
+                      </label>
+                      <label class="pagination-field">
+                        <span class="label-with-help">
+                          总条数路径
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="总条数路径说明"
+                            data-tooltip="auto/total-count 模式从响应读取总条数的字段路径，如 data.total、data.count。系统据此计算总页数。"
+                          >?</button>
+                        </span>
+                        <input id="flowNodeTotalCountPathInput" value="data.total" />
+                      </label>
+                      <label class="pagination-field">
+                        <span class="label-with-help">
+                          总页数路径
+                          <button
+                            class="help-dot"
+                            type="button"
+                            aria-label="总页数路径说明"
+                            data-tooltip="auto/total-pages 模式从响应直接读取总页数的字段路径，如 data.totalPages、data.pages。"
+                          >?</button>
+                        </span>
+                        <input id="flowNodeTotalPagesPathInput" value="data.totalPages" />
                       </label>
                       <label class="pagination-field">
                         <span class="label-with-help">
@@ -1246,6 +1292,36 @@
           </div>
         </section>
 
+        <section class="panel" id="schedule" aria-labelledby="panelTitle">
+          <article class="surface wide">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Scheduler</p>
+                <h2>业务流调度</h2>
+                <small>按 interval/cron/once 自动触发业务流(live 模式)；服务启动即恢复调度循环，认证按周期自动刷新。</small>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <span class="status-pill" id="schedulerStatusPill">调度器：读取中</span>
+                <button class="small-button primary" id="addScheduleBtn" type="button">
+                  <span class="icon" data-icon="bolt"></span>
+                  新增调度
+                </button>
+              </div>
+            </div>
+            <div class="config-table-wrap">
+              <table class="config-table" id="scheduleTable">
+                <thead>
+                  <tr>
+                    <th>名称</th><th>业务流</th><th>模式</th><th>周期/表达式</th>
+                    <th>启用</th><th>下次执行</th><th>上次执行</th><th>状态</th><th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="scheduleTableBody"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+
         <section class="panel" id="guide" aria-labelledby="panelTitle">
           <div class="guide-layout">
             <article class="surface wide">
@@ -1407,6 +1483,10 @@
             <span id="authSecretLabel">Cookie 值</span>
             <textarea id="authPasswordInput" rows="4">SESSION=demo_cookie_value</textarea>
           </label>
+          <label class="full">
+            <span>自动刷新(声明式登录 JSON, 留空=不刷新)</span>
+            <textarea id="authRefreshInput" rows="4" placeholder='{"enabled":true,"cycleSeconds":3600,"login":{"method":"POST","url":"https://host/login","bodyType":"json","body":{"username":"{{username}}","password":"{{password}}"}},"extract":{"from":"header","cookieName":"OPS_SESSION"}}'></textarea>
+          </label>
         </div>
         <div class="modal-actions">
           <button class="small-button" value="cancel">取消</button>
@@ -1415,8 +1495,58 @@
       </form>
     </dialog>
 
-    <dialog class="modal" id="situationFilterModal">
+    <dialog class="modal" id="scheduleModal">
       <form class="modal-panel" method="dialog">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Schedule</p>
+            <h2 id="scheduleModalTitle">新增调度</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="button" aria-label="关闭">
+            <span class="icon" data-icon="x"></span>
+          </button>
+        </div>
+        <div class="config-form">
+          <label class="full">
+            <span>名称</span>
+            <input id="scheduleNameInput" value="定时采集" />
+          </label>
+          <label class="full">
+            <span>业务流</span>
+            <select id="scheduleFlowSelect"></select>
+          </label>
+          <label>
+            <span>模式</span>
+            <select id="scheduleModeSelect">
+              <option value="interval">周期(interval)</option>
+              <option value="cron">定时(cron)</option>
+              <option value="once">单次(once)</option>
+            </select>
+          </label>
+          <label>
+            <span>周期秒数(interval)</span>
+            <input id="scheduleIntervalInput" value="300" type="number" min="60" />
+          </label>
+          <label class="full">
+            <span>cron 表达式(分 时 日 月 周, 本地时区)</span>
+            <input id="scheduleCronInput" value="*/5 * * * *" placeholder="如 */5 * * * *" />
+          </label>
+          <label>
+            <span>启用</span>
+            <select id="scheduleEnabledSelect">
+              <option value="true">启用</option>
+              <option value="false">停用</option>
+            </select>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="small-button" value="cancel">取消</button>
+          <button class="small-button primary" id="saveScheduleBtn" value="default">保存调度</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" id="situationFilterModal">      <form class="modal-panel" method="dialog">
         <div class="section-head">
           <div>
             <p class="eyebrow">Global Situation Filters</p>
