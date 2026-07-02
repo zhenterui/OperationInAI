@@ -215,7 +215,95 @@ function buildBusinessFields(records = []) {
   return fields.slice(0, 12);
 }
 
-function toBusinessRows(sourceResults = [], fallbackRow = []) {
+function buildBusinessFieldAliases(fields = [], sourceIds = []) {
+  const sourceSet = new Set((sourceIds || []).filter(Boolean));
+  const aliases = {};
+  (store.fieldMappings || [])
+    .filter((mapping) => !sourceSet.size || sourceSet.has(mapping.sourceId))
+    .forEach((mapping) => {
+      const targetField = mapping.targetField || "";
+      const alias = mapping.fieldAlias || mapping.alias || "";
+      if (targetField && alias && fields.includes(targetField)) {
+        aliases[targetField] = alias;
+      }
+    });
+  if (fields.includes("source_name")) aliases.source_name = aliases.source_name || "数据源";
+  return aliases;
+}
+
+function aliasesFromMappings(mappings = []) {
+  return (mappings || []).reduce((aliases, mapping) => {
+    const targetField = mapping?.targetField || "";
+    const alias = mapping?.fieldAlias || mapping?.alias || "";
+    if (targetField && alias) aliases[targetField] = alias;
+    return aliases;
+  }, {});
+}
+
+function normalizeFieldLinkConfig(value = {}) {
+  const config = value || {};
+  return {
+    enabled: Boolean(config.enabled),
+    urlTemplate: config.urlTemplate || config.template || "",
+    target: config.target || "_blank",
+    placeholders: Array.isArray(config.placeholders) ? config.placeholders : []
+  };
+}
+
+function linksFromMappings(mappings = []) {
+  return (mappings || []).reduce((links, mapping) => {
+    const targetField = mapping?.targetField || "";
+    const linkConfig = normalizeFieldLinkConfig(mapping?.linkConfig || mapping?.fieldLink || {});
+    if (targetField && linkConfig.enabled && linkConfig.urlTemplate) {
+      links[targetField] = linkConfig;
+    }
+    return links;
+  }, {});
+}
+
+function mergeFieldAliases(...maps) {
+  return maps.reduce((merged, aliases) => {
+    Object.entries(aliases || {}).forEach(([field, alias]) => {
+      if (field && alias) merged[field] = alias;
+    });
+    return merged;
+  }, {});
+}
+
+function mergeFieldLinks(...maps) {
+  return maps.reduce((merged, links) => {
+    Object.entries(links || {}).forEach(([field, config]) => {
+      if (field && config?.enabled && config?.urlTemplate) merged[field] = normalizeFieldLinkConfig(config);
+    });
+    return merged;
+  }, {});
+}
+
+function filterFieldAliases(aliases = {}, fields = []) {
+  const fieldSet = new Set(fields);
+  return Object.fromEntries(Object.entries(aliases || {}).filter(([field]) => fieldSet.has(field)));
+}
+
+function filterFieldLinks(links = {}, fields = []) {
+  const fieldSet = new Set(fields);
+  return Object.fromEntries(Object.entries(links || {}).filter(([field]) => fieldSet.has(field)));
+}
+
+function getSourceFieldAliases(sourceId = "") {
+  return aliasesFromMappings((store.fieldMappings || []).filter((mapping) => mapping.sourceId === sourceId));
+}
+
+function getSourceFieldLinks(sourceId = "") {
+  return linksFromMappings((store.fieldMappings || []).filter((mapping) => mapping.sourceId === sourceId));
+}
+
+function buildBusinessFieldLinks(fields = [], sourceIds = []) {
+  const sourceSet = new Set((sourceIds || []).filter(Boolean));
+  const links = linksFromMappings((store.fieldMappings || []).filter((mapping) => !sourceSet.size || sourceSet.has(mapping.sourceId)));
+  return filterFieldLinks(links, fields);
+}
+
+function toBusinessRows(sourceResults = [], fallbackRow = [], extraAliases = {}, extraLinks = {}) {
   const flattenedRecords = sourceResults.flatMap(({ result, source }) => {
     const records = Array.isArray(result.mappedRecords) && result.mappedRecords.length
       ? result.mappedRecords
@@ -229,13 +317,16 @@ function toBusinessRows(sourceResults = [], fallbackRow = []) {
     return { fields: ["事件名称", "等级", "归属对象", "时间", "状态/影响"], rows: [fallbackRow] };
   }
   const fields = buildBusinessFields(flattenedRecords);
+  const sourceIds = sourceResults.map(({ source }) => source?.id).filter(Boolean);
   return {
     fields,
+    fieldAliases: filterFieldAliases(mergeFieldAliases(buildBusinessFieldAliases(fields, sourceIds), extraAliases), fields),
+    fieldLinks: filterFieldLinks(mergeFieldLinks(buildBusinessFieldLinks(fields, sourceIds), extraLinks), fields),
     rows: flattenedRecords.map((record) => fields.map((field) => record[field] ?? ""))
   };
 }
 
-function toBusinessRowsFromRecords(records = [], fallbackRow = []) {
+function toBusinessRowsFromRecords(records = [], fallbackRow = [], extraAliases = {}, extraLinks = {}) {
   const flattenedRecords = records.map((record) => flattenBusinessRecord(record));
   if (!flattenedRecords.length) {
     return { fields: ["事件名称", "等级", "归属对象", "时间", "状态/影响"], rows: [fallbackRow] };
@@ -243,6 +334,8 @@ function toBusinessRowsFromRecords(records = [], fallbackRow = []) {
   const fields = buildBusinessFields(flattenedRecords);
   return {
     fields,
+    fieldAliases: filterFieldAliases(mergeFieldAliases(buildBusinessFieldAliases(fields), extraAliases), fields),
+    fieldLinks: filterFieldLinks(mergeFieldLinks(buildBusinessFieldLinks(fields), extraLinks), fields),
     rows: flattenedRecords.map((record) => fields.map((field) => record[field] ?? ""))
   };
 }
@@ -409,7 +502,7 @@ async function executeFlowNode(node = {}, context = {}) {
     return { node, skipped: true, records: [], sourceResults: [], message: "edge condition not matched" };
   }
   if (node.type === "context") {
-    return { node, records: [{ ...(context.flowContext || {}) }], sourceResults: [] };
+    return { node, records: [{ ...(context.flowContext || {}) }], fieldAliases: {}, fieldLinks: {}, sourceResults: [] };
   }
   if (node.type === "source") {
     const source = store.dataSources.find((entry) => entry.id === node.refId);
@@ -426,24 +519,59 @@ async function executeFlowNode(node = {}, context = {}) {
     const records = Array.isArray(result.mappedRecords) && result.mappedRecords.length
       ? result.mappedRecords
       : result.selectedRecords || [];
-    return { node, source, result, plan, records, sourceResults: [{ node, source, result, plan }] };
+    return {
+      node,
+      source,
+      result,
+      plan,
+      records,
+      fieldAliases: getSourceFieldAliases(source.id),
+      fieldLinks: getSourceFieldLinks(source.id),
+      sourceResults: [{ node, source, result, plan }]
+    };
   }
   if (node.type === "rule") {
     const rule = store.cleaningRules.find((item) => item.id === node.refId) || {};
     const mappings = getRuleNodeMappings(node, rule);
     const records = mappings.length ? applyFieldMappings(upstreamRecords, mappings, node.responsePath || "") : upstreamRecords;
-    return { node, rule, records, sourceResults: upstreamOutputs.flatMap((item) => item.sourceResults || []) };
+    return {
+      node,
+      rule,
+      records,
+      fieldAliases: mergeFieldAliases(...upstreamOutputs.map((item) => item.fieldAliases), aliasesFromMappings(mappings)),
+      fieldLinks: mergeFieldLinks(...upstreamOutputs.map((item) => item.fieldLinks), linksFromMappings(mappings)),
+      sourceResults: upstreamOutputs.flatMap((item) => item.sourceResults || [])
+    };
   }
   if (node.type === "join") {
     const mode = node.joinMode || node.executionMode || "append";
     const records = mode === "first" ? getNodeOutputRecords(upstreamOutputs[0]) : upstreamRecords;
-    return { node, records, sourceResults: upstreamOutputs.flatMap((item) => item.sourceResults || []) };
+    return {
+      node,
+      records,
+      fieldAliases: mergeFieldAliases(...upstreamOutputs.map((item) => item.fieldAliases)),
+      fieldLinks: mergeFieldLinks(...upstreamOutputs.map((item) => item.fieldLinks)),
+      sourceResults: upstreamOutputs.flatMap((item) => item.sourceResults || [])
+    };
   }
   if (node.type === "output") {
     const records = upstreamRecords;
-    return { node, records, sourceResults: upstreamOutputs.flatMap((item) => item.sourceResults || []), outputTarget: node.refId || node.param || "" };
+    return {
+      node,
+      records,
+      fieldAliases: mergeFieldAliases(...upstreamOutputs.map((item) => item.fieldAliases)),
+      fieldLinks: mergeFieldLinks(...upstreamOutputs.map((item) => item.fieldLinks)),
+      sourceResults: upstreamOutputs.flatMap((item) => item.sourceResults || []),
+      outputTarget: node.refId || node.param || ""
+    };
   }
-  return { node, records: upstreamRecords, sourceResults: upstreamOutputs.flatMap((item) => item.sourceResults || []) };
+  return {
+    node,
+    records: upstreamRecords,
+    fieldAliases: mergeFieldAliases(...upstreamOutputs.map((item) => item.fieldAliases)),
+    fieldLinks: mergeFieldLinks(...upstreamOutputs.map((item) => item.fieldLinks)),
+    sourceResults: upstreamOutputs.flatMap((item) => item.sourceResults || [])
+  };
 }
 
 async function executeFlowDag(flowNodes = [], sourceExecutionPlans = [], explicitEdges = [], flowContext = {}) {
@@ -473,7 +601,10 @@ async function executeFlowDag(flowNodes = [], sourceExecutionPlans = [], explici
   }
   const terminalNodes = nodes.filter((node) => !getOutgoingEdges(node, edges).length);
   const terminalOutputs = terminalNodes.map((node) => outputByNode.get(node.id)).filter(Boolean);
-  const outputRecords = mergeRecordsFromOutputs(terminalOutputs.length ? terminalOutputs : [...outputByNode.values()]);
+  const effectiveOutputs = terminalOutputs.length ? terminalOutputs : [...outputByNode.values()];
+  const outputRecords = mergeRecordsFromOutputs(effectiveOutputs);
+  const outputAliases = mergeFieldAliases(...effectiveOutputs.map((item) => item.fieldAliases));
+  const outputLinks = mergeFieldLinks(...effectiveOutputs.map((item) => item.fieldLinks));
   const sourceResultByNode = new Map();
   [...outputByNode.values()].flatMap((item) => item.sourceResults || []).forEach((item) => {
     sourceResultByNode.set(item.node.id, item);
@@ -483,7 +614,9 @@ async function executeFlowDag(flowNodes = [], sourceExecutionPlans = [], explici
     executionOrder,
     nodeResults: [...outputByNode.values()],
     sourceResults: [...sourceResultByNode.values()],
-    outputRecords
+    outputRecords,
+    outputAliases,
+    outputLinks
   };
 }
 
@@ -524,6 +657,8 @@ export function createFieldMapping(input = {}) {
     sourceId: input.sourceId || store.dataSources[0]?.id || "",
     sourceField: input.sourceField || "raw.status",
     targetField: input.targetField || "status",
+    fieldAlias: input.fieldAlias || input.alias || "",
+    linkConfig: normalizeFieldLinkConfig(input.linkConfig || input.fieldLink || {}),
     type: input.type || "字符串",
     defaultValue: input.defaultValue || "",
     ruleId: input.ruleId || "",
@@ -552,6 +687,8 @@ export function updateFieldMapping(id, input = {}) {
     sourceId: input.sourceId || existing.sourceId,
     sourceField: input.sourceField || existing.sourceField,
     targetField: input.targetField || existing.targetField,
+    fieldAlias: input.fieldAlias ?? input.alias ?? existing.fieldAlias ?? "",
+    linkConfig: normalizeFieldLinkConfig(input.linkConfig ?? input.fieldLink ?? existing.linkConfig ?? {}),
     type: input.type || existing.type,
     defaultValue: input.defaultValue ?? existing.defaultValue ?? "",
     ruleId: input.ruleId ?? existing.ruleId ?? "",
@@ -1187,8 +1324,8 @@ export async function runBusinessFlow(input = {}) {
   const flowExecution = await executeFlowDag(flowNodes, sourceExecutionPlans, flow.edges || [], flowContext);
   const sourceResults = flowExecution.sourceResults;
   const materialized = flowExecution.outputRecords.length
-    ? toBusinessRowsFromRecords(flowExecution.outputRecords, row)
-    : toBusinessRows(sourceResults, row);
+    ? toBusinessRowsFromRecords(flowExecution.outputRecords, row, flowExecution.outputAliases, flowExecution.outputLinks)
+    : toBusinessRows(sourceResults, row, flowExecution.outputAliases, flowExecution.outputLinks);
   const runFailedRows = sourceResults.filter((item) => !item.result.ok).length;
   const fetchedRows = sourceResults.reduce((sum, item) => sum + Number(item.result.recordCount || 0), 0);
   const cleanedRows = materialized.rows.length;
@@ -1201,12 +1338,16 @@ export async function runBusinessFlow(input = {}) {
       name: flow.businessName,
       timeField: flow.timeField,
       fields: materialized.fields,
+      fieldAliases: materialized.fieldAliases || {},
+      fieldLinks: materialized.fieldLinks || {},
       rows: []
     };
     store.businesses.unshift(business);
   }
   business.timeField = flow.timeField;
   business.fields = materialized.fields;
+  business.fieldAliases = materialized.fieldAliases || business.fieldAliases || {};
+  business.fieldLinks = materialized.fieldLinks || business.fieldLinks || {};
   business.rows = mergeBusinessRows(business.rows || [], materialized.rows, materialized.fields, flow.outputConfig);
   flow.status = "success";
   flow.lastRunAt = new Date().toISOString();

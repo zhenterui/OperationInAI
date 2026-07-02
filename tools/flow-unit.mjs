@@ -54,6 +54,7 @@ try {
     sourceId: source.id,
     sourceField: "data.items[].name",
     targetField: "raw_name",
+    fieldAlias: "原始服务名",
     type: "字符串"
   }));
   track("mapping", createFieldMapping({
@@ -75,7 +76,20 @@ try {
         refId: trimRule.id,
         name: "trim rule",
         fieldMappings: [
-          { sourceField: "raw_name", targetField: "service_name", ruleId: trimRule.id },
+          {
+            sourceField: "raw_name",
+            targetField: "service_name",
+            ruleId: trimRule.id,
+            fieldAlias: "服务名称",
+            linkConfig: {
+              enabled: true,
+              urlTemplate: "/service/detail?name={{service}}&event={{event_id}}",
+              placeholders: [
+                { name: "service", source: "field", from: "service_name" },
+                { name: "event_id", source: "field", from: "event_id" }
+              ]
+            }
+          },
           { sourceField: "event_id", targetField: "event_id" }
         ]
       },
@@ -99,12 +113,16 @@ try {
   const serviceNameIndex = result.business.fields.indexOf("service_name");
   assert(serviceNameIndex >= 0);
   assert.deepEqual(result.rows.map((row) => row[serviceNameIndex]), ["ROMAConnect", "ServiceStage"]);
+  assert.equal(result.business.fieldAliases.service_name, "服务名称");
+  assert.equal(result.business.fieldLinks.service_name.urlTemplate, "/service/detail?name={{service}}&event={{event_id}}");
 
   console.log(JSON.stringify({
     status: "ok",
     business: result.business.name,
     executionOrder: result.executionPlan.executionOrder,
     fields: result.business.fields,
+    fieldAliases: result.business.fieldAliases,
+    fieldLinks: result.business.fieldLinks,
     rows: result.rows
   }, null, 2));
 } finally {

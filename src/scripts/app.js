@@ -134,8 +134,17 @@ function normalizeOpsData() {
     }
   ];
   window.opsData.fieldMappings = window.opsData.fieldMappings || [];
+  window.opsData.fieldMappings = window.opsData.fieldMappings.map((mapping) => ({
+    ...mapping,
+    linkConfig: mapping.linkConfig || { enabled: false, urlTemplate: "", target: "_blank", placeholders: [] }
+  }));
   window.opsData.mappings = window.opsData.mappings || [];
   window.opsData.businesses = window.opsData.businesses || [];
+  window.opsData.businesses = window.opsData.businesses.map((business) => ({
+    ...business,
+    fieldAliases: business.fieldAliases || {},
+    fieldLinks: business.fieldLinks || {}
+  }));
   window.opsData.situationFilters = window.opsData.situationFilters || [
     { id: "situation_filter_severity", label: "等级", field: "等级", type: "select", source: "auto", dictionaryRef: "", options: [], defaultVisible: true, defaultValue: "" },
     { id: "situation_filter_owner", label: "归属对象", field: "归属对象", type: "select", source: "auto", dictionaryRef: "", options: [], defaultVisible: true, defaultValue: "" }
@@ -367,6 +376,14 @@ function getBusinessFields(business) {
   return business?.fields?.length ? business.fields : ["事件名称", "等级", "归属对象", "时间", "状态/影响"];
 }
 
+function getBusinessFieldLabel(business, field) {
+  return business?.fieldAliases?.[field] || field;
+}
+
+function getBusinessFieldLabels(business) {
+  return getBusinessFields(business).map((field) => getBusinessFieldLabel(business, field));
+}
+
 function getNestedValue(record, path = "") {
   if (!path) return undefined;
   return String(path)
@@ -385,6 +402,8 @@ function getBusinessFieldValue(business, row, field = "") {
   const fields = getBusinessFields(business);
   const exactIndex = fields.findIndex((item) => item === key);
   if (exactIndex >= 0) return row?.[exactIndex];
+  const aliasIndex = fields.findIndex((item) => getBusinessFieldLabel(business, item) === key);
+  if (aliasIndex >= 0) return row?.[aliasIndex];
   const aliasMap = {
     event_name: 0,
     name: 0,
@@ -401,6 +420,65 @@ function getBusinessFieldValue(business, row, field = "") {
     impact: 4
   };
   return aliasMap[key] !== undefined ? row?.[aliasMap[key]] : undefined;
+}
+
+function getBusinessFieldLink(business, field = "") {
+  return business?.fieldLinks?.[field] || null;
+}
+
+function normalizeLinkValue(value, mode = "join", separator = ",") {
+  const values = Array.isArray(value) ? value : [value];
+  const normalized = values.map((item) => String(item ?? "").trim()).filter(Boolean);
+  if (mode === "array") return normalized;
+  if (mode === "first") return normalized[0] || "";
+  if (mode === "newline") return normalized.join("\n");
+  return normalized.join(separator || ",");
+}
+
+function resolveFieldLinkPlaceholder(placeholder = {}, context = {}) {
+  if (placeholder.source === "custom") return placeholder.value ?? "";
+  if (placeholder.source === "dictionary") {
+    return normalizeLinkValue(getDictionaryRefValues(placeholder.from), placeholder.mode, placeholder.separator);
+  }
+  const sourceField = placeholder.from || placeholder.field || placeholder.name;
+  return getBusinessFieldValue(context.business, context.row, sourceField) ?? "";
+}
+
+function resolveFieldLinkUrl(business, row, field, value) {
+  const config = getBusinessFieldLink(business, field);
+  if (!config?.enabled || !config.urlTemplate) return "";
+  const fields = getBusinessFields(business);
+  const automaticValues = fields.reduce((values, item) => {
+    values[item] = getBusinessFieldValue(business, row, item);
+    values[getBusinessFieldLabel(business, item)] = values[item];
+    return values;
+  }, {
+    value,
+    field,
+    businessName: business?.name || ""
+  });
+  const configuredValues = (config.placeholders || []).reduce((values, placeholder) => {
+    if (!placeholder?.name) return values;
+    values[placeholder.name] = resolveFieldLinkPlaceholder(placeholder, { business, row, field, value });
+    return values;
+  }, {});
+  const values = { ...automaticValues, ...configuredValues };
+  return String(config.urlTemplate).replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_match, key) => {
+    const placeholder = (config.placeholders || []).find((item) => item?.name === key.trim());
+    const resolved = values[key.trim()] ?? "";
+    return placeholder?.encode === false ? String(resolved) : encodeURIComponent(String(resolved));
+  });
+}
+
+function isAllowedDisplayLink(url = "") {
+  return /^(https?:\/\/|\/|#|mailto:)/i.test(String(url || "").trim());
+}
+
+function renderBusinessCell(business, row, field, cell) {
+  const href = resolveFieldLinkUrl(business, row, field, cell);
+  if (!href || !isAllowedDisplayLink(href)) return `<span>${escapeHtml(cell)}</span>`;
+  const target = getBusinessFieldLink(business, field)?.target || "_blank";
+  return `<span><a class="table-cell-link" href="${escapeHtml(href)}" target="${escapeHtml(target)}" rel="noopener noreferrer">${escapeHtml(cell)}</a></span>`;
 }
 
 const semanticFieldAliases = {
@@ -531,7 +609,7 @@ function renderTimeFieldOptions() {
   const fields = getBusinessFields(business);
   const timeLikeFields = fields.filter((field) => /time|date|时间|日期|created|updated|occur/i.test(field));
   const options = [...new Set([business?.timeField, ...timeLikeFields, ...fields, "event_time", "created_at", "updated_at", "occurTime"].filter(Boolean))];
-  $("#timeFieldSelect").innerHTML = options.map((field) => `<option value="${escapeHtml(field)}">${escapeHtml(field)}</option>`).join("");
+  $("#timeFieldSelect").innerHTML = options.map((field) => `<option value="${escapeHtml(field)}">${escapeHtml(getBusinessFieldLabel(business, field))}</option>`).join("");
   setSelectValue("#timeFieldSelect", options.includes(selected) ? selected : options[0]);
 }
 
@@ -560,17 +638,19 @@ function renderAnalysisFieldSelect() {
   if (!select) return;
   const selected = new Set(getSelectedValues(select));
   const businessNames = getSelectedAnalysisBusinessNames();
+  const selectedBusinesses = (window.opsData.businesses || []).filter((business) => businessNames.includes(business.name));
   const fields = [
     ...new Set(
-      (window.opsData.businesses || [])
-        .filter((business) => businessNames.includes(business.name))
+      selectedBusinesses
         .flatMap((business) => getBusinessFields(business))
     )
   ];
   select.innerHTML = fields
     .map((field, index) => {
       const isSelected = selected.size ? selected.has(field) : index < 5;
-      return `<option value="${escapeHtml(field)}" ${isSelected ? "selected" : ""}>${escapeHtml(field)}</option>`;
+      const alias = selectedBusinesses.map((business) => getBusinessFieldLabel(business, field)).find((label) => label && label !== field) || field;
+      const text = alias === field ? field : `${alias}（${field}）`;
+      return `<option value="${escapeHtml(field)}" ${isSelected ? "selected" : ""}>${escapeHtml(text)}</option>`;
     })
     .join("");
   refreshMultiSelectControl(select);
@@ -1016,16 +1096,7 @@ function renderMappingSourceSelect() {
     setSelectValue("#mappingSourceSelect", appState.selectedSourceId);
   }
   const source = getSelectedSource();
-  $("#mappingResponsePathInput").value = source?.responsePath || "data.items";
-  setSelectValue("#responseKeepModeSelect", source?.responseConfig?.keepMode || source?.responseKeepMode || "all");
-  $("#responseFilterInput").value = source?.responseConfig?.filterCondition || source?.responseFilter || "";
-  setSelectValue("#responseFieldKeepModeSelect", source?.responseConfig?.fieldKeepMode || "all");
-  appState.responseValueFilters = Array.isArray(source?.responseConfig?.valueFilters) ? source.responseConfig.valueFilters : [];
-  renderResponseKeepFieldOptions(source?.responseConfig?.keepFields || []);
-  updateResponseKeepFieldsState();
-  setSelectValue("#responsePersistModeSelect", source?.responseConfig?.persistMode || "none");
-  $("#responseTargetTableInput").value = source?.responseConfig?.targetTable || "";
-  updateResponsePersistState();
+  syncSourceResponseConfigForm(source);
 }
 
 function getParamSourceOptions(sourceType = $("#paramSourceTypeSelect")?.value || "static") {
@@ -1339,7 +1410,13 @@ function autoGenerateParamMapping() {
   }
 }
 
-function renderResponseFieldOptions(fields = appState.lastSourceTest?.fields || []) {
+function getActiveSourceTest() {
+  if (!appState.lastSourceTest) return null;
+  if (appState.lastSourceTest.sourceId && appState.lastSourceTest.sourceId !== appState.selectedSourceId) return null;
+  return appState.lastSourceTest;
+}
+
+function renderResponseFieldOptions(fields = getActiveSourceTest()?.fields || []) {
   const uniqueFields = [...new Set(fields.filter(Boolean))];
   $("#responseFieldSelect").innerHTML = [
     '<option value="">选择测试响应字段</option>',
@@ -1348,13 +1425,30 @@ function renderResponseFieldOptions(fields = appState.lastSourceTest?.fields || 
 }
 
 function renderResponseKeepFieldOptions(selectedFields = []) {
-  const fields = appState.lastSourceTest?.recordFields?.length ? appState.lastSourceTest.recordFields : appState.lastSourceTest?.fields || selectedFields;
+  const activeTest = getActiveSourceTest();
+  const fields = activeTest?.recordFields?.length ? activeTest.recordFields : activeTest?.fields || selectedFields;
   const uniqueFields = [...new Set((fields || []).filter(Boolean))];
   const selected = new Set(selectedFields);
   $("#responseKeepFieldsSelect").innerHTML = uniqueFields
     .map((field) => `<option value="${escapeHtml(field)}" ${selected.has(field) ? "selected" : ""}>${escapeHtml(field)}</option>`)
     .join("");
   refreshMultiSelectControl($("#responseKeepFieldsSelect"));
+}
+
+function syncSourceResponseConfigForm(source = getSelectedSource()) {
+  const config = source?.responseConfig || {};
+  const responsePath = source?.responsePath || "data.items";
+  $("#mappingResponsePathInput").value = responsePath;
+  $("#responsePathInput").value = responsePath;
+  setSelectValue("#responseKeepModeSelect", config.keepMode || source?.responseKeepMode || "all");
+  $("#responseFilterInput").value = config.filterCondition || source?.responseFilter || "";
+  setSelectValue("#responseFieldKeepModeSelect", config.fieldKeepMode || "all");
+  appState.responseValueFilters = Array.isArray(config.valueFilters) ? config.valueFilters : [];
+  renderResponseKeepFieldOptions(config.keepFields || []);
+  updateResponseKeepFieldsState();
+  setSelectValue("#responsePersistModeSelect", config.persistMode || "none");
+  $("#responseTargetTableInput").value = config.targetTable || "";
+  updateResponsePersistState();
 }
 
 function updateResponseKeepFieldsState() {
@@ -1551,17 +1645,13 @@ function populateSourceForm(source = getSelectedSource()) {
   $("#sourceTypeInput").value = source.type || "";
   setSelectValue("#sourceKindSelect", source.kind || "api");
   setSelectValue("#sourceAuthConfigSelect", source.authConfigId || "auth_none");
-  $("#responsePathInput").value = source.responsePath || "data.items";
   setSelectValue("#apiMethodSelect", source.requestConfig?.method || "GET");
   updateRequestParamVisibility();
   $("#paginationInput").value = source.requestConfig?.pagination || "";
   $("#queryParamsInput").value = JSON.stringify(source.requestConfig?.queryParams || {}, null, 2);
   $("#headerParamsInput").value = JSON.stringify(source.requestConfig?.headers || {}, null, 2);
   $("#bodyParamsInput").value = JSON.stringify(source.requestConfig?.body || {}, null, 2);
-  setSelectValue("#responseKeepModeSelect", source.responseConfig?.keepMode || source.responseKeepMode || "all");
-  $("#responseFilterInput").value = source.responseConfig?.filterCondition || source.responseFilter || "";
-  setSelectValue("#responseFieldKeepModeSelect", source.responseConfig?.fieldKeepMode || "all");
-  appState.responseValueFilters = Array.isArray(source.responseConfig?.valueFilters) ? source.responseConfig.valueFilters : [];
+  syncSourceResponseConfigForm(source);
   const parameterConfig = source.parameterConfig || {};
   setSelectValue("#paramSourceTypeSelect", parameterConfig.sourceType || "static");
   const selectedSourceIds = parameterConfig.sourceIds?.length ? parameterConfig.sourceIds : [parameterConfig.sourceId].filter(Boolean);
@@ -1598,6 +1688,11 @@ function resetSourceForm() {
   $("#responseFilterInput").value = "";
   setSelectValue("#responseFieldKeepModeSelect", "all");
   appState.responseValueFilters = [];
+  renderResponseKeepFieldOptions([]);
+  updateResponseKeepFieldsState();
+  setSelectValue("#responsePersistModeSelect", "none");
+  $("#responseTargetTableInput").value = "";
+  updateResponsePersistState();
   renderParamSourceSelect("");
   setSelectValue("#paramSourceTypeSelect", "static");
   updateParamSourceTypeHelp();
@@ -1668,7 +1763,7 @@ function collectSourceForm() {
     refreshCycle: "",
     cookieName: "",
     cookieValue: "",
-    responsePath: $("#responsePathInput").value.trim() || "data.items",
+    responsePath: ($("#mappingResponsePathInput")?.value || $("#responsePathInput").value).trim() || "data.items",
     method: $("#apiMethodSelect").value,
     queryParams: parseJsonInput("#queryParamsInput"),
     headers: parseJsonInput("#headerParamsInput"),
@@ -1714,9 +1809,7 @@ async function deleteSelectedSource(source = getSelectedSource()) {
   $("#sourceActionStatus").textContent = `已删除：${source.name}`;
   if ($("#sourceModal")?.open) closeDialog("#sourceModal");
   if (appState.selectedSourceId) populateSourceForm();
-  renderSources();
-  renderMappingSourceSelect();
-  renderMappings();
+  refreshSourceDependentControls();
   renderOverview();
   renderIcons();
 }
@@ -1766,9 +1859,7 @@ async function saveSourceFromModal() {
   }
   populateSourceForm();
   closeDialog("#sourceModal");
-  renderSources();
-  renderMappingSourceSelect();
-  renderMappings();
+  refreshSourceDependentControls();
   renderOverview();
   renderIcons();
 }
@@ -1983,6 +2074,40 @@ function renderDictionaryColumnOptions(selector, dictionaryId, selectedColumn = 
     ...((dictionary?.columns || []).map((column) => `<option value="${escapeHtml(column)}">${escapeHtml(column)}</option>`))
   ].join("");
   setSelectValue(selector, selectedColumn);
+}
+
+function refreshDictionaryDependentControls() {
+  const selectedRuleDictionaryId = $("#ruleDictionarySelect")?.value || "";
+  const selectedRuleDictionaryColumn = $("#ruleDictionaryColumnSelect")?.value || "";
+  renderDictionarySelectOptions("#ruleDictionarySelect", selectedRuleDictionaryId);
+  renderDictionaryColumnOptions("#ruleDictionaryColumnSelect", $("#ruleDictionarySelect")?.value || selectedRuleDictionaryId, selectedRuleDictionaryColumn);
+  if ($("#paramSourceTypeSelect")?.value === "dictionary") {
+    renderParamSourceSelect(getSelectedValues($("#paramSourceSelect")));
+    renderParamFieldSelect(getSelectedValues($("#paramFieldSelect")));
+  }
+  if ($("#valueFilterModal")?.open) {
+    renderValueFilterList();
+  }
+  syncRuleActionVisibility();
+}
+
+function refreshAuthDependentControls() {
+  renderAuthConfigs();
+  updateSourceModalVisibility();
+}
+
+function refreshSourceDependentControls() {
+  renderSources();
+  renderMappingSourceSelect();
+  renderMappings();
+  renderFlowTable();
+  if ($("#flowDesigner")) {
+    renderFlowDesigner();
+  }
+  if (!["static", "flow"].includes($("#paramSourceTypeSelect")?.value || "static")) {
+    renderParamSourceSelect(getSelectedValues($("#paramSourceSelect")));
+    renderParamFieldSelect(getSelectedValues($("#paramFieldSelect")));
+  }
 }
 
 function setDictionaryCategoryValue(value = "业务字典") {
@@ -2270,6 +2395,13 @@ function closeDialog(selector) {
   if (dialog?.open) {
     dialog.close();
   }
+}
+
+function getActionTarget(event, selector, containerSelector = "") {
+  const target = event.target.closest(selector);
+  if (!target) return null;
+  const container = containerSelector ? $(containerSelector) : event.currentTarget;
+  return container?.contains(target) ? target : null;
 }
 
 function getSelectedValues(select) {
@@ -3592,7 +3724,7 @@ async function runSelectedBusinessFlow() {
     populateFlowForm(result.flow);
     renderBusinessSelector();
     $("#businessSelect").value = result.business.name;
-    renderBusinessRows({ name: result.business.name, rows: result.business.rows });
+    renderBusinessRows(result.business);
     renderFlowTable();
     await refreshSyncLogs();
     renderOverview();
@@ -3617,22 +3749,26 @@ function renderMappings() {
   renderMappingSourceSelect();
   renderMappingRuleSelect();
   const selectedSourceId = appState.selectedSourceId;
-  const mappings = (window.opsData.fieldMappings || []).filter((item) => item.sourceId === selectedSourceId);
+  const hasStructuredMappingData = Array.isArray(window.opsData.fieldMappings);
+  const structuredMappings = window.opsData.fieldMappings || [];
+  const mappings = structuredMappings.filter((item) => item.sourceId === selectedSourceId);
   const fallbackRows = (window.opsData.mappings || []).map((row) => ({
     id: "",
     sourceField: row[0],
     targetField: row[1],
+    fieldAlias: row[6] || "",
+    linkConfig: row[7] || { enabled: false },
     type: row[2],
     defaultValue: row.length > 5 ? row[3] : "",
     rule: row.length > 5 ? row[4] : row[3],
     recordMode: "per-record",
     output: row.length > 5 ? row[5] : row[4]
   }));
-  const header = ["源字段", "目标字段", "映射方式", "类型", "默认值", "清洗规则", "输出目标", "操作"];
-  const items = mappings.length ? mappings : fallbackRows;
+  const header = ["源字段", "目标字段", "展示别名", "跳转", "映射方式", "类型", "默认值", "清洗规则", "输出目标", "操作"];
+  const items = mappings.length ? mappings : hasStructuredMappingData ? [] : fallbackRows;
   $("#mappingTable").innerHTML = [
     `<div class="mapping-row header">${header.map((cell) => `<span>${escapeHtml(cell)}</span>`).join("")}</div>`,
-    ...items.map((item) => {
+    ...(items.length ? items.map((item) => {
       const rule = getRuleById(item.ruleId);
       const ruleText = item.ruleParam
         ? `${rule?.name || item.rule || "自定义规则"} / ${item.ruleParam}`
@@ -3644,6 +3780,8 @@ function renderMappings() {
         <div class="mapping-row" data-mapping-id="${escapeHtml(item.id || "")}">
           <span>${escapeHtml(item.sourceField)}</span>
           <span>${escapeHtml(item.targetField)}</span>
+          <span>${escapeHtml(item.fieldAlias || "-")}</span>
+          <span title="${escapeHtml(item.linkConfig?.urlTemplate || "")}">${item.linkConfig?.enabled ? "可跳转" : "-"}</span>
           <span title="${escapeHtml(item.recordFilter || "")}">${escapeHtml(modeText)}</span>
           <span>${escapeHtml(item.type)}</span>
           <span>${escapeHtml(item.defaultValue || "-")}</span>
@@ -3655,7 +3793,7 @@ function renderMappings() {
           </span>
         </div>
       `;
-    })
+    }) : ['<div class="module-status">当前数据源暂无出参映射。填写下方字段后点击“添加映射”，保存后会显示在这里。</div>'])
   ].join("");
   if ($("#sourceModal")?.open) {
     setSourceFormReadonly(appState.sourceDetailMode === "preview");
@@ -3665,13 +3803,19 @@ function renderMappings() {
 function updateMappingModeVisibility() {
   const editor = $(".mapping-editor");
   const isAggregate = $("#mapRecordModeSelect")?.value === "aggregate-records";
+  const linkEnabled = $("#mapLinkEnabledSelect")?.value === "true";
   editor?.classList.toggle("is-aggregate", Boolean(isAggregate));
+  editor?.classList.toggle("has-field-link", Boolean(linkEnabled));
 }
 
 function resetMappingForm() {
   appState.editingMappingId = "";
   $("#mapSourceInput").value = "raw.status";
   $("#mapTargetInput").value = "status";
+  $("#mapAliasInput").value = "";
+  setSelectValue("#mapLinkEnabledSelect", "false");
+  $("#mapLinkTemplateInput").value = "";
+  $("#mapLinkPlaceholdersInput").value = "";
   setSelectValue("#mapTypeSelect", "字符串");
   $("#mapDefaultInput").value = "";
   setSelectValue("#mapRecordModeSelect", "per-record");
@@ -3689,6 +3833,10 @@ function populateMappingForm(mapping) {
   appState.editingMappingId = mapping.id;
   $("#mapSourceInput").value = mapping.sourceField || "";
   $("#mapTargetInput").value = mapping.targetField || "";
+  $("#mapAliasInput").value = mapping.fieldAlias || mapping.alias || "";
+  setSelectValue("#mapLinkEnabledSelect", mapping.linkConfig?.enabled ? "true" : "false");
+  $("#mapLinkTemplateInput").value = mapping.linkConfig?.urlTemplate || "";
+  $("#mapLinkPlaceholdersInput").value = formatOptionalJsonArray(mapping.linkConfig?.placeholders || []);
   setSelectValue("#mapTypeSelect", mapping.type || "字符串");
   $("#mapDefaultInput").value = mapping.defaultValue || "";
   setSelectValue("#mapRecordModeSelect", mapping.recordMode || "per-record");
@@ -3783,7 +3931,11 @@ function updateDisplayFilterOptions(business) {
   const selectedField = $("#fieldFilterSelect")?.value || "";
   $("#fieldFilterSelect").innerHTML = [
     '<option value="">全部字段</option>',
-    ...fields.map((field, index) => `<option value="${index}">${escapeHtml(field)}</option>`)
+    ...fields.map((field, index) => {
+      const label = getBusinessFieldLabel(business, field);
+      const text = label === field ? field : `${label}（${field}）`;
+      return `<option value="${index}">${escapeHtml(text)}</option>`;
+    })
   ].join("");
   if (selectedField && Number(selectedField) < fields.length) setSelectValue("#fieldFilterSelect", selectedField);
 }
@@ -3807,12 +3959,13 @@ function applyDisplayFilters(business) {
 function renderBusinessRows(current) {
   const filtered = applyDisplayFilters(current);
   appState.lastDisplayResult = filtered;
-  const rows = [getBusinessFields(filtered), ...(filtered?.rows || [])];
+  const fields = getBusinessFields(filtered);
+  const rows = [getBusinessFieldLabels(filtered), ...(filtered?.rows || [])];
   $("#businessTable").innerHTML = rows
     .map(
       (row, index) => `
         <div class="table-row ${index === 0 ? "header" : ""}">
-          ${row.map((cell) => `<span>${escapeHtml(cell)}</span>`).join("")}
+          ${row.map((cell, cellIndex) => (index === 0 ? `<span>${escapeHtml(cell)}</span>` : renderBusinessCell(filtered, row, fields[cellIndex], cell))).join("")}
         </div>
       `
     )
@@ -4425,8 +4578,9 @@ function bindEvents() {
   $("#cancelMultiSelectBtn")?.addEventListener("click", () => closeDialog("#multiSelectModal"));
   if ($("#cleaningMode")) {
     $("#cleaningMode").addEventListener("click", (event) => {
-      if (event.target.tagName !== "BUTTON") return;
-      setCleaningTab(event.target.dataset.cleaningTab);
+      const button = getActionTarget(event, "[data-cleaning-tab]", "#cleaningMode");
+      if (!button) return;
+      setCleaningTab(button.dataset.cleaningTab);
     });
   }
   $("#flowNodeTypeSelect").addEventListener("change", () => {
@@ -4480,7 +4634,7 @@ function bindEvents() {
   $("#flowDesigner").addEventListener("click", (event) => {
     const nodeCard = event.target.closest("[data-flow-node-id]");
     if (!nodeCard) return;
-    const action = event.target.dataset.flowNodeAction;
+    const action = getActionTarget(event, "[data-flow-node-action]", "#flowDesigner")?.dataset.flowNodeAction;
     const nodeId = nodeCard.dataset.flowNodeId;
     if (action === "delete") {
       if (isBusinessPreviewMode()) return;
@@ -4550,7 +4704,7 @@ function bindEvents() {
     const flowId = row.dataset.flowId;
     const flow = (window.opsData.businessFlows || []).find((item) => item.id === flowId);
     if (!flow) return;
-    const action = event.target.dataset.flowAction || "edit";
+    const action = getActionTarget(event, "[data-flow-action]", "#flowTable")?.dataset.flowAction || "edit";
     if (action === "delete") {
       await deleteBusinessFlow(flowId);
       return;
@@ -4567,9 +4721,10 @@ function bindEvents() {
   $("#sourceStack").addEventListener("click", (event) => {
     const card = event.target.closest("[data-source-id]");
     if (!card) return;
-    const sourceId = event.target.dataset.sourceId || card.dataset.sourceId;
+    const actionButton = getActionTarget(event, "[data-source-action]", "#sourceStack");
+    const sourceId = actionButton?.dataset.sourceId || card.dataset.sourceId;
     const source = (window.opsData.sources || []).find((item) => item.id === sourceId);
-    const action = event.target.dataset.sourceAction;
+    const action = actionButton?.dataset.sourceAction;
     if (!source) return;
     appState.selectedSourceId = sourceId;
     if (action === "preview") {
@@ -4661,7 +4816,7 @@ function bindEvents() {
   });
   $("#ruleDictionaryColumnSelect")?.addEventListener("change", syncRuleExpressionPreview);
   $("#sourceTestResult").addEventListener("click", (event) => {
-    const field = event.target.dataset.responseField;
+    const field = getActionTarget(event, "[data-response-field]", "#sourceTestResult")?.dataset.responseField;
     if (!field) return;
     $("#mapSourceInput").value = field;
     $("#responseFieldSelect").value = field;
@@ -4674,7 +4829,7 @@ function bindEvents() {
   $("#authConfigList").addEventListener("click", (event) => {
     const item = event.target.closest("[data-auth-id]");
     if (!item) return;
-    const action = event.target.dataset.authAction;
+    const action = getActionTarget(event, "[data-auth-action]", "#authConfigList")?.dataset.authAction;
     const authId = item.dataset.authId;
     const auth = (window.opsData.authConfigs || []).find((entry) => entry.id === authId);
     if (!auth) return;
@@ -4725,6 +4880,7 @@ function bindEvents() {
       }
     }
     renderDictionarySets();
+    refreshDictionaryDependentControls();
     closeDialog("#dictionaryModal");
   });
   $("#deleteDictionaryBtn").addEventListener("click", async () => {
@@ -4737,11 +4893,14 @@ function bindEvents() {
     }
     window.opsData.dictionarySets = (window.opsData.dictionarySets || []).filter((item) => item.id !== dictionary.id);
     renderDictionarySets();
+    refreshDictionaryDependentControls();
     closeDialog("#dictionaryModal");
   });
   $("#dictionarySetList").addEventListener("click", (event) => {
-    const dictionaryId = event.target.dataset.dictionaryId;
-    const action = event.target.dataset.dictionaryAction;
+    const button = getActionTarget(event, "[data-dictionary-action]", "#dictionarySetList");
+    const item = event.target.closest("[data-dictionary-id]");
+    const dictionaryId = button?.dataset.dictionaryId || item?.dataset.dictionaryId;
+    const action = button?.dataset.dictionaryAction;
     if (!dictionaryId || !action) return;
     const dictionary = getDictionarySetById(dictionaryId);
     if (!dictionary) return;
@@ -4841,8 +5000,10 @@ function bindEvents() {
     closeDialog("#storageConfigModal");
   });
   $("#storageConfigList").addEventListener("click", (event) => {
-    const storageId = event.target.dataset.storageId;
-    const action = event.target.dataset.storageAction;
+    const button = getActionTarget(event, "[data-storage-action]", "#storageConfigList");
+    const item = event.target.closest("[data-storage-id]");
+    const storageId = button?.dataset.storageId || item?.dataset.storageId;
+    const action = button?.dataset.storageAction;
     if (!storageId || !action) return;
     const config = getStorageConfigById(storageId);
     if (!config) return;
@@ -4891,7 +5052,7 @@ function bindEvents() {
         appState.selectedAuthId = created.id;
       }
     }
-    renderAuthConfigs();
+    refreshAuthDependentControls();
     closeDialog("#authModal");
   });
   async function deleteAuthConfig(auth) {
@@ -4902,8 +5063,12 @@ function bindEvents() {
       // Keep local editing usable when API is offline.
     }
     window.opsData.authConfigs = window.opsData.authConfigs.filter((item) => item.id !== auth.id);
+    window.opsData.sources = (window.opsData.sources || []).map((source) =>
+      source.authConfigId === auth.id ? { ...source, authConfigId: "auth_none", authType: "none", status: "无认证" } : source
+    );
     appState.selectedAuthId = window.opsData.authConfigs[0]?.id || "auth_none";
-    renderAuthConfigs();
+    refreshAuthDependentControls();
+    renderSources();
   }
   if ($("#analysisMode")) {
     $("#analysisMode").addEventListener("click", (event) => {
@@ -4943,7 +5108,7 @@ function bindEvents() {
     const item = event.target.closest("[data-model-id]");
     if (!item) return;
     const modelId = item.dataset.modelId;
-    const action = event.target.dataset.modelAction || "use";
+    const action = getActionTarget(event, "[data-model-action]", "#modelConfigList")?.dataset.modelAction || "use";
     const config = getModelConfigById(modelId);
     if (!config) return;
     if (action === "use") {
@@ -5078,7 +5243,7 @@ function bindEvents() {
         method: "POST",
         body: JSON.stringify(payload)
       });
-      appState.lastSourceTest = result;
+      appState.lastSourceTest = { ...result, sourceId: appState.selectedSourceId };
       renderSourceTestResult(result);
     } catch (error) {
       $("#sourceTestResult").innerHTML = `<div class="module-status">测试失败：${escapeHtml(error.message)}</div>`;
@@ -5087,8 +5252,10 @@ function bindEvents() {
   });
   $("#deleteSourceBtn").addEventListener("click", () => deleteSelectedSource(getSelectedSource()));
   $("#mappingTable").addEventListener("click", async (event) => {
-    const action = event.target.dataset.mappingAction;
-    const mappingId = event.target.dataset.mappingId;
+    const button = event.target.closest("[data-mapping-action]");
+    if (!button || !$("#mappingTable").contains(button)) return;
+    const action = button.dataset.mappingAction;
+    const mappingId = button.dataset.mappingId;
     if (!action || !mappingId) return;
     const mapping = getMappingById(mappingId);
     if (!mapping) return;
@@ -5118,6 +5285,13 @@ function bindEvents() {
       sourceField: $("#mapSourceInput").value,
       sourceId: appState.selectedSourceId,
       targetField: $("#mapTargetInput").value,
+      fieldAlias: $("#mapAliasInput").value.trim(),
+      linkConfig: {
+        enabled: $("#mapLinkEnabledSelect")?.value === "true",
+        urlTemplate: $("#mapLinkTemplateInput")?.value.trim() || "",
+        target: "_blank",
+        placeholders: parseJsonInput("#mapLinkPlaceholdersInput", [])
+      },
       type: $("#mapTypeSelect").value,
       defaultValue: $("#mapDefaultInput").value,
       ruleId: $("#mapRuleSelect").value,
@@ -5140,7 +5314,7 @@ function bindEvents() {
         window.opsData.fieldMappings = window.opsData.fieldMappings.map((item) => (item.id === saved.id ? saved : item));
       } else {
         window.opsData.fieldMappings.push(saved);
-        window.opsData.mappings.push([saved.sourceField, saved.targetField, saved.type, saved.defaultValue || "", saved.rule, saved.output]);
+        window.opsData.mappings.push([saved.sourceField, saved.targetField, saved.type, saved.defaultValue || "", saved.rule, saved.output, saved.fieldAlias || "", saved.linkConfig || null]);
       }
     } catch {
       window.opsData.fieldMappings = window.opsData.fieldMappings || [];
@@ -5148,7 +5322,7 @@ function bindEvents() {
         window.opsData.fieldMappings = window.opsData.fieldMappings.map((item) => (item.id === editingId ? { ...item, ...mapping } : item));
       } else {
         window.opsData.fieldMappings.push({ id: `local_map_${Date.now()}`, ...mapping });
-        window.opsData.mappings.push([mapping.sourceField, mapping.targetField, mapping.type, mapping.defaultValue || "", mapping.rule, mapping.output]);
+        window.opsData.mappings.push([mapping.sourceField, mapping.targetField, mapping.type, mapping.defaultValue || "", mapping.rule, mapping.output, mapping.fieldAlias || "", mapping.linkConfig || null]);
       }
     }
     resetMappingForm();
@@ -5157,6 +5331,7 @@ function bindEvents() {
     renderOverview();
   });
   $("#mapRecordModeSelect").addEventListener("change", updateMappingModeVisibility);
+  $("#mapLinkEnabledSelect")?.addEventListener("change", updateMappingModeVisibility);
   $("#addRuleBtn").addEventListener("click", () => {
     resetRuleForm();
     openDialog("#ruleModal");
@@ -5185,13 +5360,15 @@ function bindEvents() {
     renderRuleTable();
     renderFlowControls();
     renderMappingRuleSelect();
+    if ($("#valueFilterModal")?.open) renderValueFilterList();
     renderMappings();
     renderOverview();
     closeDialog("#ruleModal");
   });
   $("#ruleTable").addEventListener("click", async (event) => {
-    const action = event.target.dataset.ruleAction;
-    const ruleId = event.target.dataset.ruleId;
+    const button = getActionTarget(event, "[data-rule-action]", "#ruleTable");
+    const action = button?.dataset.ruleAction;
+    const ruleId = button?.dataset.ruleId;
     if (!action || !ruleId) return;
     const rule = getRuleById(ruleId);
     if (!rule) return;
@@ -5217,6 +5394,7 @@ function bindEvents() {
       renderRuleTable();
       renderFlowControls();
       renderMappingRuleSelect();
+      if ($("#valueFilterModal")?.open) renderValueFilterList();
       renderMappings();
       renderFlowTable();
       renderOverview();

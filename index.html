@@ -924,6 +924,34 @@
                   <input id="mapTargetInput" value="status" aria-label="目标字段" placeholder="如 severity" />
                 </label>
                 <label>
+                  <span class="label-with-help">
+                    展示别名
+                    <button class="help-dot" type="button" aria-label="展示别名说明" data-tooltip="展示别名只用于数据展示、字段筛选和表头显示；真实字段名仍使用目标字段名，避免影响清洗、主键、过滤和落库。">?</button>
+                  </span>
+                  <input id="mapAliasInput" value="" aria-label="展示别名" placeholder="如 告警等级 / 产品名称" />
+                </label>
+                <label>
+                  <span class="label-with-help">
+                    字段跳转
+                    <button class="help-dot" type="button" aria-label="字段跳转说明" data-tooltip="开启后，数据展示表格中该目标字段会渲染为链接。URL 可写 {{value}}、{{目标字段名}}、{{businessName}}，也可用下方占位符 JSON 指定来源字段或固定值。">?</button>
+                  </span>
+                  <select id="mapLinkEnabledSelect" aria-label="字段跳转">
+                    <option value="false">不跳转</option>
+                    <option value="true">可跳转</option>
+                  </select>
+                </label>
+                <label class="field-link-config">
+                  <span>跳转链接模板</span>
+                  <input id="mapLinkTemplateInput" value="" aria-label="跳转链接模板" placeholder="如 /detail?service={{service_id}}&name={{value}}" />
+                </label>
+                <label class="full field-link-config">
+                  <span class="label-with-help">
+                    链接占位符 JSON
+                    <button class="help-dot" type="button" aria-label="链接占位符说明" data-tooltip="JSON 数组。source=field 时 from 写当前行字段名；source=custom 时 value 写固定值；source=dictionary 时 from 写 字典名.字段名。为空时会自动用当前行字段、value 和 businessName 替换同名占位符。">?</button>
+                  </span>
+                  <textarea id="mapLinkPlaceholdersInput" rows="3" aria-label="链接占位符 JSON" placeholder='[{"name":"service","source":"field","from":"service_id"}]'></textarea>
+                </label>
+                <label>
                   <span>字段类型</span>
                   <select id="mapTypeSelect" aria-label="字段类型">
                     <option>字符串</option>

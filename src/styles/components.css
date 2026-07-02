@@ -1354,6 +1354,25 @@
   display: grid;
 }
 
+.mapping-editor .field-link-config {
+  display: none;
+}
+
+.mapping-editor.has-field-link .field-link-config {
+  display: grid;
+}
+
+.table-cell-link {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(38, 255, 209, 0.55);
+}
+
+.table-cell-link:hover {
+  color: var(--accent-strong);
+  border-bottom-style: solid;
+}
+
 .rule-editor {
   grid-template-columns: 1fr 130px 1.2fr 1.2fr auto;
 }
@@ -1883,9 +1902,9 @@ textarea {
 }
 
 .mapping-row {
-  min-width: 1180px;
+  min-width: 1460px;
   display: grid;
-  grid-template-columns: 1.2fr 1fr 0.9fr 0.65fr 0.75fr 1.15fr 0.78fr 128px;
+  grid-template-columns: 1.12fr 0.9fr 0.82fr 0.58fr 0.72fr 0.52fr 0.62fr 1fr 0.68fr 128px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);
 }
