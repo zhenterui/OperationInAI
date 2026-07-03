@@ -20,9 +20,11 @@ import {
   deleteStorageConfig,
   deleteSituationFilter,
   queryBusiness,
+  refreshAuthConfig,
   runBusinessFlow,
   switchStorageConfig,
   updateAuthConfig,
+  updateBusinessFieldSchema,
   updateBusinessFlow,
   updateCleaningRule,
   updateDictionarySet,
@@ -33,6 +35,15 @@ import {
   updateSituationTimeFilter
 } from "../services/config-service.mjs";
 import { answerQuestion } from "../services/search-service.mjs";
+import {
+  createSchedule,
+  deleteSchedule,
+  getSchedulerStatus,
+  listSchedules,
+  runScheduleNow,
+  updateSchedule
+} from "../services/scheduler-service.mjs";
+import { dropBusinessTable, listBusinessTables, queryBusinessTable } from "../services/business-data-service.mjs";
 import { createDataSource, deleteDataSource, listSyncLogs, runSync, testDataSource, updateDataSource } from "../services/sync-service.mjs";
 import { readJson, sendError, sendJson } from "./http.mjs";
 import { assertAuthorized, requiredRoleForRequest } from "./security.mjs";
@@ -119,6 +130,10 @@ route("POST", "/api/situation-filters", async ({ request }) => createSituationFi
 route("PUT", "/api/situation-time-filter", async ({ request }) => updateSituationTimeFilter(await readJson(request)));
 route("GET", "/api/businesses", () => store.businesses);
 route("POST", "/api/businesses/query", async ({ request }) => queryBusiness(await readJson(request)));
+route("PUT", "/api/businesses/field-schema", async ({ request }) => {
+  const body = await readJson(request);
+  return updateBusinessFieldSchema(body.id || body.businessId, body.name || body.businessName, body.fieldSchema);
+});
 route("GET", "/api/business-flows", () => store.businessFlows);
 route("POST", "/api/business-flows", async ({ request }) => createBusinessFlow(await readJson(request)));
 route("POST", "/api/business-flows/run", async ({ request }) => runBusinessFlow(await readJson(request)));
@@ -130,6 +145,20 @@ route("GET", "/api/analysis/results", () => listAnalysisResults());
 route("POST", "/api/analysis/run", async ({ request }) => runAnalysis(await readJson(request)));
 route("POST", "/api/search/query", async ({ request }) => answerQuestion(await readJson(request)));
 route("GET", "/api/audit-logs", () => listAuditLogs());
+route("GET", "/api/schedules", () => listSchedules());
+route("POST", "/api/schedules", async ({ request }) => createSchedule(await readJson(request)));
+route("POST", "/api/schedules/run", async ({ request }) => runScheduleNow((await readJson(request)).id));
+route("POST", "/api/auth-configs/refresh", async ({ request }) => refreshAuthConfig((await readJson(request)).id));
+route("GET", "/api/scheduler/status", () => getSchedulerStatus());
+route("GET", "/api/business-tables", () => listBusinessTables());
+route("POST", "/api/business-tables/query", async ({ request }) => {
+  const body = await readJson(request);
+  return queryBusinessTable(body.table || body.name || body.tableName, body);
+});
+route("DELETE", "/api/business-tables", async ({ request }) => {
+  const body = await readJson(request);
+  return dropBusinessTable(body.table || body.name || body.tableName);
+});
 
 export async function handleApi(request, response) {
   if (request.method === "OPTIONS") {
@@ -289,6 +318,23 @@ export async function handleApi(request, response) {
   if (situationFilterMatch && request.method === "DELETE") {
     try {
       sendData(response, request, deleteSituationFilter(situationFilterMatch[1]));
+    } catch (error) {
+      sendRouteError(response, request, error);
+    }
+    return true;
+  }
+  const scheduleMatch = parsed.pathname.match(/^\/api\/schedules\/([^/]+)$/);
+  if (scheduleMatch && request.method === "PUT") {
+    try {
+      sendData(response, request, updateSchedule(scheduleMatch[1], await readJson(request)));
+    } catch (error) {
+      sendRouteError(response, request, error);
+    }
+    return true;
+  }
+  if (scheduleMatch && request.method === "DELETE") {
+    try {
+      sendData(response, request, deleteSchedule(scheduleMatch[1]));
     } catch (error) {
       sendRouteError(response, request, error);
     }

@@ -36,7 +36,11 @@ function toSourcePatch(input = {}) {
       queryParams: input.queryParams || input.requestConfig?.queryParams || {},
       headers: input.headers || input.requestConfig?.headers || {},
       body: input.body || input.requestConfig?.body || {},
-      pagination: input.pagination || input.requestConfig?.pagination || ""
+      pagination: input.pagination || input.requestConfig?.pagination || "",
+      bodyType: input.bodyType || input.requestConfig?.bodyType || "json",
+      retry: Number.isFinite(Number(input.retry ?? input.requestConfig?.retry)) ? Number(input.retry ?? input.requestConfig?.retry) : 0,
+      retryDelaySeconds: Number.isFinite(Number(input.retryDelaySeconds ?? input.requestConfig?.retryDelaySeconds)) ? Number(input.retryDelaySeconds ?? input.requestConfig?.retryDelaySeconds) : 1,
+      requestTimeoutMs: Number.isFinite(Number(input.requestTimeoutMs ?? input.requestConfig?.requestTimeoutMs)) ? Number(input.requestTimeoutMs ?? input.requestConfig?.requestTimeoutMs) : 8000
     },
     responseConfig: {
       keepMode: input.responseConfig?.keepMode || input.responseKeepMode || "all",
@@ -169,7 +173,7 @@ function getValuesByPath(value, path = "") {
   return visit(value, 0);
 }
 
-function getByPath(value, path = "") {
+export function getByPath(value, path = "") {
   const values = getValuesByPath(value, path);
   if (!path) return values;
   return path.includes("[]") || path.includes("[*]") ? values : values[0];
@@ -532,7 +536,7 @@ function normalizeSourceUrl(type = "") {
   return withoutMethod;
 }
 
-function assertSafeSourceUrl(url) {
+export function assertSafeSourceUrl(url) {
   const parsed = new URL(url);
   if (!["http:", "https:"].includes(parsed.protocol)) {
     const error = new Error("Only HTTP/HTTPS data source URLs are allowed");
@@ -560,6 +564,36 @@ function appendQueryParams(url, queryParams = {}) {
     }
   });
   return parsed.toString();
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function applyBodyTypeHeaders(headers = {}, bodyType = "json") {
+  const next = { ...(headers || {}) };
+  const hasContentType = Object.keys(next).some((key) => key.toLowerCase() === "content-type");
+  if (!hasContentType && bodyType === "json") next["Content-Type"] = "application/json";
+  if (!hasContentType && bodyType === "form") next["Content-Type"] = "application/x-www-form-urlencoded";
+  return next;
+}
+
+function buildRequestBody(method = "GET", body = {}, bodyType = "json") {
+  if (["GET", "DELETE", "HEAD"].includes(method)) return undefined;
+  if (bodyType === "raw") return typeof body === "string" ? body : JSON.stringify(body || {});
+  if (bodyType === "form") {
+    const form = new URLSearchParams();
+    Object.entries(body || {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) form.set(key, String(value));
+    });
+    return form;
+  }
+  return JSON.stringify(body || {});
+}
+
+function responseCacheKey(method, url, queryParams, body, bodyType) {
+  if (!url) return "";
+  return `${method}|${url}|${bodyType}|${JSON.stringify(queryParams || {})}|${JSON.stringify(body || {})}`;
 }
 
 function uniqueValues(values = []) {
@@ -848,6 +882,14 @@ function applyAggregateMapping(records = [], mapping = {}, responsePath = "") {
   return finalizeAggregateMappingOutput(values, mapping);
 }
 
+function assignTarget(output, targetField, value) {
+  if (Array.isArray(targetField)) {
+    targetField.forEach((field) => { output[field] = value; });
+  } else {
+    output[targetField] = value;
+  }
+}
+
 export function applyFieldMappings(records = [], mappings = [], responsePath = "") {
   if (!mappings.length) return [];
   const hasAggregateMappings = mappings.some((mapping) => mapping.recordMode === "aggregate-records");
@@ -855,16 +897,16 @@ export function applyFieldMappings(records = [], mappings = [], responsePath = "
     const firstRecord = records[0] || {};
     return [
       mappings.reduce((output, mapping) => {
-        output[mapping.targetField] = mapping.recordMode === "aggregate-records"
+        assignTarget(output, mapping.targetField, mapping.recordMode === "aggregate-records"
           ? applyAggregateMapping(records, mapping, responsePath)
-          : applyMappingToRecord(firstRecord, mapping, responsePath);
+          : applyMappingToRecord(firstRecord, mapping, responsePath));
         return output;
       }, {})
     ];
   }
   return records.map((record) =>
     mappings.reduce((output, mapping) => {
-      output[mapping.targetField] = applyMappingToRecord(record, mapping, responsePath);
+      assignTarget(output, mapping.targetField, applyMappingToRecord(record, mapping, responsePath));
       return output;
     }, {})
   );
@@ -875,41 +917,85 @@ async function fetchRealSource(config = {}) {
   if (!sourceUrl || (config.kind || "api") !== "api") return null;
   assertSafeSourceUrl(sourceUrl);
   const method = String(config.method || config.requestConfig?.method || "GET").toUpperCase();
+  const requestConfig = config.requestConfig || {};
   const placeholderValues = buildPlaceholderValues(config.parameterConfig || {});
-  const queryParams = applyPlaceholders(config.queryParams || config.requestConfig?.queryParams || {}, placeholderValues);
-  const headers = { ...applyPlaceholders(config.headers || config.requestConfig?.headers || {}, placeholderValues) };
-  const body = applyPlaceholders(config.body || config.requestConfig?.body || {}, placeholderValues);
+  const queryParams = applyPlaceholders(config.queryParams || requestConfig.queryParams || {}, placeholderValues);
+  const bodyType = config.bodyType || requestConfig.bodyType || "json";
+  const headers = applyBodyTypeHeaders(applyPlaceholders(config.headers || requestConfig.headers || {}, placeholderValues), bodyType);
+  const body = applyPlaceholders(config.body || requestConfig.body || {}, placeholderValues);
   const authConfig = store.authConfigs.find((item) => item.id === config.authConfigId);
   if (authConfig?.cookieName && authConfig?.cookieValue) {
     headers.Cookie = `${authConfig.cookieName}=${authConfig.cookieValue}`;
   }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  const startedAt = Date.now();
-  try {
-    const response = await fetch(appendQueryParams(sourceUrl, queryParams), {
-      method,
-      headers,
-      body: ["GET", "DELETE", "HEAD"].includes(method) ? undefined : JSON.stringify(body || {}),
-      signal: controller.signal
-    });
-    const text = await response.text();
-    let responseBody;
-    try {
-      responseBody = text ? JSON.parse(text) : {};
-    } catch {
-      responseBody = { text };
-    }
+  const responseCache = config._responseCache;
+  const cacheKey = responseCacheKey(method, sourceUrl, queryParams, body, bodyType);
+  if (responseCache && cacheKey && responseCache.has(cacheKey)) {
+    const cached = responseCache.get(cacheKey);
     return {
-      responseBody,
-      status: response.status,
-      durationMs: Date.now() - startedAt,
+      responseBody: cached.responseBody,
+      status: cached.status,
+      durationMs: 0,
       sourceMode: "real",
-      error: response.ok ? "" : `HTTP ${response.status}`
+      error: cached.status >= 200 && cached.status < 400 ? "" : `HTTP ${cached.status}`,
+      cached: true
     };
-  } finally {
-    clearTimeout(timeout);
   }
+  const requestTimeoutMs = Math.max(1000, Number(config.requestTimeoutMs ?? requestConfig.requestTimeoutMs ?? 8000) || 8000);
+  const retry = Math.max(0, Number(config.retry ?? requestConfig.retry ?? 0) || 0);
+  const retryDelaySeconds = Math.max(0, Number(config.retryDelaySeconds ?? requestConfig.retryDelaySeconds ?? 1) || 0);
+  const retryableStatus = new Set([408, 429, 500, 502, 503, 504]);
+  const startedAt = Date.now();
+  let lastError = "";
+  for (let attempt = 1; attempt <= retry + 1; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+    try {
+      const response = await fetch(appendQueryParams(sourceUrl, queryParams), {
+        method,
+        headers,
+        body: buildRequestBody(method, body, bodyType),
+        signal: controller.signal
+      });
+      const text = await response.text();
+      let responseBody;
+      try {
+        responseBody = text ? JSON.parse(text) : {};
+      } catch {
+        responseBody = { text };
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (response.ok || attempt > retry || !retryableStatus.has(response.status)) {
+        if (responseCache && cacheKey && response.ok) {
+          responseCache.set(cacheKey, { responseBody, status: response.status });
+        }
+        return {
+          responseBody,
+          status: response.status,
+          durationMs: Date.now() - startedAt,
+          sourceMode: "real",
+          error: response.ok ? "" : `HTTP ${response.status}`,
+          attempts: attempt
+        };
+      }
+      lastError = `HTTP ${response.status}`;
+    } catch (error) {
+      clearTimeout(timeout);
+      lastError = error?.name === "AbortError" ? `请求超时(${requestTimeoutMs}ms)` : error?.message || "请求失败";
+      if (attempt > retry) {
+        return {
+          responseBody: { error: lastError },
+          status: 599,
+          durationMs: Date.now() - startedAt,
+          sourceMode: "real",
+          error: lastError,
+          attempts: attempt
+        };
+      }
+    }
+    if (attempt <= retry && retryDelaySeconds > 0) await wait(retryDelaySeconds * 1000);
+  }
+  return { responseBody: { error: lastError }, status: 599, durationMs: Date.now() - startedAt, sourceMode: "real", error: lastError };
 }
 
 function uniqueObjects(items = []) {
@@ -922,7 +1008,7 @@ function uniqueObjects(items = []) {
   });
 }
 
-function buildPagedRequestConfig(source = {}, node = {}, plan = {}, pageNumber = 1) {
+export function buildPagedRequestConfig(source = {}, node = {}, plan = {}, pageNumber = 1) {
   const pagination = node.executionConfig?.pagination || {};
   const requestConfig = source.requestConfig || {};
   const pageParam = pagination.pageParam || "page";
@@ -932,7 +1018,8 @@ function buildPagedRequestConfig(source = {}, node = {}, plan = {}, pageNumber =
   const body = requestConfig.body && typeof requestConfig.body === "object" && !Array.isArray(requestConfig.body)
     ? { ...requestConfig.body }
     : requestConfig.body;
-  const target = pagination.paramLocation === "body" && body && typeof body === "object" && !Array.isArray(body)
+  const paginateIn = pagination.paginateIn || pagination.paramLocation || "query";
+  const target = paginateIn === "body" && body && typeof body === "object" && !Array.isArray(body)
     ? body
     : queryParams;
   if ((pagination.mode || plan.paginationMode) === "page-number") {
@@ -946,7 +1033,7 @@ function buildPagedRequestConfig(source = {}, node = {}, plan = {}, pageNumber =
   };
 }
 
-async function runWithConcurrency(tasks = [], concurrency = 1) {
+export async function runWithConcurrency(tasks = [], concurrency = 1) {
   const results = [];
   let cursor = 0;
   async function worker() {
@@ -960,7 +1047,7 @@ async function runWithConcurrency(tasks = [], concurrency = 1) {
   return results;
 }
 
-function mergeDataSourceResults(results = [], source = {}, node = {}, plan = {}) {
+export function mergeDataSourceResults(results = [], source = {}, node = {}, plan = {}) {
   const ok = results.every((result) => result.ok);
   const mappedRecords = uniqueObjects(results.flatMap((result) => result.mappedRecords || []));
   const selectedRecords = uniqueObjects(results.flatMap((result) => result.selectedRecords || []));
@@ -997,6 +1084,7 @@ export async function testDataSource(input = {}) {
     ...input
   };
   const kind = config.kind || "api";
+  const mode = input.mode === "live" ? "live" : "preview";
   const now = new Date().toISOString();
   const responsePath = config.responsePath || "data.items";
   const keepMode = config.responseConfig?.keepMode || config.responseKeepMode || "all";
@@ -1037,7 +1125,13 @@ export async function testDataSource(input = {}) {
     }
   }
   if (!responseBody) {
-    responseBody =
+    if (mode === "live" && kind === "api") {
+      responseBody = {};
+      status = 599;
+      sourceMode = "real";
+      error = error || "live 模式：未取到真实响应且禁止 mock 兜底（请检查数据源 URL 与认证）";
+    } else {
+      responseBody =
       kind === "database"
       ? {
           rows: [
@@ -1154,6 +1248,7 @@ export async function testDataSource(input = {}) {
               }
             }
           };
+    }
   }
   const extraction = extractResponseRecords(responseBody, {
     responsePath,
@@ -1206,7 +1301,7 @@ export async function testDataSource(input = {}) {
   };
 }
 
-export async function executeDataSourcePlan(source = {}, node = {}, plan = {}) {
+export async function executeDataSourcePlan(source = {}, node = {}, plan = {}, mode = "preview") {
   const pageCount = Math.max(1, Number(plan.pageCount || 1));
   const batchCount = Math.max(1, Number(plan.batchCount || 1));
   const plannedCalls = Math.max(1, pageCount * batchCount);
@@ -1214,13 +1309,16 @@ export async function executeDataSourcePlan(source = {}, node = {}, plan = {}) {
   const actualCalls = Math.min(plannedCalls, maxCalls);
   const concurrency = Math.max(1, Number(plan.concurrency || 1));
   const startPage = Number(node.executionConfig?.pagination?.startPage || 1);
+  const responseCache = new Map();
   const tasks = Array.from({ length: actualCalls }, (_, index) => {
     const pageNumber = startPage + (index % pageCount);
     return () => testDataSource({
       sourceId: source.id,
       ...source,
+      _responseCache: responseCache,
       requestConfig: buildPagedRequestConfig(source, node, plan, pageNumber),
-      previewLimit: 0
+      previewLimit: 0,
+      mode
     });
   });
   const results = await runWithConcurrency(tasks, concurrency);
@@ -1231,7 +1329,7 @@ export async function runSync(payload = {}) {
   const sourceId = payload.sourceId || store.dataSources[0]?.id;
   const source = store.dataSources.find((item) => item.id === sourceId) || store.dataSources[0];
   const startedAt = new Date().toISOString();
-  const result = await testDataSource({ sourceId, ...payload });
+  const result = await testDataSource({ sourceId, ...payload, mode: payload.mode === "live" ? "live" : "preview" });
   const fetchedRows = Number(result.recordCount ?? result.filteredRecordCount ?? 0);
   const cleanedRows = Number(result.filteredRecordCount ?? fetchedRows);
   const failedRows = result.ok ? 0 : Math.max(1, fetchedRows - cleanedRows);

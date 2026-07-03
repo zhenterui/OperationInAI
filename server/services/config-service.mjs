@@ -1,6 +1,7 @@
-import { applyStoragePolicy, store } from "../data/store.mjs";
+import { applyStoragePolicy, persistStore, store } from "../data/store.mjs";
 import { createStorageAdapter } from "../data/storage-adapter.mjs";
-import { applyFieldMappings, executeDataSourcePlan, matchesFilter } from "./sync-service.mjs";
+import { persistBusinessTable } from "./business-data-service.mjs";
+import { applyFieldMappings, assertSafeSourceUrl, executeDataSourcePlan, getByPath, matchesFilter } from "./sync-service.mjs";
 
 function uniqueId(prefix = "id") {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
@@ -15,6 +16,48 @@ function normalizeList(value, fallback = []) {
       .filter(Boolean);
   }
   return fallback;
+}
+
+const FIELD_SCHEMA_TIME_HINTS = new Set([
+  "event_time", "created_at", "updated_at", "occur_time", "occurtime",
+  "time", "fetched_at", "_fetched_at", "checked_at", "时间"
+]);
+
+export function reconcileFieldSchema(existingSchema, fields = []) {
+  const existing = Array.isArray(existingSchema) ? existingSchema : [];
+  const byName = new Map(existing.filter((item) => item?.name).map((item) => [String(item.name), item]));
+  const jumpFields = new Set(
+    fields.filter((field) => String(field).startsWith("_jumpurl_")).map((field) => String(field).slice("_jumpurl_".length))
+  );
+  return fields.map((field) => {
+    const name = String(field);
+    const previous = byName.get(name);
+    if (previous) return { ...previous, name };
+    return {
+      name,
+      alias: name,
+      isDisplay: !name.startsWith("_"),
+      isCreateTime: FIELD_SCHEMA_TIME_HINTS.has(name.toLowerCase()),
+      isHtml: false,
+      isJump: jumpFields.has(name),
+      jumpUrl: ""
+    };
+  });
+}
+
+export function normalizeFieldSchemaInput(input = []) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((item) => item?.name)
+    .map((item) => ({
+      name: String(item.name),
+      alias: item.alias != null ? String(item.alias) : String(item.name),
+      isDisplay: item.isDisplay !== false,
+      isCreateTime: item.isCreateTime === true,
+      isHtml: item.isHtml === true,
+      isJump: item.isJump === true,
+      jumpUrl: item.jumpUrl || ""
+    }));
 }
 
 function toSituationFilter(input = {}, existing = {}) {
@@ -374,6 +417,31 @@ function mergeBusinessRows(existingRows = [], newRows = [], fields = [], outputC
     return [...newRows, ...existingRows].slice(0, 1000);
   }
   const newKeys = new Set(newRows.map((row) => rowKey(fields, row, keyFields)).filter(Boolean));
+  const updateFields = Array.isArray(outputConfig.updateFields) && outputConfig.updateFields.length
+    ? new Set(outputConfig.updateFields)
+    : null;
+  if (updateFields) {
+    const updatedRows = existingRows.map((row) => {
+      const key = rowKey(fields, row, keyFields);
+      if (!key || !newKeys.has(key)) return row;
+      const matchingNew = newRows.find((newRow) => rowKey(fields, newRow, keyFields) === key);
+      if (!matchingNew) return row;
+      const merged = [...row];
+      updateFields.forEach((field) => {
+        const index = fields.indexOf(field);
+        if (index >= 0 && matchingNew[index] !== undefined && matchingNew[index] !== null) {
+          merged[index] = matchingNew[index];
+        }
+      });
+      return merged;
+    });
+    const existingKeys = new Set(existingRows.map((row) => rowKey(fields, row, keyFields)).filter(Boolean));
+    const insertedRows = newRows.filter((row) => {
+      const key = rowKey(fields, row, keyFields);
+      return key && !existingKeys.has(key);
+    });
+    return [...insertedRows, ...updatedRows].slice(0, 1000);
+  }
   const keptRows = existingRows.filter((row) => {
     const key = rowKey(fields, row, keyFields);
     return !key || !newKeys.has(key);
@@ -495,7 +563,7 @@ function getRuleNodeMappings(node = {}, rule = {}) {
 }
 
 async function executeFlowNode(node = {}, context = {}) {
-  const { nodes, edges, outputByNode, sourceExecutionPlans } = context;
+  const { nodes, edges, outputByNode, sourceExecutionPlans, mode } = context;
   const upstreamOutputs = getPredecessorOutputs(node, nodes, edges, outputByNode);
   const upstreamRecords = mergeRecordsFromOutputs(upstreamOutputs);
   if (!shouldRunNodeByEdges(node, edges, outputByNode)) {
@@ -515,7 +583,7 @@ async function executeFlowNode(node = {}, context = {}) {
         context: context.flowContext || {}
       }
     };
-    const result = await executeDataSourcePlan(sourceWithContext, node, plan);
+    const result = await executeDataSourcePlan(sourceWithContext, node, plan, mode || "preview");
     const records = Array.isArray(result.mappedRecords) && result.mappedRecords.length
       ? result.mappedRecords
       : result.selectedRecords || [];
@@ -590,7 +658,7 @@ async function executeFlowDag(flowNodes = [], sourceExecutionPlans = [], explici
       ready = [nodes.find((node) => remaining.has(node.id))].filter(Boolean);
     }
     const outputs = await Promise.all(ready.map((node) =>
-      executeFlowNode(node, { nodes, edges, outputByNode, sourceExecutionPlans, flowContext })
+      executeFlowNode(node, { nodes, edges, outputByNode, sourceExecutionPlans, flowContext, mode: flowContext.__mode || "preview" })
     ));
     ready.forEach((node, index) => {
       outputByNode.set(node.id, outputs[index]);
@@ -745,6 +813,7 @@ export function createAuthConfig(input = {}) {
     loginUrl: input.loginUrl || "",
     cookieName: type === "api-cookie" ? input.cookieName || "" : "",
     tokenHeader: input.tokenHeader || "",
+    refresh: input.refresh || { enabled: false },
     refreshCycle: input.refreshCycle || "手动",
     status: "可用",
     updatedAt: new Date().toISOString()
@@ -775,6 +844,7 @@ export function updateAuthConfig(id, input = {}) {
     loginUrl: input.loginUrl ?? existing.loginUrl,
     cookieName: type === "api-cookie" ? input.cookieName ?? existing.cookieName : "",
     tokenHeader: input.tokenHeader ?? existing.tokenHeader,
+    refresh: input.refresh !== undefined ? input.refresh : existing.refresh || { enabled: false },
     refreshCycle: input.refreshCycle || existing.refreshCycle,
     updatedAt: new Date().toISOString()
   };
@@ -794,6 +864,125 @@ export function deleteAuthConfig(id) {
     source.authConfigId === id ? { ...source, authConfigId: "auth_none", authType: "none" } : source
   );
   return removed;
+}
+
+function resolveRefreshTemplate(value = "", authConfig = {}) {
+  return String(value ?? "")
+    .replace(/\{\{\s*username\s*\}\}/g, authConfig.username || "")
+    .replace(/\{\{\s*password\s*\}\}/g, authConfig.password || "");
+}
+
+function parseSetCookieHeader(headerValue = "", cookieName = "") {
+  const parts = String(headerValue || "").split(/,(?=[^;,]+=)/);
+  for (const part of parts) {
+    const [pair] = part.split(";");
+    const separatorIndex = pair.indexOf("=");
+    if (separatorIndex < 0) continue;
+    const name = pair.slice(0, separatorIndex).trim();
+    const value = pair.slice(separatorIndex + 1).trim();
+    if (!cookieName || name === cookieName) return { cookieName: name, cookieValue: value };
+  }
+  return { cookieName: cookieName || "", cookieValue: "" };
+}
+
+async function performLoginRefresh(authConfig = {}) {
+  const refresh = authConfig.refresh || {};
+  const login = refresh.login || {};
+  const url = String(login.url || authConfig.loginUrl || "").trim();
+  if (!url) throw new Error("刷新配置缺少 login.url");
+  assertSafeSourceUrl(url);
+  const method = String(login.method || "POST").toUpperCase();
+  const bodyType = login.bodyType === "form" ? "form" : "json";
+  const body = login.body && typeof login.body === "object"
+    ? Object.fromEntries(Object.entries(login.body).map(([key, value]) => [key, resolveRefreshTemplate(value, authConfig)]))
+    : {};
+  const headers = { ...(login.headers || {}) };
+  let requestBody;
+  if (["GET", "HEAD"].includes(method)) {
+    requestBody = undefined;
+  } else if (bodyType === "form") {
+    const form = new URLSearchParams();
+    Object.entries(body).forEach(([key, value]) => form.set(key, value));
+    requestBody = form;
+    headers["Content-Type"] = headers["Content-Type"] || "application/x-www-form-urlencoded";
+  } else {
+    requestBody = JSON.stringify(body);
+    headers["Content-Type"] = headers["Content-Type"] || "application/json";
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1000, Number(login.timeoutMs || 8000)));
+  try {
+    const response = await fetch(url, { method, headers, body: requestBody, signal: controller.signal });
+    const text = await response.text();
+    let responseBody = {};
+    try { responseBody = text ? JSON.parse(text) : {}; } catch { responseBody = { text }; }
+    if (!response.ok) throw new Error(`登录刷新失败 HTTP ${response.status}`);
+    const extract = refresh.extract || {};
+    if ((extract.from || "header") === "body") {
+      const cookieValue = getByPath(responseBody, extract.cookiePath || "token");
+      return { cookieName: extract.cookieName || authConfig.cookieName || "TOKEN", cookieValue: cookieValue ? String(cookieValue) : "" };
+    }
+    return parseSetCookieHeader(response.headers.get("set-cookie") || "", extract.cookieName || authConfig.cookieName);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function refreshAuthConfig(authId) {
+  const authConfig = store.authConfigs.find((item) => item.id === authId);
+  if (!authConfig) {
+    const error = new Error("Auth config not found");
+    error.status = 404;
+    throw error;
+  }
+  const refresh = authConfig.refresh || {};
+  if (!refresh.enabled) {
+    const error = new Error("该认证配置未启用自动刷新");
+    error.status = 400;
+    throw error;
+  }
+  try {
+    const { cookieName, cookieValue } = await performLoginRefresh(authConfig);
+    if (!cookieValue) throw new Error("登录刷新未提取到 cookie/token");
+    if (cookieName) authConfig.cookieName = cookieName;
+    authConfig.cookieValue = cookieValue;
+    authConfig.status = "可用";
+    refresh.lastRefreshAt = new Date().toISOString();
+    refresh.lastRefreshStatus = "success";
+    refresh.lastError = "";
+    authConfig.refresh = refresh;
+    authConfig.updatedAt = new Date().toISOString();
+    persistStore();
+    return sanitizeAuthConfig(authConfig);
+  } catch (error) {
+    refresh.lastRefreshAt = new Date().toISOString();
+    refresh.lastRefreshStatus = "failed";
+    refresh.lastError = error?.message || "登录刷新失败";
+    authConfig.refresh = refresh;
+    authConfig.status = "刷新失败";
+    authConfig.updatedAt = new Date().toISOString();
+    persistStore();
+    throw error;
+  }
+}
+
+function listAuthConfigsDueForRefresh() {
+  const now = Date.now();
+  return (store.authConfigs || []).filter((item) => {
+    const refresh = item.refresh || {};
+    if (!refresh.enabled || !refresh.cycleSeconds) return false;
+    const last = Date.parse(refresh.lastRefreshAt || "");
+    if (Number.isNaN(last)) return true;
+    return now - last >= Number(refresh.cycleSeconds) * 1000;
+  });
+}
+
+export async function refreshDueAuths() {
+  const due = listAuthConfigsDueForRefresh();
+  for (const item of due) {
+    try { await refreshAuthConfig(item.id); } catch {}
+  }
+  return due.length;
 }
 
 function maskApiKey(value = "") {
@@ -1165,7 +1354,10 @@ export function createBusinessFlow(input = {}) {
       cleanTable: input.outputConfig?.cleanTable || `clean_${input.businessName || "business"}`,
       businessTable: input.outputConfig?.businessTable || `biz_${input.businessName || "business"}`,
       dedupeStrategy: input.outputConfig?.dedupeStrategy || "primary-key",
-      dedupeFields: input.outputConfig?.dedupeFields || ""
+      dedupeFields: input.outputConfig?.dedupeFields || "",
+      updateFields: Array.isArray(input.outputConfig?.updateFields) ? input.outputConfig.updateFields : [],
+      atomicWrite: input.outputConfig?.atomicWrite === true,
+      useTableStorage: input.outputConfig?.useTableStorage === true
     },
     status: "ready",
     lastRunAt: "",
@@ -1254,6 +1446,7 @@ export async function runBusinessFlow(input = {}) {
   const runAt = new Date();
   const defaultStart = new Date(runAt.getTime() - 24 * 60 * 60 * 1000).toISOString();
   const flowContext = {
+    __mode: input.mode === "live" ? "live" : "preview",
     start_time: defaultStart,
     end_time: runAt.toISOString(),
     businessName: flow.businessName,
@@ -1269,7 +1462,10 @@ export async function runBusinessFlow(input = {}) {
     cleanTable: `clean_${flow.businessName}`,
     businessTable: `biz_${flow.businessName}`,
     dedupeStrategy: "primary-key",
-    dedupeFields: ""
+    dedupeFields: "",
+    updateFields: [],
+    atomicWrite: false,
+    useTableStorage: false
   };
   const nowText = new Date().toISOString().slice(0, 16).replace("T", " ");
   const sourceText = sources.map((source) => source.name).join(" + ") || "未选择数据源";
@@ -1348,8 +1544,24 @@ export async function runBusinessFlow(input = {}) {
   business.fields = materialized.fields;
   business.fieldAliases = materialized.fieldAliases || business.fieldAliases || {};
   business.fieldLinks = materialized.fieldLinks || business.fieldLinks || {};
-  business.rows = mergeBusinessRows(business.rows || [], materialized.rows, materialized.fields, flow.outputConfig);
-  flow.status = "success";
+  business.fieldSchema = reconcileFieldSchema(business.fieldSchema, materialized.fields);
+  let tableStorageResult = null;
+  const atomicWrite = flow.outputConfig?.atomicWrite === true || flow.outputConfig?.writeStrategy === "overwrite";
+  if (atomicWrite && runFailedRows > 0 && fetchedRows > 0) {
+    flow.status = "failed";
+  } else {
+    business.rows = mergeBusinessRows(business.rows || [], materialized.rows, materialized.fields, flow.outputConfig);
+    flow.status = runFailedRows > 0 ? "warning" : "success";
+    if (flow.outputConfig?.useTableStorage && flow.outputConfig.businessTable) {
+      tableStorageResult = persistBusinessTable(
+        flow.outputConfig.businessTable,
+        materialized.fields,
+        flow.outputConfig.writeStrategy === "append" ? materialized.rows : business.rows,
+        { writeStrategy: flow.outputConfig.writeStrategy, primaryKeys: parseFieldList(flow.outputConfig.primaryKey) }
+      );
+      if (!tableStorageResult.ok) flow.status = "failed";
+    }
+  }
   flow.lastRunAt = new Date().toISOString();
   flow.updatedAt = flow.lastRunAt;
   if (storedIndex >= 0) {
@@ -1364,7 +1576,7 @@ export async function runBusinessFlow(input = {}) {
     id: uniqueId("flow_run"),
     sourceId: flow.id,
     sourceName: flow.name,
-    status: runFailedRows ? "warning" : "success",
+    status: flow.status === "success" ? "success" : flow.status === "warning" ? "warning" : "failed",
     fetchedRows,
     cleanedRows,
     failedRows: runFailedRows,
@@ -1393,6 +1605,7 @@ export async function runBusinessFlow(input = {}) {
       error: result.error || ""
     })),
     outputConfig: flow.outputConfig,
+    tableStorageResult,
     context: flowContext,
     parameterPlan,
     executionPlan: {
@@ -1441,6 +1654,31 @@ function parseBusinessTime(value) {
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
+export function updateBusinessFieldSchema(businessId, businessName, fieldSchemaInput) {
+  const business = store.businesses.find((item) => item.id === businessId || item.name === businessId || item.name === businessName);
+  if (!business) {
+    const error = new Error("Business not found");
+    error.status = 404;
+    throw error;
+  }
+  const allowed = new Set((business.fields || []).map(String));
+  business.fieldSchema = normalizeFieldSchemaInput(fieldSchemaInput).filter((item) => allowed.has(item.name));
+  business.fieldSchema = reconcileFieldSchema(business.fieldSchema, business.fields || []);
+  business.fieldAliases = {
+    ...(business.fieldAliases || {}),
+    ...Object.fromEntries(business.fieldSchema.filter((item) => item.alias).map((item) => [item.name, item.alias]))
+  };
+  business.fieldLinks = {
+    ...(business.fieldLinks || {}),
+    ...Object.fromEntries(
+      business.fieldSchema
+        .filter((item) => item.isJump && item.jumpUrl)
+        .map((item) => [item.name, normalizeFieldLinkConfig({ enabled: true, urlTemplate: item.jumpUrl })])
+    )
+  };
+  return business;
+}
+
 function findFieldIndex(fields = [], candidates = [], fallback = 0) {
   const normalized = fields.map((field) => String(field).toLowerCase());
   const index = candidates
@@ -1451,9 +1689,11 @@ function findFieldIndex(fields = [], candidates = [], fallback = 0) {
 
 export function queryBusiness(input = {}) {
   const business = store.businesses.find((item) => item.name === input.businessName) || store.businesses[0];
+  if (!business) return { name: "", fields: [], rows: [], query: input };
   let rows = [...business.rows];
   const keyword = String(input.keyword || "").trim().toLowerCase();
   const fields = business.fields || [];
+  const fieldSchema = Array.isArray(business.fieldSchema) ? business.fieldSchema : [];
   const severityIndex = findFieldIndex(fields, ["等级", "level", "severity", "alarmLevel", "result"], 1);
   const timeIndex = findFieldIndex(fields, ["时间", "occurTime", "event_time", "time", "updated_at", "checked_at", "created_at"], 3);
   const impactIndex = findFieldIndex(fields, ["状态/影响", "duration", "queue_lag", "lag", "impact"], 4);

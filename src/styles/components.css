@@ -720,13 +720,35 @@
 }
 
 .flow-list-row {
-  min-width: 760px;
+  width: 100%;
+  min-width: 0;
   display: grid;
-  grid-template-columns: 1.05fr 1.05fr 0.45fr 0.58fr 0.95fr 0.55fr 260px;
+  grid-template-columns: minmax(120px, 1.05fr) minmax(120px, 1.05fr) minmax(64px, 0.45fr) minmax(82px, 0.58fr) minmax(110px, 0.95fr) minmax(76px, 0.55fr) minmax(160px, auto);
   align-items: center;
   gap: 10px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);
+}
+
+.flow-list-row span,
+.flow-list-row small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1100px) {
+  .flow-list-row {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  }
+
+  .flow-list-row.header {
+    display: none;
+  }
+
+  .flow-list-row .row-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
 }
 
 .flow-list-row.empty {
@@ -1091,9 +1113,10 @@
 }
 
 .rule-group-body {
-  min-width: 1040px;
+  min-width: 0;
   gap: 0;
   padding: 0;
+  overflow: auto;
 }
 
 .response-preview {
@@ -1231,7 +1254,19 @@
 }
 
 .support-rule-row {
-  grid-template-columns: 1fr 0.76fr 1.2fr 1.2fr 150px;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(110px, 1fr) minmax(70px, 0.7fr) minmax(120px, 1fr) minmax(120px, 1fr) minmax(124px, auto);
+}
+
+.support-rule-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.support-rule-row .row-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
 }
 
 .modal {
@@ -1895,10 +1930,12 @@ textarea {
 .data-table {
   min-width: 0;
   max-width: 100%;
+  width: 100%;
   margin-top: 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: auto;
+  overscroll-behavior-x: contain;
 }
 
 .mapping-row {
@@ -1910,11 +1947,18 @@ textarea {
 }
 
 .table-row {
-  min-width: 720px;
+  width: 100%;
+  min-width: 0;
   display: grid;
-  grid-template-columns: 1.2fr 1.2fr 0.8fr 1fr 0.8fr;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);
+}
+
+.table-row span,
+.table-row a {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .mapping-row:last-child,
@@ -1928,6 +1972,29 @@ textarea {
   background: rgba(48, 232, 199, 0.08);
   font-size: 12px;
   font-weight: 800;
+}
+
+.mapping-row.support-rule-row {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 10px;
+  grid-template-columns: none;
+}
+
+.mapping-row.support-rule-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mapping-row.support-rule-row.header {
+  display: none;
+}
+
+.mapping-row.support-rule-row > span:not(.row-actions) {
+  flex: 1 1 118px;
 }
 
 .filter-row {
@@ -1946,6 +2013,21 @@ textarea {
 
 .filter-row label {
   flex: 1 1 190px;
+}
+
+#displayConfiguredFilterBar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  align-items: end;
+  gap: 12px;
+}
+
+#displayConfiguredFilterBar label {
+  min-width: 0;
+}
+
+#displayConfiguredFilterBar .small-button {
+  width: max-content;
 }
 
 .segmented {
@@ -2000,6 +2082,11 @@ textarea {
 
 .display-advanced-filter {
   margin-top: 10px;
+}
+
+.display-advanced-filter > label.full {
+  flex: 1 1 100%;
+  width: 100%;
 }
 
 .display-advanced-filter .small-button {
@@ -2208,6 +2295,7 @@ textarea {
   }
 
   .flow-board,
+  .flow-list-row,
   .config-form,
   .flow-toolbar,
   .flow-inspector,

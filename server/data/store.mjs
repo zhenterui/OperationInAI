@@ -469,6 +469,7 @@ const defaultStore = {
   storageMigrationLogs: [],
   syncLogs: [],
   analysisResults: [],
+  schedules: [],
   auditLogs: []
 };
 
@@ -524,6 +525,7 @@ export function buildStorageSnapshot(policy = "copy-all") {
     analysisResults: [],
     knowledge: [],
     signals: [],
+    schedules: [],
     auditLogs: snapshot.auditLogs || []
   };
   if (policy === "switch-only") return base;
@@ -537,7 +539,8 @@ export function buildStorageSnapshot(policy = "copy-all") {
     cleaningRules: snapshot.cleaningRules,
     dictionarySets: snapshot.dictionarySets,
     businessFlows: snapshot.businessFlows,
-    modelConfigs: snapshot.modelConfigs
+    modelConfigs: snapshot.modelConfigs,
+    schedules: snapshot.schedules || []
   };
 }
 
@@ -614,6 +617,7 @@ export function getBootstrapData() {
       fields: item.fields,
       fieldAliases: item.fieldAliases || {},
       fieldLinks: item.fieldLinks || {},
+      fieldSchema: Array.isArray(item.fieldSchema) ? item.fieldSchema : [],
       rows: item.rows
     })),
     situationFilters: store.situationFilters,
@@ -629,6 +633,7 @@ export function getBootstrapData() {
     storageConfigs: store.storageConfigs.map((item) => ({ ...item, active: item.id === store.currentStorageId, password: "" })),
     currentStorageId: store.currentStorageId,
     storageMigrationLogs: store.storageMigrationLogs,
+    schedules: store.schedules || [],
     signals: store.signals,
     knowledge: store.knowledge
   };

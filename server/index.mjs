@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { handleApi } from "./core/router.mjs";
 import { sendError, serveStatic } from "./core/http.mjs";
+import { startScheduler } from "./services/scheduler-service.mjs";
 
 const rootDir = resolve(process.cwd());
 const host = process.env.HOST || "127.0.0.1";
@@ -20,6 +21,7 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, host, () => {
+  startScheduler();
   console.log(`OperationInAI backend: http://${host}:${port}`);
   console.log(`Health check: http://${host}:${port}/api/health`);
 });
