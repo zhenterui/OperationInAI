@@ -7,6 +7,7 @@ import { createSchedule, deleteSchedule, nextFire, parseCron, updateSchedule } f
 const createdAuthIds = [];
 const createdSourceIds = [];
 const createdScheduleIds = [];
+const receivedLoginBodies = [];
 let loginServer;
 
 function startLoginServer() {
@@ -16,11 +17,19 @@ function startLoginServer() {
       request.on("data", (chunk) => { body += chunk; });
       request.on("end", () => {
         if (request.url === "/login") {
+          // Token is only issued when the resolved credentials actually arrive
+          // in the login body — this gates success on real credential delivery,
+          // so the refresh test fails (instead of false-passing) if the
+          // {{username}}/{{password}} templates resolve to empty strings.
+          receivedLoginBodies.push(body);
+          let parsed = {};
+          try { parsed = body ? JSON.parse(body) : {}; } catch {}
+          const ok = parsed.username === "ops_user" && parsed.password === "secret";
           response.writeHead(200, {
             "Content-Type": "application/json",
-            "Set-Cookie": "TESTSESSION=abc123; Path=/; HttpOnly"
+            "Set-Cookie": `TESTSESSION=${ok ? "abc123" : "denied"}; Path=/; HttpOnly`
           });
-          response.end(JSON.stringify({ token: body.includes("ops_user") ? "body-token-xyz" : "" }));
+          response.end(JSON.stringify({ token: ok ? "body-token-xyz" : "" }));
           return;
         }
         response.writeHead(404);
@@ -71,12 +80,15 @@ try {
         bodyType: "json",
         body: { username: "{{username}}", password: "{{password}}" }
       },
-      extract: { from: "header", cookieName: "TESTSESSION" }
+      extract: { from: "body", cookieName: "TESTSESSION", cookiePath: "token" }
     }
   });
   createdAuthIds.push(auth.id);
   const refreshed = await refreshAuthConfig(auth.id);
   assert.equal(refreshed.refresh.lastRefreshStatus, "success", "auth refresh should record success");
+  const lastLoginBody = receivedLoginBodies.length ? JSON.parse(receivedLoginBodies[receivedLoginBodies.length - 1]) : {};
+  assert.equal(lastLoginBody.username, "ops_user", "login refresh should deliver resolved username");
+  assert.equal(lastLoginBody.password, "secret", "login refresh should deliver resolved password");
 
   console.log(JSON.stringify({ status: "ok", liveBlocked: !live.ok, authRefresh: refreshed.refresh.lastRefreshStatus }, null, 2));
 } finally {

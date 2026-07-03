@@ -67,7 +67,19 @@ function ensureTable(db, tableName, columns) {
 export function persistBusinessTable(tableName, fields, rows, options = {}) {
   if (!tableName) return { ok: false, error: "missing table name" };
   const strategy = ["overwrite", "append", "upsert"].includes(options.writeStrategy) ? options.writeStrategy : "upsert";
-  const columns = (fields || []).map(String).filter(Boolean);
+  // Dedup by sanitized identifier: two fields that sanitize to the same column
+  // name (duplicates, or names differing only in stripped chars) would otherwise
+  // produce a duplicate-column INSERT and fail the whole batch.
+  const seenColumns = new Set();
+  const columns = [];
+  for (const field of fields || []) {
+    const name = String(field || "");
+    if (!name) continue;
+    const sanitized = sanitizeIdentifier(name);
+    if (seenColumns.has(sanitized)) continue;
+    seenColumns.add(sanitized);
+    columns.push(name);
+  }
   if (!columns.length) return { ok: false, error: "missing fields", table: tableName };
   const primaryKeys = (options.primaryKeys || []).map(String).filter(Boolean);
   const objects = rowsToObjects(columns, rows);

@@ -807,8 +807,11 @@ export function createAuthConfig(input = {}) {
     name: input.name || "自定义认证配置",
     category: input.category || "认证配置",
     type,
-    username: type === "db-account-password" ? input.username || "" : "",
-    password: type === "db-account-password" ? input.password || "" : "",
+    // username/password are persisted for every type so that declarative auth
+    // refresh (refresh.login.body 的 {{username}}/{{password}} 模板) can resolve
+    // real credentials. password 仍由 sanitizeSecretsForDisk 落盘加密、sanitizeAuthConfig 出参脱敏。
+    username: input.username || "",
+    password: input.password || "",
     cookieValue: type === "api-cookie" ? input.cookieValue || input.password || "" : "",
     loginUrl: input.loginUrl || "",
     cookieName: type === "api-cookie" ? input.cookieName || "" : "",
@@ -838,8 +841,8 @@ export function updateAuthConfig(id, input = {}) {
     name: input.name || existing.name,
     category: input.category || existing.category || "认证配置",
     type,
-    username: type === "db-account-password" ? input.username ?? existing.username : "",
-    password: type === "db-account-password" ? password : "",
+    username: input.username ?? existing.username,
+    password,
     cookieValue: type === "api-cookie" ? cookieValue : "",
     loginUrl: input.loginUrl ?? existing.loginUrl,
     cookieName: type === "api-cookie" ? input.cookieName ?? existing.cookieName : "",

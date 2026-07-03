@@ -34,7 +34,7 @@
 
 6. 输出写入语义增强
    - `outputConfig.useTableStorage` 控制是否写入独立业务表。
-   - `outputConfig.atomicWrite` 在真实采集失败时阻止半批数据覆盖已有数据。
+   - `outputConfig.atomicWrite` 在真实采集失败时阻止半批数据覆盖已有数据。语义：真实采集全部失败（未取到数据）时记为 `warning` 且不改动已有数据；部分源失败但已取到数据时记为 `failed` 并阻塞写入，避免半批数据覆盖。
    - `outputConfig.updateFields` 支持 upsert 时仅更新指定字段。
    - append 写独立表时只写本次新增结果，避免重复写全量业务数据。
 
